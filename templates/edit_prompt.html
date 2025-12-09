@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section>
+  <h2>{{ "Edit Prompt" if prompt else "New Prompt" }}</h2>
+
+  <form method="post">
+    <label>Title
+      <input type="text" name="title" value="{{ prompt.title if prompt else '' }}" required>
+    </label>
+
+    <label>Category
+      <select name="category">
+        {% for cat in categories %}
+          <option value="{{ cat }}"
+            {% if prompt and prompt.category == cat %}selected{% endif %}>
+            {{ cat }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Tool
+      <select name="tool">
+        {% for t in tools %}
+          <option value="{{ t }}"
+            {% if prompt and prompt.tool == t %}selected{% endif %}>
+            {{ t }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Prompt type
+      <select name="prompt_type">
+        {% for pt in prompt_types %}
+          <option value="{{ pt }}"
+            {% if prompt and prompt.prompt_type == pt %}selected{% endif %}>
+            {{ pt }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Content (use [[placeholders]] for variable parts)
+      <textarea name="content" rows="12" required>{{ prompt.content if prompt else '' }}</textarea>
+    </label>
+
+    <label>Notes (optional – e.g. sampler, CFG, resolution)
+      <textarea name="notes" rows="4">{{ prompt.notes if prompt and prompt.notes else '' }}</textarea>
+    </label>
+
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section>
+  <h2>Prompts</h2>
+
+  <form method="get" class="filters">
+    <label for="category">Category:</label>
+    <select name="category" id="category" onchange="this.form.submit()">
+      <option value="all" {% if active_category == "all" %}selected{% endif %}>All</option>
+      {% for cat in categories %}
+        <option value="{{ cat }}" {% if active_category == cat %}selected{% endif %}>{{ cat }}</option>
+      {% endfor %}
+    </select>
+
+    <label for="tool">Tool:</label>
+    <select name="tool" id="tool" onchange="this.form.submit()">
+      <option value="all" {% if active_tool == "all" %}selected{% endif %}>All</option>
+      {% for t in tools %}
+        <option value="{{ t }}" {% if active_tool == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </form>
+
+  <ul class="prompt-list">
+    {% for p in prompts %}
+      <li class="prompt-card">
+        <h3>{{ p.title }}</h3>
+        <p class="meta">
+          {{ p.category }} · {{ p.tool }} · {{ p.prompt_type }} · Updated {{ p.updated_at }}
+        </p>
+        {% if p.notes %}
+          <p class="notes">{{ p.notes }}</p>
+        {% endif %}
+        <div class="actions">
+          <a href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
+          <a href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
+          <form method="post" action="{{ url_for('delete_prompt', prompt_id=p.id) }}" onsubmit="return confirm('Delete this prompt?');">
+            <button type="submit">Delete</button>
+          </form>
+        </div>
+      </li>
+    {% else %}
+      <p>No prompts yet. Create one!</p>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

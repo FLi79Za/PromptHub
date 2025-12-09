@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section>
+  <h2>Use: {{ prompt.title }}</h2>
+  <p class="meta">
+    {{ prompt.category }} · {{ prompt.tool }} · {{ prompt.prompt_type }}
+  </p>
+
+  {% if prompt.notes %}
+    <p class="notes">{{ prompt.notes }}</p>
+  {% endif %}
+
+  {% if placeholders %}
+    <h3>Fill in placeholders</h3>
+    <form method="post">
+      <div class="placeholder-grid">
+        {% for name in placeholders %}
+          <label>{{ name }}
+            <input type="text" name="{{ name }}">
+          </label>
+        {% endfor %}
+      </div>
+
+      {% if final_text %}
+        <h3>Final prompt (you can edit this before copying)</h3>
+        <textarea name="final_override" rows="10">{{ final_text }}</textarea>
+      {% else %}
+        <button type="submit">Generate Prompt</button>
+      {% endif %}
+    </form>
+  {% else %}
+    <p>This prompt has no placeholders. You can copy or edit it directly below.</p>
+    <form method="post">
+      <textarea name="final_override" rows="10">{{ final_text if final_text else prompt.content }}</textarea>
+      <button type="submit">Update text</button>
+    </form>
+  {% endif %}
+
+  <h3>Template (read-only)</h3>
+  <pre class="code">{{ prompt.content }}</pre>
+</section>
+{% endblock %}
