@@ -1,13 +1,27 @@
 {% extends "base.html" %}
-{% if imported_preview %}
-  <p class="notes">Imported preview: review and click Save to add it to your library.</p>
-{% endif %}
 
 {% block content %}
 <section>
-  <h2>{{ "Edit Prompt" if prompt else "New Prompt" }}</h2>
+  <h2>
+    {% if prompt and prompt.id %}
+      Edit Prompt
+    {% else %}
+      New Prompt
+    {% endif %}
+  </h2>
 
-  <form method="post">
+  {% if imported_preview %}
+    <p class="notes">Imported preview: review and click Save to add it to your library.</p>
+  {% endif %}
+
+  {# Decide where the Save button should post to #}
+  {% if prompt and prompt.id %}
+    {% set form_action = url_for('edit_prompt', prompt_id=prompt.id) %}
+  {% else %}
+    {% set form_action = url_for('new_prompt') %}
+  {% endif %}
+
+  <form method="post" action="{{ form_action }}">
     <label>Title
       <input type="text" name="title" value="{{ prompt.title if prompt else '' }}" required>
     </label>

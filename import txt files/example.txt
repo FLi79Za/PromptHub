@@ -1,0 +1,5 @@
+# title: Flux Kontext - Render block
+# category: Image
+# tool: Flux Kontext
+# type: Instruction
+# notes: Any extra info you want
