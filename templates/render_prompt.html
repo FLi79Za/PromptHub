@@ -13,6 +13,7 @@
 
   {% if placeholders %}
     <h3>Fill in placeholders</h3>
+
     <form method="post">
       <div class="placeholder-grid">
         {% for name in placeholders %}
@@ -23,21 +24,75 @@
       </div>
 
       {% if final_text %}
-        <h3>Final prompt (you can edit this before copying)</h3>
-        <textarea name="final_override" rows="10">{{ final_text }}</textarea>
+        <h3>Generated prompt (editable)</h3>
+
+        <div class="copy-row">
+          <button type="button" id="copyBtn">Copy to clipboard</button>
+          <span id="copyStatus" class="copy-status" aria-live="polite"></span>
+        </div>
+
+        <textarea id="finalPrompt" name="final_override" rows="10">{{ final_text }}</textarea>
+
+        <div style="margin-top: 0.75rem;">
+          <button type="submit">Update text</button>
+        </div>
       {% else %}
         <button type="submit">Generate Prompt</button>
       {% endif %}
     </form>
+
   {% else %}
     <p>This prompt has no placeholders. You can copy or edit it directly below.</p>
+
     <form method="post">
-      <textarea name="final_override" rows="10">{{ final_text if final_text else prompt.content }}</textarea>
-      <button type="submit">Update text</button>
+      <div class="copy-row">
+        <button type="button" id="copyBtn">Copy to clipboard</button>
+        <span id="copyStatus" class="copy-status" aria-live="polite"></span>
+      </div>
+
+      <textarea id="finalPrompt" name="final_override" rows="10">{{ final_text if final_text else prompt.content }}</textarea>
+
+      <div style="margin-top: 0.75rem;">
+        <button type="submit">Update text</button>
+      </div>
     </form>
   {% endif %}
 
   <h3>Template (read-only)</h3>
   <pre class="code">{{ prompt.content }}</pre>
 </section>
+
+<script>
+  (function () {
+    const btn = document.getElementById("copyBtn");
+    const ta = document.getElementById("finalPrompt");
+    const status = document.getElementById("copyStatus");
+
+    if (!btn || !ta) return;
+
+    async function copyText(text) {
+      // Prefer modern clipboard API, fall back to execCommand
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      // Remove selection (optional)
+      ta.setSelectionRange(0, 0);
+      if (!ok) throw new Error("execCommand copy failed");
+    }
+
+    btn.addEventListener("click", async () => {
+      try {
+        await copyText(ta.value);
+        status.textContent = "Copied!";
+        setTimeout(() => status.textContent = "", 1200);
+      } catch (e) {
+        status.textContent = "Copy failed. Select and copy manually.";
+      }
+    });
+  })();
+</script>
 {% endblock %}

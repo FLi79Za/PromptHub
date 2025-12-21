@@ -1,4 +1,7 @@
 {% extends "base.html" %}
+{% if imported_preview %}
+  <p class="notes">Imported preview: review and click Save to add it to your library.</p>
+{% endif %}
 
 {% block content %}
 <section>

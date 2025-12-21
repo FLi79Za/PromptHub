@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section>
+  <h2>Import Prompts</h2>
+
+  <p>
+    You can import .txt prompts in two ways:
+    <br>1) Preview a single file before saving
+    <br>2) Bulk import multiple files directly into the database
+  </p>
+
+  <h3>Preview one file</h3>
+  <form method="post" action="{{ url_for('import_prompt_preview') }}" enctype="multipart/form-data">
+    <label>Select a .txt file
+      <input type="file" name="file" accept=".txt" required>
+    </label>
+    <button type="submit">Preview</button>
+  </form>
+
+  <hr>
+
+  <h3>Bulk import (multi-select)</h3>
+  <form method="post" action="{{ url_for('import_prompt') }}" enctype="multipart/form-data">
+    <label>Select one or more .txt files
+      <input type="file" name="files" accept=".txt" multiple required>
+    </label>
+    <button type="submit">Import All</button>
+  </form>
+
+  <hr>
+
+  <h3>Optional metadata header format</h3>
+  <pre class="code"># title: Flux Kontext - Render block
+# category: Image
+# tool: Flux Kontext
+# type: Instruction
+# notes: Any extra info you want
+---
+Render a full resolution image of block [[block_number]]...</pre>
+</section>
+{% endblock %}

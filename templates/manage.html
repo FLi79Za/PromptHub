@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section>
+  <h2>Manage Categories & Tools</h2>
+
+  <div class="manage-grid">
+    <div>
+      <h3>Categories</h3>
+
+      <form method="post" action="{{ url_for('add_category') }}">
+        <label>Add category
+          <input type="text" name="name" placeholder="e.g. LoRA Training" required>
+        </label>
+        <button type="submit">Add</button>
+      </form>
+
+      <ul class="manage-list">
+        {% for c in categories %}
+          <li>
+            <span>{{ c }}</span>
+            <form method="post" action="{{ url_for('delete_category') }}">
+              <input type="hidden" name="name" value="{{ c }}">
+              <button type="submit" onclick="return confirm('Delete category {{ c }}?');">Delete</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <div>
+      <h3>Tools</h3>
+
+      <form method="post" action="{{ url_for('add_tool') }}">
+        <label>Add tool
+          <input type="text" name="name" placeholder="e.g. WAN FFLF" required>
+        </label>
+        <button type="submit">Add</button>
+      </form>
+
+      <ul class="manage-list">
+        {% for t in tools %}
+          <li>
+            <span>{{ t }}</span>
+            <form method="post" action="{{ url_for('delete_tool') }}">
+              <input type="hidden" name="name" value="{{ t }}">
+              <button type="submit" onclick="return confirm('Delete tool {{ t }}?');">Delete</button>
+            </form>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</section>
+{% endblock %}

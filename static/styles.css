@@ -112,3 +112,37 @@ pre.code {
   border-radius: 4px;
   overflow-x: auto;
 }
+.manage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+
+.manage-list {
+  list-style: none;
+  padding: 0;
+  margin-top: 1rem;
+}
+
+.manage-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid #333;
+  background: #1a1a1a;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+}
+
+.copy-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.copy-status {
+  color: #a7f3d0;
+  font-size: 0.9rem;
+}
