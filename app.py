@@ -244,18 +244,58 @@ def delete_tool():
     flash(f"Deleted tool: {name}")
     return redirect(url_for("manage"))
 
+@app.route("/prompt/<int:prompt_id>/duplicate", methods=["POST"])
+def duplicate_prompt(prompt_id: int):
+    conn = get_db()
+    prompt = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+
+    if not prompt:
+        conn.close()
+        flash("Prompt not found.")
+        return redirect(url_for("index"))
+
+    now = datetime.utcnow().isoformat()
+
+    # Create a new title
+    new_title = f"Copy of {prompt['title']}"
+
+    conn.execute(
+        """
+        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            new_title,
+            prompt["category"],
+            prompt["tool"],
+            prompt["prompt_type"],
+            prompt["content"],
+            prompt["notes"],
+            now,
+            now,
+        ),
+    )
+    new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    flash("Prompt duplicated. You can edit the copy now.")
+    return redirect(url_for("edit_prompt", prompt_id=new_id))
+
 
 # -------------------------
 # Main pages / prompts CRUD
 # -------------------------
 @app.route("/", methods=["GET"])
+@app.route("/", methods=["GET"])
 def index():
     category = request.args.get("category", "all")
     tool = request.args.get("tool", "all")
+    q = (request.args.get("q") or "").strip()
 
     conn = get_db()
     query = "SELECT * FROM prompts WHERE 1=1"
-    params: list[str] = []
+    params = []
 
     if category != "all":
         query += " AND category = ?"
@@ -264,6 +304,21 @@ def index():
     if tool != "all":
         query += " AND tool = ?"
         params.append(tool)
+
+    if q:
+        # Case-insensitive search across common fields
+        query += """
+            AND (
+                LOWER(title) LIKE ?
+                OR LOWER(content) LIKE ?
+                OR LOWER(COALESCE(notes, '')) LIKE ?
+                OR LOWER(tool) LIKE ?
+                OR LOWER(category) LIKE ?
+                OR LOWER(prompt_type) LIKE ?
+            )
+        """
+        like = f"%{q.lower()}%"
+        params.extend([like, like, like, like, like, like])
 
     query += " ORDER BY updated_at DESC"
 
@@ -277,9 +332,8 @@ def index():
         tools=get_tools(),
         active_category=category,
         active_tool=tool,
+        q=q,
     )
-
-
 @app.route("/prompt/new", methods=["GET", "POST"])
 def new_prompt():
     categories = get_categories()
