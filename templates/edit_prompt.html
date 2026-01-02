@@ -21,7 +21,7 @@
     {% set form_action = url_for('new_prompt') %}
   {% endif %}
 
-  <form method="post" action="{{ form_action }}">
+  <form method="post" action="{{ form_action }}" enctype="multipart/form-data">
     <label>Title
       <input type="text" name="title" value="{{ prompt.title if prompt else '' }}" required>
     </label>
@@ -58,6 +58,21 @@
         {% endfor %}
       </select>
     </label>
+
+<label>Thumbnail (optional)
+  <input type="file" name="thumbnail_file" accept=".png,.jpg,.jpeg,.webp,image/*">
+</label>
+
+{% if prompt and prompt.thumbnail %}
+  <div style="margin: 0.5rem 0 1rem 0;">
+    <img src="{{ url_for('static', filename=prompt.thumbnail) }}" alt="Thumbnail" style="max-width: 240px; border-radius: 6px; border: 1px solid #333;">
+  </div>
+  <label style="display:flex; align-items:center; gap:0.5rem;">
+    <input type="checkbox" name="remove_thumbnail">
+    Remove current thumbnail
+  </label>
+{% endif %}
+
 
     <label>Content (use [[placeholders]] for variable parts)
       <textarea name="content" rows="12" required>{{ prompt.content if prompt else '' }}</textarea>

@@ -12,3 +12,7 @@ prompts.db
 # OS files
 Thumbs.db
 .DS_Store
+
+# Uploaded thumbnails
+static/uploads/
+

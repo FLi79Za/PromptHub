@@ -40,6 +40,15 @@
   <ul class="prompt-list">
     {% for p in prompts %}
       <li class="prompt-card">
+{% if p.thumbnail %}
+  <img
+    src="{{ url_for('static', filename=p.thumbnail) }}"
+    alt="Thumbnail"
+    class="thumb"
+    loading="lazy"
+  >
+{% endif %}
+
         <h3>{{ p.title }}</h3>
 
         <p class="meta">

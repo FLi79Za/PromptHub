@@ -157,4 +157,12 @@ pre.code {
 .filters input[type="text"] {
   max-width: 360px;
 }
+.thumb {
+  width: 100%;
+  max-height: 180px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #333;
+  margin-bottom: 0.75rem;
+}
 

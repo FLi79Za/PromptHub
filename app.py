@@ -1,5 +1,7 @@
 import sqlite3
 import re
+import uuid
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +16,16 @@ DB_PATH = BASE_DIR / "prompts.db"
 
 PROMPT_TYPES = ["Generation", "Edit", "Instruction"]
 
+# Thumbnails are stored on disk (recommended), DB stores relative path under /static
+UPLOAD_DIR = BASE_DIR / "static" / "uploads" / "thumbs"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# GIF allowed (handy as a “video thumbnail” surrogate if you ever want it)
+ALLOWED_THUMB_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+# Limit upload size (adjust if you want)
+app.config["MAX_CONTENT_LENGTH"] = 15 * 1024 * 1024  # 15MB
+
 
 # -------------------------
 # DB helpers
@@ -24,10 +36,15 @@ def get_db() -> sqlite3.Connection:
     return conn
 
 
+def column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(c["name"] == column for c in cols)
+
+
 def init_db() -> None:
     conn = get_db()
 
-    # Core lookup tables
+    # Lookup tables
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS categories (
@@ -36,7 +53,6 @@ def init_db() -> None:
         )
         """
     )
-
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS tools (
@@ -46,7 +62,7 @@ def init_db() -> None:
         """
     )
 
-    # Main prompts table
+    # Prompts table
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS prompts (
@@ -62,6 +78,10 @@ def init_db() -> None:
         )
         """
     )
+
+    # Simple migration: add thumbnail column if missing
+    if not column_exists(conn, "prompts", "thumbnail"):
+        conn.execute("ALTER TABLE prompts ADD COLUMN thumbnail TEXT")
 
     # Seed defaults once
     cat_count = conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0]
@@ -103,6 +123,74 @@ def get_tools() -> list[str]:
 
 
 # -------------------------
+# Thumbnail helpers
+# -------------------------
+def is_allowed_thumb(filename: str) -> bool:
+    ext = Path(filename).suffix.lower()
+    return ext in ALLOWED_THUMB_EXTS
+
+
+def save_thumbnail(file_storage) -> str:
+    """
+    Saves uploaded thumbnail into static/uploads/thumbs/
+    Returns DB-relative path from /static, e.g. 'uploads/thumbs/<uuid>.png'
+    """
+    original = secure_filename(file_storage.filename)
+    ext = Path(original).suffix.lower()
+
+    new_name = f"{uuid.uuid4().hex}{ext}"
+    dest = UPLOAD_DIR / new_name
+    file_storage.save(dest)
+
+    return f"uploads/thumbs/{new_name}"
+
+
+def copy_thumbnail(existing_rel_path: str) -> str | None:
+    """
+    Copies an existing thumbnail file to a new filename.
+    Returns new relative path or None if missing.
+    """
+    if not existing_rel_path:
+        return None
+
+    src = BASE_DIR / "static" / existing_rel_path
+    if not src.exists():
+        return None
+
+    ext = src.suffix.lower()
+    new_name = f"{uuid.uuid4().hex}{ext}"
+    dest = UPLOAD_DIR / new_name
+    shutil.copyfile(src, dest)
+    return f"uploads/thumbs/{new_name}"
+
+
+def delete_thumbnail_if_unused(rel_path: str) -> None:
+    """
+    Deletes the thumbnail file only if no other prompts reference it.
+    """
+    if not rel_path:
+        return
+
+    conn = get_db()
+    count = conn.execute(
+        "SELECT COUNT(*) FROM prompts WHERE thumbnail = ?",
+        (rel_path,),
+    ).fetchone()[0]
+    conn.close()
+
+    # If at least 2 prompts reference it, don't delete
+    if count and count > 1:
+        return
+
+    abs_path = BASE_DIR / "static" / rel_path
+    try:
+        if abs_path.exists():
+            abs_path.unlink()
+    except Exception:
+        pass
+
+
+# -------------------------
 # Prompt utilities
 # -------------------------
 def find_placeholders(text: str) -> list[str]:
@@ -131,16 +219,13 @@ def parse_prompt_txt(raw_text: str) -> dict:
             break
 
         if stripped.startswith("#") and ":" in stripped:
-            # e.g. "# tool: Flux Kontext"
             try:
                 key, val = stripped[1:].split(":", 1)
                 meta[key.strip().lower()] = val.strip()
                 content_start = i + 1
             except ValueError:
-                # Ignore malformed header lines
                 pass
         else:
-            # First non-header line: stop parsing meta
             break
 
     content = "\n".join(lines[content_start:]).strip()
@@ -160,9 +245,7 @@ def parse_prompt_txt(raw_text: str) -> dict:
 # -------------------------
 @app.route("/manage", methods=["GET"])
 def manage():
-    categories = get_categories()
-    tools = get_tools()
-    return render_template("manage.html", categories=categories, tools=tools)
+    return render_template("manage.html", categories=get_categories(), tools=get_tools())
 
 
 @app.route("/manage/category/add", methods=["POST"])
@@ -244,58 +327,22 @@ def delete_tool():
     flash(f"Deleted tool: {name}")
     return redirect(url_for("manage"))
 
-@app.route("/prompt/<int:prompt_id>/duplicate", methods=["POST"])
-def duplicate_prompt(prompt_id: int):
-    conn = get_db()
-    prompt = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
-
-    if not prompt:
-        conn.close()
-        flash("Prompt not found.")
-        return redirect(url_for("index"))
-
-    now = datetime.utcnow().isoformat()
-
-    # Create a new title
-    new_title = f"Copy of {prompt['title']}"
-
-    conn.execute(
-        """
-        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            new_title,
-            prompt["category"],
-            prompt["tool"],
-            prompt["prompt_type"],
-            prompt["content"],
-            prompt["notes"],
-            now,
-            now,
-        ),
-    )
-    new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    conn.commit()
-    conn.close()
-
-    flash("Prompt duplicated. You can edit the copy now.")
-    return redirect(url_for("edit_prompt", prompt_id=new_id))
-
 
 # -------------------------
 # Main pages / prompts CRUD
 # -------------------------
-@app.route("/", methods=["GET"])
 @app.route("/", methods=["GET"])
 def index():
     category = request.args.get("category", "all")
     tool = request.args.get("tool", "all")
     q = (request.args.get("q") or "").strip()
 
+    categories = get_categories()
+    tools = get_tools()
+
     conn = get_db()
     query = "SELECT * FROM prompts WHERE 1=1"
-    params = []
+    params: list[str] = []
 
     if category != "all":
         query += " AND category = ?"
@@ -306,7 +353,6 @@ def index():
         params.append(tool)
 
     if q:
-        # Case-insensitive search across common fields
         query += """
             AND (
                 LOWER(title) LIKE ?
@@ -328,12 +374,14 @@ def index():
     return render_template(
         "index.html",
         prompts=prompts,
-        categories=get_categories(),
-        tools=get_tools(),
+        categories=categories,
+        tools=tools,
         active_category=category,
         active_tool=tool,
         q=q,
     )
+
+
 @app.route("/prompt/new", methods=["GET", "POST"])
 def new_prompt():
     categories = get_categories()
@@ -351,7 +399,7 @@ def new_prompt():
             flash("Title and content are required.")
             return redirect(url_for("new_prompt"))
 
-        # Clamp to known lists (in case of stale form values)
+        # Clamp to known lists
         if category not in categories:
             category = "Other"
         if tool not in tools:
@@ -359,14 +407,23 @@ def new_prompt():
         if prompt_type not in PROMPT_TYPES:
             prompt_type = "Instruction"
 
+        # Thumbnail upload (optional)
+        thumbnail_path = None
+        thumb_file = request.files.get("thumbnail_file")
+        if thumb_file and thumb_file.filename:
+            if not is_allowed_thumb(thumb_file.filename):
+                flash("Thumbnail must be PNG, JPG, WebP, or GIF.")
+                return redirect(url_for("new_prompt"))
+            thumbnail_path = save_thumbnail(thumb_file)
+
         now = datetime.utcnow().isoformat()
         conn = get_db()
         conn.execute(
             """
-            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (title, category, tool, prompt_type, content, notes, now, now),
+            (title, category, tool, prompt_type, content, notes, thumbnail_path, now, now),
         )
         conn.commit()
         conn.close()
@@ -413,15 +470,35 @@ def edit_prompt(prompt_id: int):
         if prompt_type not in PROMPT_TYPES:
             prompt_type = "Instruction"
 
+        # Thumbnail logic
+        new_thumbnail = prompt["thumbnail"]
+        remove_thumb = request.form.get("remove_thumbnail") == "on"
+        thumb_file = request.files.get("thumbnail_file")
+
+        if remove_thumb and new_thumbnail:
+            delete_thumbnail_if_unused(new_thumbnail)
+            new_thumbnail = None
+
+        if thumb_file and thumb_file.filename:
+            if not is_allowed_thumb(thumb_file.filename):
+                flash("Thumbnail must be PNG, JPG, WebP, or GIF.")
+                return redirect(url_for("edit_prompt", prompt_id=prompt_id))
+
+            # Replacing existing thumbnail -> delete if unused elsewhere
+            if new_thumbnail:
+                delete_thumbnail_if_unused(new_thumbnail)
+
+            new_thumbnail = save_thumbnail(thumb_file)
+
         now = datetime.utcnow().isoformat()
         conn = get_db()
         conn.execute(
             """
             UPDATE prompts
-            SET title = ?, category = ?, tool = ?, prompt_type = ?, content = ?, notes = ?, updated_at = ?
+            SET title = ?, category = ?, tool = ?, prompt_type = ?, content = ?, notes = ?, thumbnail = ?, updated_at = ?
             WHERE id = ?
             """,
-            (title, category, tool, prompt_type, content, notes, now, prompt_id),
+            (title, category, tool, prompt_type, content, notes, new_thumbnail, now, prompt_id),
         )
         conn.commit()
         conn.close()
@@ -439,11 +516,59 @@ def edit_prompt(prompt_id: int):
 @app.route("/prompt/<int:prompt_id>/delete", methods=["POST"])
 def delete_prompt(prompt_id: int):
     conn = get_db()
+    row = conn.execute("SELECT thumbnail FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+    thumb = row["thumbnail"] if row else None
+
     conn.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
     conn.commit()
     conn.close()
+
+    if thumb:
+        delete_thumbnail_if_unused(thumb)
+
     flash("Prompt deleted.")
     return redirect(url_for("index"))
+
+
+@app.route("/prompt/<int:prompt_id>/duplicate", methods=["POST"])
+def duplicate_prompt(prompt_id: int):
+    conn = get_db()
+    prompt = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+
+    if not prompt:
+        conn.close()
+        flash("Prompt not found.")
+        return redirect(url_for("index"))
+
+    now = datetime.utcnow().isoformat()
+    new_title = f"Copy of {prompt['title']}"
+
+    # Copy thumbnail file (so delete/edit won’t affect the original)
+    new_thumb = copy_thumbnail(prompt["thumbnail"]) if prompt["thumbnail"] else None
+
+    conn.execute(
+        """
+        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            new_title,
+            prompt["category"],
+            prompt["tool"],
+            prompt["prompt_type"],
+            prompt["content"],
+            prompt["notes"],
+            new_thumb,
+            now,
+            now,
+        ),
+    )
+    new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    conn.commit()
+    conn.close()
+
+    flash("Prompt duplicated. You can edit the copy now.")
+    return redirect(url_for("edit_prompt", prompt_id=new_id))
 
 
 @app.route("/prompt/<int:prompt_id>/render", methods=["GET", "POST"])
@@ -511,7 +636,6 @@ def import_prompt():
             parsed = parse_prompt_txt(raw)
 
             title_default = filename.rsplit(".", 1)[0]
-
             title = parsed["title"].strip() or title_default
             category = parsed["category"].strip() or "Image"
             tool = parsed["tool"].strip() or "Generic"
@@ -532,10 +656,10 @@ def import_prompt():
 
             conn.execute(
                 """
-                INSERT INTO prompts (title, category, tool, prompt_type, content, notes, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (title, category, tool, prompt_type, content, notes, now, now),
+                (title, category, tool, prompt_type, content, notes, None, now, now),
             )
             imported += 1
 
@@ -579,6 +703,7 @@ def import_prompt_preview():
         "prompt_type": parsed["prompt_type"].strip() or "Instruction",
         "content": parsed["content"].strip(),
         "notes": parsed["notes"].strip(),
+        "thumbnail": None,
     }
 
     if prompt_like["category"] not in categories:
