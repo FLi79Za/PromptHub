@@ -31,6 +31,19 @@
           <span id="copyStatus" class="copy-status" aria-live="polite"></span>
         </div>
 
+        {# Show if ENABLE_OLLAMA is undefined OR true. Hide only if explicitly false. #}
+        {% if (ENABLE_OLLAMA is not defined or ENABLE_OLLAMA) %}
+          <p style="margin-top:0.75rem;">
+            <a
+              href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}"
+              class="btn-secondary"
+              title="Refine this prompt using a local LLM"
+            >
+              Refine with Ollama
+            </a>
+          </p>
+        {% endif %}
+
         <textarea id="finalPrompt" name="final_override" rows="10">{{ final_text }}</textarea>
 
         <div style="margin-top: 0.75rem;">
@@ -49,6 +62,19 @@
         <button type="button" id="copyBtn">Copy to clipboard</button>
         <span id="copyStatus" class="copy-status" aria-live="polite"></span>
       </div>
+
+      {# Optional link even when there are no placeholders, since you still might want a refinement #}
+      {% if (ENABLE_OLLAMA is not defined or ENABLE_OLLAMA) %}
+        <p style="margin-top:0.75rem;">
+          <a
+            href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}"
+            class="btn-secondary"
+            title="Refine this prompt using a local LLM"
+          >
+            Refine with Ollama
+          </a>
+        </p>
+      {% endif %}
 
       <textarea id="finalPrompt" name="final_override" rows="10">{{ final_text if final_text else prompt.content }}</textarea>
 

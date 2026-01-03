@@ -82,7 +82,128 @@
       <textarea name="notes" rows="4">{{ prompt.notes if prompt and prompt.notes else '' }}</textarea>
     </label>
 
-    <button type="submit">Save</button>
+<div class="actions-row" style="display:flex; gap:0.75rem; align-items:center; margin-top:1rem;">
+  <button type="submit">Save</button>
+
+  {% if prompt and prompt.id and (ENABLE_OLLAMA is not defined or ENABLE_OLLAMA) %}
+    <a
+      href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}"
+      class="btn-secondary"
+      title="Refine or create variants using a local LLM"
+    >
+      Refine with Ollama
+    </a>
+  {% endif %}
+</div>
   </form>
+    {# Optional: refine draft with Ollama when creating a NEW prompt (not saved yet) #}
+    {% if (prompt is none) or (prompt and (prompt.id is not defined or not prompt.id)) %}
+      {% if (ENABLE_OLLAMA is not defined or ENABLE_OLLAMA) %}
+        <div style="margin-top: 1rem; padding: 0.75rem; border: 1px solid #333; border-radius: 8px;">
+          <strong>Optional: refine this draft with Ollama</strong>
+
+          {% if refine_error %}
+            <div class="flash flash-error" style="margin-top:0.5rem;">{{ refine_error }}</div>
+          {% endif %}
+
+          <form method="post" action="{{ url_for('refine_draft') }}" id="refineDraftForm" style="margin-top:0.75rem;">
+            <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
+              <label style="min-width:240px;">
+                Model
+                <select name="model">
+                  {% if models and (models|length > 0) %}
+                    {% for m in models %}
+                      <option value="{{ m }}" {% if default_model and m == default_model %}selected{% endif %}>{{ m }}</option>
+                    {% endfor %}
+                  {% else %}
+                    <option value="{{ default_model }}" selected>{{ default_model }}</option>
+                  {% endif %}
+                </select>
+              </label>
+
+              <label style="min-width:220px;">
+                Mode
+                <select name="mode">
+                  <option value="refine">Refine</option>
+                  <option value="shorten">Shorten</option>
+                  <option value="expand">Expand</option>
+                  <option value="convert_style">Convert style</option>
+                  <option value="variants">Variants</option>
+                </select>
+              </label>
+
+              <label style="flex:1; min-width:260px;">
+                Instruction
+                <input type="text" name="instruction" placeholder="e.g. make more cinematic, keep [[placeholders]]">
+              </label>
+            </div>
+
+            <!-- Hidden fields populated by JS from the main form -->
+            <input type="hidden" name="title" id="rd_title">
+            <input type="hidden" name="category" id="rd_category">
+            <input type="hidden" name="tool" id="rd_tool">
+            <input type="hidden" name="prompt_type" id="rd_prompt_type">
+            <input type="hidden" name="content" id="rd_content">
+            <input type="hidden" name="notes" id="rd_notes">
+
+            <button type="button" id="refineDraftBtn" style="margin-top:0.75rem;">
+              Refine draft with Ollama
+            </button>
+          </form>
+        </div>
+
+        {% if refined_draft %}
+          <div style="margin-top: 1rem;">
+            <h3>Refined draft (not saved yet)</h3>
+            <textarea rows="10" id="refinedDraftBox">{{ refined_draft }}</textarea>
+            <p class="notes">Tip: click “Replace Content” to apply, tweak as needed, then Save.</p>
+            <button type="button" id="applyRefinedDraft">Replace Content with refined draft</button>
+          </div>
+
+          <script>
+            (function(){
+              const applyBtn = document.getElementById('applyRefinedDraft');
+              const refinedBox = document.getElementById('refinedDraftBox');
+              const contentField = document.querySelector('textarea[name="content"]');
+              if (applyBtn && refinedBox && contentField) {
+                applyBtn.addEventListener('click', () => {
+                  contentField.value = refinedBox.value;
+                  contentField.focus();
+                });
+              }
+            })();
+          </script>
+        {% endif %}
+
+        <script>
+          (function(){
+            const btn = document.getElementById('refineDraftBtn');
+            const form = document.getElementById('refineDraftForm');
+            if (!btn || !form) return;
+
+            function val(sel){
+              const el = document.querySelector(sel);
+              return el ? el.value : '';
+            }
+
+            btn.addEventListener('click', () => {
+              document.getElementById('rd_title').value = val('input[name="title"]');
+              document.getElementById('rd_category').value = val('select[name="category"]');
+              document.getElementById('rd_tool').value = val('select[name="tool"]');
+              document.getElementById('rd_prompt_type').value = val('select[name="prompt_type"]');
+
+              const contentEl = document.querySelector('textarea[name="content"]');
+              document.getElementById('rd_content').value = contentEl ? contentEl.value : '';
+
+              const notesEl = document.querySelector('textarea[name="notes"]');
+              document.getElementById('rd_notes').value = notesEl ? notesEl.value : '';
+
+              form.submit();
+            });
+          })();
+        </script>
+      {% endif %}
+    {% endif %}
+
 </section>
 {% endblock %}

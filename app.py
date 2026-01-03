@@ -5,16 +5,30 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 from werkzeug.utils import secure_filename
+
+import requests
 
 app = Flask(__name__)
 app.secret_key = "change-me-to-something-random"
+
+@app.context_processor
+def inject_feature_flags():
+    # Expose feature flags to all templates without needing to pass them explicitly
+    return {"ENABLE_OLLAMA": ENABLE_OLLAMA}
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "prompts.db"
 
 PROMPT_TYPES = ["Generation", "Edit", "Instruction"]
+
+# -------------------------
+# Ollama (local LLM) config
+# -------------------------
+ENABLE_OLLAMA = True  # Set to False to hide/disable all Ollama features
+OLLAMA_URL = "http://127.0.0.1:11434"
+DEFAULT_OLLAMA_MODEL = "gemma3:4b"  # change to a model you have installed
 
 # Thumbnails are stored on disk (recommended), DB stores relative path under /static
 UPLOAD_DIR = BASE_DIR / "static" / "uploads" / "thumbs"
@@ -243,6 +257,52 @@ def parse_prompt_txt(raw_text: str) -> dict:
 # -------------------------
 # Manage categories/tools
 # -------------------------
+
+# -------------------------
+# Ollama helpers
+# -------------------------
+def ollama_list_models() -> list[str]:
+    """
+    Returns a stable list of model names from Ollama /api/tags.
+
+    - If Ollama isn't reachable, returns [DEFAULT_OLLAMA_MODEL]
+    - Models are sorted case-insensitively for UI stability
+    - DEFAULT_OLLAMA_MODEL is pinned to the top if present
+    """
+    try:
+        r = requests.get(f"{OLLAMA_URL}/api/tags", timeout=6)
+        r.raise_for_status()
+        data = r.json()
+        models = [m.get("name") for m in data.get("models", []) if m.get("name")]
+
+        if not models:
+            return [DEFAULT_OLLAMA_MODEL]
+
+        models = sorted(models, key=lambda s: s.lower())
+
+        # Pin default to top if present
+        if DEFAULT_OLLAMA_MODEL in models:
+            models.remove(DEFAULT_OLLAMA_MODEL)
+            models.insert(0, DEFAULT_OLLAMA_MODEL)
+
+        return models
+    except Exception:
+        return [DEFAULT_OLLAMA_MODEL]
+
+def ollama_generate(model: str, system: str, prompt: str) -> str:
+    """Call Ollama /api/generate and return response text."""
+    if not ENABLE_OLLAMA:
+        raise RuntimeError("Ollama integration is disabled")
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "system": system,
+        "stream": False,
+    }
+    r = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=120)
+    r.raise_for_status()
+    data = r.json()
+    return (data.get("response") or "").strip()
 @app.route("/manage", methods=["GET"])
 def manage():
     return render_template("manage.html", categories=get_categories(), tools=get_tools())
@@ -429,12 +489,16 @@ def new_prompt():
         conn.close()
         return redirect(url_for("index"))
 
+    models = ollama_list_models() if ENABLE_OLLAMA else [DEFAULT_OLLAMA_MODEL]
+
     return render_template(
         "edit_prompt.html",
         prompt=None,
         categories=categories,
         tools=tools,
         prompt_types=PROMPT_TYPES,
+        models=models,
+        default_model=session.get("ollama_model", DEFAULT_OLLAMA_MODEL),
     )
 
 
@@ -606,6 +670,177 @@ def render_prompt(prompt_id: int):
 # -------------------------
 # TXT import
 # -------------------------
+
+# -------------------------
+# Ollama refine (existing prompt)
+# -------------------------
+@app.route("/prompt/<int:prompt_id>/refine", methods=["GET", "POST"])
+def refine_prompt(prompt_id: int):
+    if not ENABLE_OLLAMA:
+        flash("Local LLM integration is disabled.")
+        return redirect(url_for("edit_prompt", prompt_id=prompt_id))
+
+    conn = get_db()
+    prompt_row = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+    conn.close()
+
+    if not prompt_row:
+        flash("Prompt not found.")
+        return redirect(url_for("index"))
+
+    models = ollama_list_models()
+    refined = None
+    error = None
+
+    if request.method == "POST":
+        model = (request.form.get("model") or session.get("ollama_model") or DEFAULT_OLLAMA_MODEL).strip()
+        session["ollama_model"] = model
+        instruction = (request.form.get("instruction") or "").strip()
+        mode = (request.form.get("mode") or "refine").strip()
+        source_text = (request.form.get("source_text") or prompt_row["content"]).strip()
+
+        system = (
+            "You are a prompt engineering assistant. "
+            "Output ONLY the updated prompt text. No explanations, no bullet points, no quotes."
+        )
+
+        user_prompt = f"""
+TASK: {mode}
+INSTRUCTION: {instruction}
+
+SOURCE PROMPT:
+{source_text}
+
+RULES:
+- Keep the intent unless the instruction asks otherwise.
+- Preserve placeholders like [[like_this]] exactly.
+- Keep the same prompt style (Generation/Edit/Instruction) unless instructed to convert it.
+- Output only the final prompt text.
+""".strip()
+
+        try:
+            refined = ollama_generate(model=model, system=system, prompt=user_prompt)
+            if not refined:
+                error = "LLM returned an empty response."
+        except Exception as e:
+            error = f"Ollama error: {e}"
+
+        # Save as new prompt (recommended)
+        if refined and request.form.get("save_as_new") == "on":
+            now = datetime.utcnow().isoformat()
+            title = f"{prompt_row['title']} (LLM variant)"
+            conn = get_db()
+            conn.execute(
+                """
+                INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    title,
+                    prompt_row["category"],
+                    prompt_row["tool"],
+                    prompt_row["prompt_type"],
+                    refined,
+                    (prompt_row["notes"] or ""),
+                    prompt_row["thumbnail"],
+                    now,
+                    now,
+                ),
+            )
+            new_id = conn.execute("SELECT last_insert_rowid() ").fetchone()[0]
+            conn.commit()
+            conn.close()
+            flash("Saved LLM variant as a new prompt.")
+            return redirect(url_for("edit_prompt", prompt_id=new_id))
+
+    return render_template(
+        "refine_prompt.html",
+        prompt=prompt_row,
+        models=models,
+        default_model=session.get("ollama_model", DEFAULT_OLLAMA_MODEL),
+        refined=refined,
+        error=error,
+    )
+
+
+# -------------------------
+# Ollama refine (draft for NEW prompt, not saved yet)
+# -------------------------
+@app.route("/refine_draft", methods=["POST"])
+def refine_draft():
+    if not ENABLE_OLLAMA:
+        flash("Local LLM integration is disabled.")
+        return redirect(request.referrer or url_for("new_prompt"))
+
+    model = (request.form.get("model") or session.get("ollama_model") or DEFAULT_OLLAMA_MODEL).strip()
+    session["ollama_model"] = model
+    instruction = (request.form.get("instruction") or "").strip()
+    mode = (request.form.get("mode") or "refine").strip()
+
+    title = (request.form.get("title") or "").strip()
+    category = (request.form.get("category") or "Other").strip()
+    tool = (request.form.get("tool") or "Generic").strip()
+    prompt_type = (request.form.get("prompt_type") or "Instruction").strip()
+    content = (request.form.get("content") or "").strip()
+    notes = (request.form.get("notes") or "").strip()
+
+    if not content:
+        flash("Add some content first, then refine.")
+        return redirect(request.referrer or url_for("new_prompt"))
+
+    system = (
+        "You are a prompt engineering assistant. "
+        "Output ONLY the updated prompt text. No explanations, no bullet points, no quotes."
+    )
+
+    user_prompt = f"""
+TASK: {mode}
+INSTRUCTION: {instruction}
+
+SOURCE PROMPT:
+{content}
+
+RULES:
+- Keep the intent unless the instruction asks otherwise.
+- Preserve placeholders like [[like_this]] exactly.
+- Keep the same prompt style (Generation/Edit/Instruction) unless instructed to convert it.
+- Output only the final prompt text.
+""".strip()
+
+    refined = None
+    error = None
+    models = ollama_list_models()
+
+    try:
+        refined = ollama_generate(model=model, system=system, prompt=user_prompt)
+        if not refined:
+            error = "LLM returned an empty response."
+    except Exception as e:
+        error = f"Ollama error: {e}"
+
+    prompt_like = {
+        "id": None,
+        "title": title,
+        "category": category,
+        "tool": tool,
+        "prompt_type": prompt_type,
+        "content": content,
+        "notes": notes,
+        "thumbnail": None,
+    }
+
+    return render_template(
+        "edit_prompt.html",
+        prompt=prompt_like,
+        categories=get_categories(),
+        tools=get_tools(),
+        prompt_types=PROMPT_TYPES,
+        refined_draft=refined,
+        refine_error=error,
+        models=models,
+        default_model=session.get("ollama_model", DEFAULT_OLLAMA_MODEL),
+        imported_preview=False,
+    )
 @app.route("/prompt/import", methods=["GET", "POST"])
 def import_prompt():
     categories = get_categories()

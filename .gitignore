@@ -16,3 +16,5 @@ Thumbs.db
 # Uploaded thumbnails
 static/uploads/
 
+#backed up app file
+app - Copy.py
