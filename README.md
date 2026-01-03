@@ -1,42 +1,129 @@
-# Prompt Library (Prompt Hub)
+# Prompt Hub (Prompt Library)
 
-A local, self-hosted web app for storing, organising, searching, and reusing AI prompts.
+A local, self-hosted web app for storing, organising, searching, refining, and reusing AI prompts.
 
-Designed for real-world AI workflows, including:
-- Image generation prompts (Flux, SD, etc.)
-- Instruction-based image editing prompts (Qwen Edit, Nano Banana, Flux Kontext)
-- Video, music, and other AI tool prompts
-- Prompt variants and experimentation
+Prompt Hub is designed for **real-world AI workflows**, not toy examples. It supports full-sentence prompts, instruction-based editing, iterative refinement, and visual context — all running **entirely locally**.
 
-Everything runs locally. No cloud services required.
+No cloud services required.
 
 ---
 
-## Features
+## ⚡ Quick Start
 
-- Create, edit, delete, and duplicate prompts
-- Organise prompts by **Category** and **Tool**
-- Add new categories and tools via the UI (no code changes)
-- Instruction-style prompts supported (not just templates)
-- Placeholder support using `[[placeholders]]`
-- Render prompts with live substitution
-- Copy generated prompts to clipboard
-- Import prompts from `.txt` files (preview or bulk import)
-- Full-text search across title, content, notes, tool, and category
-- SQLite database (local, lightweight)
-
----
-
-## Requirements
-
-- **Python 3.10+** (3.11 recommended)
-- Git (optional, but recommended)
-
-## Check Python version:
 ```bash
-python --version
+git clone https://github.com/<your-username>/<repo-name>.git
+cd <repo-name>
+python -m venv env
+env\Scripts\activate
+pip install -r requirements.txt
+python app.py
+Open in your browser:
+👉 http://127.0.0.1:5000
 
-## Setup (Windows 11)
+🧠 What this is good for
+Image generation prompts (Flux, Stable Diffusion, etc.)
+
+Instruction-based image editing prompts
+(Qwen Edit, Nano Banana, Flux Kontext)
+
+Video, music, and other AI tool prompts
+
+Prompt variants and experimentation
+
+Iterative refinement using a local LLM (Ollama)
+
+🚀 Key Features
+Core prompt management
+Create, edit, delete, and duplicate prompts
+
+Organise prompts by Category and Tool
+
+Add new categories and tools via the UI (no code changes)
+
+SQLite database (local, lightweight)
+
+Prompt authoring & usage
+Full-sentence prompts supported (not just templates)
+
+Placeholder support using [[placeholders]]
+
+Render prompts with live substitution
+
+Edit final rendered output before copying
+
+One-click copy to clipboard
+
+Search & scale
+Full-text search across:
+
+Title
+
+Content
+
+Notes
+
+Category
+
+Tool
+
+Prompt type
+
+Combine search with category and tool filters
+
+Designed to scale to large prompt libraries
+
+Import / export
+Import prompts from .txt files
+
+Preview before saving
+
+Bulk import supported
+
+Optional metadata headers supported
+
+Visual context
+Optional thumbnail images per prompt
+
+Useful for image and video prompts
+
+Supports portrait, landscape, or square images
+
+Thumbnails improve browsing and recognition
+
+Local LLM integration (optional)
+Ollama integration for prompt refinement
+
+Runs entirely locally
+
+Can be disabled without breaking the app
+
+Supported workflows:
+
+Refine an existing prompt
+
+Refine a prompt at the “New Prompt” draft stage
+
+Create variants (save as new prompts)
+
+Convert between prompt styles (e.g. Flux ↔ instruction-based)
+
+Shorten, expand, or rewrite prompts
+
+The app remains fully usable even if Ollama is not installed or running.
+
+🛠 Requirements
+Python 3.10+ (3.11 recommended)
+
+Git (optional, but recommended)
+
+Windows 11 tested (should also work on macOS/Linux)
+
+Check Python version:
+
+bash
+Copy code
+python --version
+🧩 Setup (Windows 11)
 1) Clone the repository
 bash
 Copy code
@@ -57,7 +144,7 @@ You should now see (env) in your terminal prompt.
 bash
 Copy code
 pip install -r requirements.txt
-If you don’t have requirements.txt yet, it should contain:
+Minimum requirements.txt:
 
 txt
 Copy code
@@ -72,22 +159,32 @@ Create prompts.db
 
 Create default categories and tools
 
-You should see output like:
+You should see:
 
 nginx
 Copy code
 Running on http://127.0.0.1:5000
-5) Open in your browser
-Open:
-
-cpp
-Copy code
-http://127.0.0.1:5000
-Usage Overview
+📘 Usage Overview
 Creating prompts
 Click New Prompt
 
-Fill in title, category, tool, type, and content
+Fill in:
+
+Title
+
+Category
+
+Tool
+
+Prompt type
+
+Content
+
+Optionally add:
+
+Notes
+
+Thumbnail image
 
 Use [[placeholders]] for variable sections
 
@@ -111,7 +208,7 @@ Click Duplicate
 
 A copy opens immediately for editing
 
-Ideal for creating variations
+Ideal for creating variations without overwriting originals
 
 Importing prompts from .txt
 Go to Import
@@ -134,10 +231,10 @@ Go to Manage
 
 Add or remove categories/tools via the UI
 
-Deletion is blocked if items are in use (to protect data)
+Deletion is blocked if items are in use (data safety)
 
 Searching
-Use the search bar on the main page
+Use the search bar on the main page.
 
 Searches across:
 
@@ -153,29 +250,58 @@ Category
 
 Prompt type
 
-Combine with category and tool filters
+Combine with category and tool filters for large libraries.
 
-Project Structure
+🧠 Ollama Integration (Optional)
+If you have Ollama installed and running:
+
+bash
+Copy code
+ollama list
+The app will:
+
+Detect available models
+
+Default to gemma3:4b
+
+Remember the last model you selected
+
+You can:
+
+Refine prompts from Edit
+
+Refine prompts from Use
+
+Refine drafts before saving a new prompt
+
+If Ollama is not installed or running:
+
+The app still works normally
+
+Refinement buttons are optional and safe
+
+🗂 Project Structure
 pgsql
 Copy code
 .
 ├── app.py
-├── prompts.db          # Local database (not committed)
+├── prompts.db              # Local database (not committed)
 ├── requirements.txt
 ├── templates/
 │   ├── base.html
 │   ├── index.html
 │   ├── edit_prompt.html
 │   ├── render_prompt.html
+│   ├── refine_prompt.html
 │   ├── import_prompt.html
 │   └── manage.html
 ├── static/
 │   └── styles.css
-└── env/                # Virtual environment (not committed)
-Git Notes
+└── env/                    # Virtual environment (not committed)
+🧾 Git Notes
 Ensure your .gitignore includes:
 
-bash
+gitignore
 Copy code
 env/
 venv/
@@ -184,7 +310,7 @@ __pycache__/
 prompts.db
 This prevents committing your local database or virtual environment.
 
-Security Notes
+🔐 Security Notes
 This app is intended for local use.
 
 If you expose it beyond your local machine:
@@ -195,13 +321,18 @@ Use HTTPS or a VPN
 
 Do not expose it publicly without protection
 
-Roadmap Ideas (Optional)
+🛣 Roadmap Ideas (Optional)
 Tags (free-form)
 
 Export prompts back to .txt
 
 Prompt version history
 
+Batch refinement
+
 Mobile-friendly layout / PWA
 
-Cloud or VPN-based access
+Cloud or VPN-based access with sync
+
+yaml
+Copy code
