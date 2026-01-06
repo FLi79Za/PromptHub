@@ -35,9 +35,9 @@
 
     <button type="button" class="btn-secondary" id="toggleOrganise">Organise</button>
 
-    <!-- preserve current sort -->
     <input type="hidden" name="sort_by" value="{{ sort_by|default('updated_at') }}">
     <input type="hidden" name="sort_dir" value="{{ sort_dir|default('desc') }}">
+    <input type="hidden" name="page" value="{{ page|default(1) }}">
   </form>
 
   <!-- ================= BULK / ORGANISE ================= -->
@@ -122,88 +122,67 @@
         <button type="button" class="btn-secondary" id="selectNone">Select none</button>
       </div>
     </div>
-
-    <!-- ================= PROMPT LIST ================= -->
-    <ul class="prompt-list" id="promptList">
-      {% for p in prompts %}
-        <li class="prompt-card">
-          <div class="organise-checkbox" style="display:none;">
-            <input type="checkbox" class="bulkCheck" name="prompt_ids" value="{{ p.id }}">
-          </div>
-
-          {% if p.thumbnail %}
-            <img class="thumb"
-                 src="{{ url_for('static', filename=p.thumbnail) }}"
-                 alt="Thumbnail">
-          {% endif %}
-
-          <div class="prompt-meta">
-            <h3 style="margin:0 0 0.25rem 0;">{{ p.title }}</h3>
-            <p class="notes" style="margin:0 0 0.5rem 0;">
-              {{ p.category }} · {{ p.tool }} · {{ p.prompt_type }}
-            </p>
-
-            <div class="quick-actions"
-                 style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-              <button type="button"
-                      class="btn-secondary"
-                      onclick="togglePreview({{ p.id }})">
-                Preview
-              </button>
-
-              <button type="button"
-                      class="btn-secondary"
-                      onclick="copyPrompt({{ p.id }})">
-                Copy
-              </button>
-
-              <a class="btn-secondary"
-                 href="{{ url_for('render_prompt', prompt_id=p.id) }}">
-                Use
-              </a>
-
-              <a class="btn-secondary"
-                 href="{{ url_for('edit_prompt', prompt_id=p.id) }}">
-                Edit
-              </a>
-            </div>
-
-            <div id="preview-{{ p.id }}"
-                 class="prompt-preview"
-                 style="display:none;">
-              <pre>{{ p.content }}</pre>
-            </div>
-          </div>
-        </li>
-      {% endfor %}
-    </ul>
   </form>
 
-  <!-- ================= PAGINATION (optional) ================= -->
-  {% if total_pages is defined and total_pages > 1 %}
-  <nav class="pagination" style="margin-top:1rem; display:flex; gap:0.5rem;">
-    {% if page > 1 %}
-      <a class="btn-secondary"
-         href="{{ url_for('index', page=page-1, q=q, category=active_category,
-                          tool=active_tool, sort_by=sort_by, sort_dir=sort_dir) }}">
-        Prev
-      </a>
-    {% endif %}
+  <!-- ================= PROMPT LIST ================= -->
+  <ul class="prompt-list" id="promptList">
+    {% for p in prompts %}
+      <li class="prompt-card">
+        <div class="organise-checkbox" style="display:none;">
+          <input type="checkbox"
+                 class="bulkCheck"
+                 name="prompt_ids"
+                 value="{{ p.id }}"
+                 form="bulkForm">
+        </div>
 
-    <span class="notes">Page {{ page }} of {{ total_pages }}</span>
+        {% if p.thumbnail %}
+          <img class="thumb"
+               src="{{ url_for('static', filename=p.thumbnail) }}"
+               alt="Thumbnail">
+        {% endif %}
 
-    {% if page < total_pages %}
-      <a class="btn-secondary"
-         href="{{ url_for('index', page=page+1, q=q, category=active_category,
-                          tool=active_tool, sort_by=sort_by, sort_dir=sort_dir) }}">
-        Next
-      </a>
-    {% endif %}
-  </nav>
-  {% endif %}
+        <div class="prompt-meta">
+          <h3 style="margin:0 0 0.25rem 0;">{{ p.title }}</h3>
+          <p class="notes" style="margin:0 0 0.5rem 0;">
+            {{ p.category }} · {{ p.tool }} · {{ p.prompt_type }}
+          </p>
+
+          <div class="quick-actions"
+               style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+
+            <button type="button" class="btn-secondary"
+                    onclick="togglePreview({{ p.id }})">Preview</button>
+
+            <button type="button" class="btn-secondary"
+                    onclick="copyPrompt({{ p.id }})">Copy</button>
+
+            <a class="btn-secondary"
+               href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
+
+            <a class="btn-secondary"
+               href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
+
+            <!-- DELETE: independent form, never associated with bulkForm -->
+            <form method="post"
+                  action="{{ url_for('delete_prompt', prompt_id=p.id) }}"
+                  style="display:inline;"
+                  onsubmit="return confirm('Delete this prompt permanently?');">
+              <input type="hidden" name="return_to" value="{{ request.full_path }}">
+              <button type="submit" class="btn-danger">Delete</button>
+            </form>
+          </div>
+
+          <div id="preview-{{ p.id }}" class="prompt-preview" style="display:none;">
+            <pre>{{ p.content }}</pre>
+          </div>
+        </div>
+      </li>
+    {% endfor %}
+  </ul>
+
 </section>
 
-<!-- ================= JS ================= -->
 <script>
 (function(){
   const toggle = document.getElementById('toggleOrganise');

@@ -186,6 +186,15 @@ pre.code {
   line-height: 1.4;
   color: #ddd;
 }
+.btn-danger {
+  background: #8b2e2e;
+  border: 1px solid #aa3a3a;
+  color: #fff;
+}
+
+.btn-danger:hover {
+  background: #a33b3b;
+}
 
 
 
