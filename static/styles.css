@@ -167,4 +167,25 @@ pre.code {
   display: block;
 }
 
+.prompt-preview {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background: #0f0f0f;
+  border: 1px solid #333;
+  border-radius: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.prompt-preview pre {
+  margin: 0;
+  white-space: pre-wrap;      /* THIS is the key */
+  word-break: break-word;     /* prevents overflow */
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  color: #ddd;
+}
+
+
 

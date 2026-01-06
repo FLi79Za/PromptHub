@@ -4,77 +4,247 @@
 <section>
   <h2>Prompts</h2>
 
-  <form method="get" class="filters">
-    <label for="q">Search:</label>
-    <input
-      type="text"
-      id="q"
-      name="q"
-      value="{{ q if q is defined else '' }}"
-      placeholder="Search title, content, notes, tool..."
-    >
+  <!-- ================= FILTERS ================= -->
+  <form method="get" class="filters" id="filterForm">
+    <label for="q">Search</label>
+    <input type="text" id="q" name="q" value="{{ q|default('') }}"
+           placeholder="Search title, content, notes, tool, category...">
 
-    <label for="category">Category:</label>
+    <label for="category">Category</label>
     <select name="category" id="category">
-      <option value="all" {% if active_category == "all" %}selected{% endif %}>All</option>
-      {% for cat in categories %}
-        <option value="{{ cat }}" {% if active_category == cat %}selected{% endif %}>{{ cat }}</option>
+      <option value="all" {% if active_category == 'all' %}selected{% endif %}>All</option>
+      {% for c in categories %}
+        <option value="{{ c }}" {% if active_category == c %}selected{% endif %}>{{ c }}</option>
       {% endfor %}
     </select>
 
-    <label for="tool">Tool:</label>
+    <label for="tool">Tool</label>
     <select name="tool" id="tool">
-      <option value="all" {% if active_tool == "all" %}selected{% endif %}>All</option>
+      <option value="all" {% if active_tool == 'all' %}selected{% endif %}>All</option>
       {% for t in tools %}
         <option value="{{ t }}" {% if active_tool == t %}selected{% endif %}>{{ t }}</option>
       {% endfor %}
     </select>
 
     <button type="submit">Apply</button>
+    <a class="btn-secondary" href="{{ url_for('index') }}">Reset</a>
 
-    {% if (q is defined and q) or active_category != "all" or active_tool != "all" %}
-      <a href="{{ url_for('index') }}" style="margin-left: 0.75rem;">Clear</a>
-    {% endif %}
+    <a class="btn-secondary" href="{{ url_for('new_prompt') }}">New Prompt</a>
+    <a class="btn-secondary" href="{{ url_for('import_prompt') }}">Import</a>
+    <a class="btn-secondary" href="{{ url_for('manage') }}">Manage</a>
+
+    <button type="button" class="btn-secondary" id="toggleOrganise">Organise</button>
+
+    <!-- preserve current sort -->
+    <input type="hidden" name="sort_by" value="{{ sort_by|default('updated_at') }}">
+    <input type="hidden" name="sort_dir" value="{{ sort_dir|default('desc') }}">
   </form>
 
-  <ul class="prompt-list">
-    {% for p in prompts %}
-      <li class="prompt-card">
-{% if p.thumbnail %}
-  <img
-    src="{{ url_for('static', filename=p.thumbnail) }}"
-    alt="Thumbnail"
-    class="thumb"
-    loading="lazy"
-  >
-{% endif %}
+  <!-- ================= BULK / ORGANISE ================= -->
+  <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
+    <div id="organisePanel"
+         style="display:none; margin-top:1rem; padding:1rem;
+                border:1px solid #333; border-radius:10px;">
 
-        <h3>{{ p.title }}</h3>
+      <h3 style="margin-top:0;">Organise mode</h3>
 
-        <p class="meta">
-          {{ p.category }} · {{ p.tool }} · {{ p.prompt_type }} · Updated {{ p.updated_at }}
-        </p>
-
-        {% if p.notes %}
-          <p class="notes">{{ p.notes }}</p>
-        {% endif %}
-
-        <div class="actions">
-          <a href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
-          <a href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
-
-          <form method="post" action="{{ url_for('duplicate_prompt', prompt_id=p.id) }}">
-            <button type="submit">Duplicate</button>
-          </form>
-
-          <form method="post" action="{{ url_for('delete_prompt', prompt_id=p.id) }}" onsubmit="return confirm('Delete this prompt?');">
-            <button type="submit">Delete</button>
-          </form>
+      <div class="grid"
+           style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+                  gap:0.75rem;">
+        <div>
+          <label for="sort_by_ui">Sort by</label>
+          <select id="sort_by_ui">
+            <option value="updated_at" {% if sort_by=='updated_at' %}selected{% endif %}>Updated</option>
+            <option value="created_at" {% if sort_by=='created_at' %}selected{% endif %}>Created</option>
+            <option value="title" {% if sort_by=='title' %}selected{% endif %}>Title</option>
+            <option value="category" {% if sort_by=='category' %}selected{% endif %}>Category</option>
+            <option value="tool" {% if sort_by=='tool' %}selected{% endif %}>Tool</option>
+            <option value="prompt_type" {% if sort_by=='prompt_type' %}selected{% endif %}>Type</option>
+          </select>
         </div>
-      </li>
-    {% else %}
-      <p>No prompts found.</p>
-    {% endfor %}
-  </ul>
+
+        <div>
+          <label for="sort_dir_ui">Direction</label>
+          <select id="sort_dir_ui">
+            <option value="desc" {% if sort_dir=='desc' %}selected{% endif %}>Desc</option>
+            <option value="asc" {% if sort_dir=='asc' %}selected{% endif %}>Asc</option>
+          </select>
+        </div>
+
+        <div style="display:flex; align-items:flex-end;">
+          <button type="button" class="btn-secondary" id="applySort">Apply sort</button>
+        </div>
+      </div>
+
+      <hr style="margin:1rem 0; border-color:#333;">
+
+      <p class="notes">Tick prompts below, then apply changes.</p>
+
+      <div class="grid"
+           style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+                  gap:0.75rem;">
+        <div>
+          <label>Category</label>
+          <select name="bulk_category">
+            <option value="">(no change)</option>
+            {% for c in categories %}
+              <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+          </select>
+          <input type="text" name="bulk_category_custom" placeholder="or type new">
+        </div>
+
+        <div>
+          <label>Tool</label>
+          <select name="bulk_tool">
+            <option value="">(no change)</option>
+            {% for t in tools %}
+              <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+          </select>
+          <input type="text" name="bulk_tool_custom" placeholder="or type new">
+        </div>
+
+        <div>
+          <label>Type</label>
+          <select name="bulk_prompt_type">
+            <option value="">(no change)</option>
+            {% for pt in prompt_types %}
+              <option value="{{ pt }}">{{ pt }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div style="display:flex; gap:0.75rem; margin-top:0.75rem; flex-wrap:wrap;">
+        <button type="submit" class="btn-primary">Apply to selected</button>
+        <button type="button" class="btn-secondary" id="selectAll">Select all</button>
+        <button type="button" class="btn-secondary" id="selectNone">Select none</button>
+      </div>
+    </div>
+
+    <!-- ================= PROMPT LIST ================= -->
+    <ul class="prompt-list" id="promptList">
+      {% for p in prompts %}
+        <li class="prompt-card">
+          <div class="organise-checkbox" style="display:none;">
+            <input type="checkbox" class="bulkCheck" name="prompt_ids" value="{{ p.id }}">
+          </div>
+
+          {% if p.thumbnail %}
+            <img class="thumb"
+                 src="{{ url_for('static', filename=p.thumbnail) }}"
+                 alt="Thumbnail">
+          {% endif %}
+
+          <div class="prompt-meta">
+            <h3 style="margin:0 0 0.25rem 0;">{{ p.title }}</h3>
+            <p class="notes" style="margin:0 0 0.5rem 0;">
+              {{ p.category }} · {{ p.tool }} · {{ p.prompt_type }}
+            </p>
+
+            <div class="quick-actions"
+                 style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+              <button type="button"
+                      class="btn-secondary"
+                      onclick="togglePreview({{ p.id }})">
+                Preview
+              </button>
+
+              <button type="button"
+                      class="btn-secondary"
+                      onclick="copyPrompt({{ p.id }})">
+                Copy
+              </button>
+
+              <a class="btn-secondary"
+                 href="{{ url_for('render_prompt', prompt_id=p.id) }}">
+                Use
+              </a>
+
+              <a class="btn-secondary"
+                 href="{{ url_for('edit_prompt', prompt_id=p.id) }}">
+                Edit
+              </a>
+            </div>
+
+            <div id="preview-{{ p.id }}"
+                 class="prompt-preview"
+                 style="display:none;">
+              <pre>{{ p.content }}</pre>
+            </div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  </form>
+
+  <!-- ================= PAGINATION (optional) ================= -->
+  {% if total_pages is defined and total_pages > 1 %}
+  <nav class="pagination" style="margin-top:1rem; display:flex; gap:0.5rem;">
+    {% if page > 1 %}
+      <a class="btn-secondary"
+         href="{{ url_for('index', page=page-1, q=q, category=active_category,
+                          tool=active_tool, sort_by=sort_by, sort_dir=sort_dir) }}">
+        Prev
+      </a>
+    {% endif %}
+
+    <span class="notes">Page {{ page }} of {{ total_pages }}</span>
+
+    {% if page < total_pages %}
+      <a class="btn-secondary"
+         href="{{ url_for('index', page=page+1, q=q, category=active_category,
+                          tool=active_tool, sort_by=sort_by, sort_dir=sort_dir) }}">
+        Next
+      </a>
+    {% endif %}
+  </nav>
+  {% endif %}
 </section>
+
+<!-- ================= JS ================= -->
+<script>
+(function(){
+  const toggle = document.getElementById('toggleOrganise');
+  const panel = document.getElementById('organisePanel');
+  const checkboxWraps = document.querySelectorAll('.organise-checkbox');
+  const checks = document.querySelectorAll('.bulkCheck');
+  const btnAll = document.getElementById('selectAll');
+  const btnNone = document.getElementById('selectNone');
+  const applySort = document.getElementById('applySort');
+  const sortBy = document.getElementById('sort_by_ui');
+  const sortDir = document.getElementById('sort_dir_ui');
+  const filterForm = document.getElementById('filterForm');
+
+  let organiseOn = false;
+
+  toggle.addEventListener('click', () => {
+    organiseOn = !organiseOn;
+    panel.style.display = organiseOn ? 'block' : 'none';
+    checkboxWraps.forEach(c => c.style.display = organiseOn ? 'block' : 'none');
+    toggle.textContent = organiseOn ? 'Close organise' : 'Organise';
+  });
+
+  btnAll && btnAll.addEventListener('click', () => checks.forEach(c => c.checked = true));
+  btnNone && btnNone.addEventListener('click', () => checks.forEach(c => c.checked = false));
+
+  applySort && applySort.addEventListener('click', () => {
+    filterForm.querySelector('input[name="sort_by"]').value = sortBy.value;
+    filterForm.querySelector('input[name="sort_dir"]').value = sortDir.value;
+    filterForm.submit();
+  });
+})();
+
+function togglePreview(id){
+  const el = document.getElementById(`preview-${id}`);
+  if(el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function copyPrompt(id){
+  const el = document.querySelector(`#preview-${id} pre`);
+  if(!el) return;
+  navigator.clipboard.writeText(el.innerText);
+}
+</script>
 {% endblock %}

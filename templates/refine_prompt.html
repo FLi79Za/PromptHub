@@ -1,220 +1,73 @@
 {% extends "base.html" %}
-
 {% block content %}
 <section>
-  <h2>Refine with Ollama</h2>
+  <h2>Refine Prompt (Ollama)</h2>
 
-  <p class="meta">
-    <strong>{{ prompt.title }}</strong><br>
-    {{ prompt.category }} · {{ prompt.tool }} · {{ prompt.prompt_type }}
-  </p>
+  <div class="card" style="margin-bottom: 1rem;">
+    <h3 style="margin:0;">{{ prompt.title }}</h3>
+    <div class="meta">
+      <span>{{ prompt.category }}</span> · <span>{{ prompt.tool }}</span> · <span>{{ prompt.prompt_type }}</span>
+    </div>
+  </div>
 
-  {% if error %}
-    <div class="flash flash-error">{{ error }}</div>
-  {% endif %}
-
-  {% if not models or (models|length == 0) %}
+  {% if models|length == 0 %}
     <div class="flash flash-warn">
-      Ollama models could not be listed. Is Ollama running at <code>http://127.0.0.1:11434</code>?
-      You can still try using the default model.
+      <strong>Ollama not available.</strong> Make sure Ollama is installed and running, then refresh this page.
     </div>
-  {% endif %}
-
-  <form method="post" class="refine-form">
-    <div class="form-row">
-      <label for="model">Model</label>
-      <select name="model" id="model">
-        {% if models and (models|length > 0) %}
-          {% for m in models %}
-            <option value="{{ m }}" {% if m == default_model %}selected{% endif %}>{{ m }}</option>
-          {% endfor %}
-        {% else %}
-          <option value="{{ default_model }}" selected>{{ default_model }}</option>
-        {% endif %}
-      </select>
+    <div style="margin-top:0.75rem;">
+      <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}">Back to Use</a>
+      <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=prompt.id) }}">Edit</a>
     </div>
+  {% else %}
+    <form method="post">
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.75rem;">
+        <label>Model
+          <select name="model">
+            {% for m in models %}
+              <option value="{{ m }}" {% if m == selected_model %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+        </label>
 
-    <div class="form-row">
-      <label for="mode">Mode</label>
-      <select name="mode" id="mode">
-        <option value="refine">Refine (same intent)</option>
-        <option value="shorten">Shorten</option>
-        <option value="expand">Expand</option>
-        <option value="convert_style">Convert style/tool format</option>
-        <option value="variants">Create variants</option>
-      </select>
-      <small class="hint">Tip: use “Convert” for Flux ↔ instruction-based models like Qwen Edit / Nano Banana.</small>
-    </div>
-
-    <div class="form-row">
-      <label for="instruction">Instruction</label>
-      <input
-        type="text"
-        id="instruction"
-        name="instruction"
-        placeholder="e.g. make it more cinematic, keep placeholders, produce 3 variants, convert to Flux style"
-        autocomplete="off"
-      >
-    </div>
-
-    <div class="form-row">
-      <label for="source_text">Source text</label>
-      <textarea id="source_text" name="source_text" rows="12">{{ prompt.content }}</textarea>
-      <small class="hint">Placeholders like <code>[[subject]]</code> will be preserved.</small>
-    </div>
-
-    <div class="form-row checkbox-row">
-      <label>
-        <input type="checkbox" name="save_as_new" checked>
-        Save as new prompt (recommended)
-      </label>
-    </div>
-
-    <div class="form-row actions-row">
-      <button type="submit">Run refinement</button>
-      <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=prompt.id) }}">Back to prompt</a>
-    </div>
-  </form>
-
-  {% if refined %}
-    <hr>
-
-    <h3>Result</h3>
-
-    <textarea id="refined" rows="12" class="refined-output">{{ refined }}</textarea>
-
-    <div class="copy-row">
-      <button type="button" id="copyBtn">Copy result</button>
-      <span id="copyStatus" class="copy-status" aria-live="polite"></span>
-    </div>
-
-    <details style="margin-top: 0.75rem;">
-      <summary>Show differences (quick view)</summary>
-      <div class="diff-wrap">
-        <div>
-          <h4>Before</h4>
-          <pre class="diff-box">{{ prompt.content }}</pre>
-        </div>
-        <div>
-          <h4>After</h4>
-          <pre class="diff-box">{{ refined }}</pre>
-        </div>
+        <label>Instruction
+          <textarea name="instruction" rows="4" placeholder="{{ instruction_default }}">{{ request.form.get('instruction','') }}</textarea>
+        </label>
       </div>
-    </details>
 
-    <script>
-      (function () {
-        const btn = document.getElementById("copyBtn");
-        const ta = document.getElementById("refined");
-        const status = document.getElementById("copyStatus");
+      <label style="margin-top:0.75rem;">Source text (edit before sending to Ollama if you want)
+        <textarea name="source_text" rows="10">{{ request.form.get('source_text', prompt.content or '') }}</textarea>
+      </label>
 
-        if (!btn || !ta) return;
+      <div style="margin-top:0.75rem; display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
+        <button type="submit">Refine</button>
+        <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}">Back to Use</a>
+      </div>
 
-        async function copyText(text) {
-          if (navigator.clipboard && window.isSecureContext) {
-            await navigator.clipboard.writeText(text);
-            return true;
-          }
+      <div style="margin-top:0.75rem; display:flex; gap:1.25rem; flex-wrap:wrap; align-items:center;">
+        <label style="display:flex; gap:0.5rem; align-items:center;">
+          <input type="checkbox" name="overwrite">
+          Overwrite this prompt’s content
+        </label>
 
-          ta.focus();
-          ta.select();
-          const ok = document.execCommand("copy");
-          ta.setSelectionRange(0, 0);
-          return ok;
-        }
+        <label style="display:flex; gap:0.5rem; align-items:center;">
+          <input type="checkbox" name="save_as_new">
+          Save as new prompt
+        </label>
 
-        btn.addEventListener("click", async () => {
-          status.textContent = "";
-          try {
-            const ok = await copyText(ta.value);
-            if (ok) {
-              status.textContent = "Copied!";
-              setTimeout(() => status.textContent = "", 1200);
-            } else {
-              status.textContent = "Copy failed. Select and copy manually.";
-            }
-          } catch (e) {
-            status.textContent = "Copy failed. Select and copy manually.";
-          }
-        });
-      })();
-    </script>
+        <label>New title (when saving as new)
+          <input type="text" name="new_title" placeholder="{{ prompt.title }} (Refined)">
+        </label>
+      </div>
+
+      {% if refined_text %}
+        <hr style="margin: 1.25rem 0; border: 0; border-top: 1px solid #333;" />
+        <h3>Refined result</h3>
+        <textarea id="refinedText" rows="12" style="width:100%;" readonly>{{ refined_text }}</textarea>
+        <div style="margin-top:0.75rem; display:flex; gap:0.75rem; flex-wrap:wrap;">
+          <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('refinedText').value)">Copy refined text</button>
+        </div>
+      {% endif %}
+    </form>
   {% endif %}
 </section>
-
-<style>
-  /* Lightweight page-specific styling (kept inline to avoid forcing CSS changes) */
-  .refine-form {
-    margin-top: 1rem;
-    display: grid;
-    gap: 0.75rem;
-    max-width: 900px;
-  }
-  .form-row label {
-    display: block;
-    font-weight: 600;
-    margin-bottom: 0.25rem;
-  }
-  .form-row input[type="text"],
-  .form-row select,
-  .form-row textarea {
-    width: 100%;
-    box-sizing: border-box;
-  }
-  .checkbox-row label {
-    font-weight: 500;
-    display: inline-flex;
-    gap: 0.5rem;
-    align-items: center;
-  }
-  .hint {
-    display: block;
-    opacity: 0.85;
-    margin-top: 0.25rem;
-  }
-  .actions-row {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-  }
-  .btn-secondary {
-    text-decoration: none;
-    padding: 0.45rem 0.75rem;
-    border: 1px solid #444;
-    border-radius: 6px;
-  }
-  .copy-row {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    margin-top: 0.5rem;
-  }
-  .copy-status {
-    opacity: 0.9;
-  }
-  .diff-wrap {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-    margin-top: 0.5rem;
-  }
-  .diff-box {
-    border: 1px solid #333;
-    border-radius: 8px;
-    padding: 0.75rem;
-    overflow: auto;
-    white-space: pre-wrap;
-    max-height: 320px;
-  }
-  .refined-output {
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  @media (max-width: 900px) {
-    .diff-wrap {
-      grid-template-columns: 1fr;
-    }
-  }
-</style>
 {% endblock %}

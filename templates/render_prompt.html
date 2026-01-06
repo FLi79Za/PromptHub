@@ -1,124 +1,96 @@
 {% extends "base.html" %}
-
 {% block content %}
 <section>
-  <h2>Use: {{ prompt.title }}</h2>
-  <p class="meta">
-    {{ prompt.category }} · {{ prompt.tool }} · {{ prompt.prompt_type }}
-  </p>
+  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem;">
+    <div>
+      <h2>Use Prompt</h2>
+      <h3 style="margin-top:0.25rem;">{{ prompt.title }}</h3>
+      <p class="notes">{{ prompt.category }} · {{ prompt.tool }} · {{ prompt.prompt_type }}</p>
+    </div>
+    <div style="text-align:right;">
+      <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=prompt.id) }}">Edit</a>
+      {% if ENABLE_OLLAMA|default(false) %}
+        <a class="btn-secondary" href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}">Refine (Ollama)</a>
+      {% endif %}
+    </div>
+  </div>
 
-  {% if prompt.notes %}
-    <p class="notes">{{ prompt.notes }}</p>
-  {% endif %}
+  <h4 style="margin-top:1rem;">Prompt (reference)</h4>
+  <textarea id="basePrompt" rows="8" style="width:100%;" readonly>{{ prompt.content }}</textarea>
 
-  {% if placeholders %}
-    <h3>Fill in placeholders</h3>
-
-    <form method="post">
-      <div class="placeholder-grid">
-        {% for name in placeholders %}
-          <label>{{ name }}
-            <input type="text" name="{{ name }}">
-          </label>
+  <form method="post" id="renderForm" style="margin-top:1rem;">
+    {% if placeholders %}
+      <h4>Placeholders</h4>
+      <div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:0.75rem;">
+        {% for ph in placeholders %}
+          <div>
+            <label for="ph_{{ ph }}">{{ ph }}</label>
+            <input type="text" id="ph_{{ ph }}" name="{{ ph }}" value="{{ request.form.get(ph,'') }}" placeholder="Value for {{ ph }}">
+          </div>
         {% endfor %}
       </div>
+    {% endif %}
 
-      {% if final_text %}
-        <h3>Generated prompt (editable)</h3>
+    <div style="margin-top:1rem;">
+      <label for="override"><strong>Override final text (optional)</strong></label>
+      <textarea name="override" id="override" rows="5" placeholder="Optional manual edits after placeholder substitution">{{ request.form.get('override','') }}</textarea>
+      <p class="notes">Tip: leave Override empty to use the auto-substituted version.</p>
+    </div>
 
-        <div class="copy-row">
-          <button type="button" id="copyBtn">Copy to clipboard</button>
-          <span id="copyStatus" class="copy-status" aria-live="polite"></span>
-        </div>
+    <button type="submit" class="btn-primary" style="margin-top:0.75rem;">Render</button>
+  </form>
+  {% if prompt and prompt.id %}
+  <a class="btn-secondary"
+     href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}">
+    Refine with Ollama
+  </a>
+{% endif %}
 
-        {# Show if ENABLE_OLLAMA is undefined OR true. Hide only if explicitly false. #}
-        {% if (ENABLE_OLLAMA is not defined or ENABLE_OLLAMA) %}
-          <p style="margin-top:0.75rem;">
-            <a
-              href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}"
-              class="btn-secondary"
-              title="Refine this prompt using a local LLM"
-            >
-              Refine with Ollama
-            </a>
-          </p>
-        {% endif %}
 
-        <textarea id="finalPrompt" name="final_override" rows="10">{{ final_text }}</textarea>
+  <h3 style="margin-top:1.25rem;">Final Prompt</h3>
+  <textarea id="finalPrompt" rows="10" style="width:100%;" readonly>{{ final_text }}</textarea>
 
-        <div style="margin-top: 0.75rem;">
-          <button type="submit">Update text</button>
-        </div>
-      {% else %}
-        <button type="submit">Generate Prompt</button>
-      {% endif %}
-    </form>
-
-  {% else %}
-    <p>This prompt has no placeholders. You can copy or edit it directly below.</p>
-
-    <form method="post">
-      <div class="copy-row">
-        <button type="button" id="copyBtn">Copy to clipboard</button>
-        <span id="copyStatus" class="copy-status" aria-live="polite"></span>
-      </div>
-
-      {# Optional link even when there are no placeholders, since you still might want a refinement #}
-      {% if (ENABLE_OLLAMA is not defined or ENABLE_OLLAMA) %}
-        <p style="margin-top:0.75rem;">
-          <a
-            href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}"
-            class="btn-secondary"
-            title="Refine this prompt using a local LLM"
-          >
-            Refine with Ollama
-          </a>
-        </p>
-      {% endif %}
-
-      <textarea id="finalPrompt" name="final_override" rows="10">{{ final_text if final_text else prompt.content }}</textarea>
-
-      <div style="margin-top: 0.75rem;">
-        <button type="submit">Update text</button>
-      </div>
-    </form>
-  {% endif %}
-
-  <h3>Template (read-only)</h3>
-  <pre class="code">{{ prompt.content }}</pre>
+  <div style="display:flex; gap:0.75rem; align-items:center; margin-top:0.75rem;">
+    <button type="button" class="btn-primary" onclick="copyFinal()">Copy to clipboard</button>
+    <a class="btn-secondary" href="{{ url_for('index') }}">Back</a>
+  </div>
 </section>
 
 <script>
-  (function () {
-    const btn = document.getElementById("copyBtn");
-    const ta = document.getElementById("finalPrompt");
-    const status = document.getElementById("copyStatus");
+(function(){
+  const base = document.getElementById('basePrompt');
+  const finalBox = document.getElementById('finalPrompt');
+  const override = document.getElementById('override');
 
-    if (!btn || !ta) return;
-
-    async function copyText(text) {
-      // Prefer modern clipboard API, fall back to execCommand
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        return;
-      }
-      ta.focus();
-      ta.select();
-      const ok = document.execCommand("copy");
-      // Remove selection (optional)
-      ta.setSelectionRange(0, 0);
-      if (!ok) throw new Error("execCommand copy failed");
+  function computeFinal(){
+    // If override has content, show it as the live final.
+    if (override && override.value.trim().length > 0){
+      finalBox.value = override.value;
+      return;
     }
 
-    btn.addEventListener("click", async () => {
-      try {
-        await copyText(ta.value);
-        status.textContent = "Copied!";
-        setTimeout(() => status.textContent = "", 1200);
-      } catch (e) {
-        status.textContent = "Copy failed. Select and copy manually.";
-      }
-    });
-  })();
+    let text = base.value;
+    {% for ph in placeholders %}
+      const v_{{ loop.index }} = document.getElementById('ph_{{ ph }}').value || '';
+      text = text.split('[[{{ ph }}]]').join(v_{{ loop.index }});
+    {% endfor %}
+    finalBox.value = text;
+  }
+
+  // Live update on typing
+  {% for ph in placeholders %}
+    document.getElementById('ph_{{ ph }}').addEventListener('input', computeFinal);
+  {% endfor %}
+  if (override){
+    override.addEventListener('input', computeFinal);
+  }
+
+  computeFinal();
+})();
+
+function copyFinal(){
+  const txt = document.getElementById('finalPrompt').value || '';
+  navigator.clipboard.writeText(txt);
+}
 </script>
 {% endblock %}
