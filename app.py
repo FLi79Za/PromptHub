@@ -3,6 +3,9 @@ import re
 import uuid
 import shutil
 import requests
+import zipfile
+import io
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -25,7 +28,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_THUMB_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 
 # Limit upload size (adjust if you want)
-app.config["MAX_CONTENT_LENGTH"] = 15 * 1024 * 1024  # 15MB
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB
 
 
 # -------------------------
@@ -132,25 +135,18 @@ def is_allowed_thumb(filename: str) -> bool:
 
 
 def save_thumbnail(file_storage) -> str:
-    """
-    Saves uploaded thumbnail into static/uploads/thumbs/
-    Returns DB-relative path from /static, e.g. 'uploads/thumbs/<uuid>.png'
-    """
     original = secure_filename(file_storage.filename)
     ext = Path(original).suffix.lower()
 
     new_name = f"{uuid.uuid4().hex}{ext}"
     dest = UPLOAD_DIR / new_name
     file_storage.save(dest)
-
+    
+    print(f"DEBUG: Saved thumbnail to {dest}")
     return f"uploads/thumbs/{new_name}"
 
 
 def copy_thumbnail(existing_rel_path: str) -> str | None:
-    """
-    Copies an existing thumbnail file to a new filename.
-    Returns new relative path or None if missing.
-    """
     if not existing_rel_path:
         return None
 
@@ -166,9 +162,6 @@ def copy_thumbnail(existing_rel_path: str) -> str | None:
 
 
 def delete_thumbnail_if_unused(rel_path: str) -> None:
-    """
-    Deletes the thumbnail file only if no other prompts reference it.
-    """
     if not rel_path:
         return
 
@@ -179,7 +172,6 @@ def delete_thumbnail_if_unused(rel_path: str) -> None:
     ).fetchone()[0]
     conn.close()
 
-    # If at least 2 prompts reference it, don't delete
     if count and count > 1:
         return
 
@@ -187,6 +179,7 @@ def delete_thumbnail_if_unused(rel_path: str) -> None:
     try:
         if abs_path.exists():
             abs_path.unlink()
+            print(f"DEBUG: Deleted unused thumbnail {abs_path}")
     except Exception:
         pass
 
@@ -195,18 +188,12 @@ def delete_thumbnail_if_unused(rel_path: str) -> None:
 # Prompt utilities
 # -------------------------
 def find_placeholders(text: str) -> list[str]:
-    """Return a sorted list of [[placeholder]] names in the text."""
     return sorted(set(re.findall(r"\[\[(.+?)\]\]", text)))
 
 
 def parse_prompt_txt(raw_text: str) -> dict:
     """
-    Optional header lines at the top of the file (until '---' or first non-header):
-      # title: ...
-      # category: ...
-      # tool: ...
-      # type: Generation|Edit|Instruction
-      # notes: ...
+    Parses optional header lines at the top of a text block.
     """
     meta: dict[str, str] = {}
     lines = raw_text.splitlines()
@@ -227,6 +214,7 @@ def parse_prompt_txt(raw_text: str) -> dict:
             except ValueError:
                 pass
         else:
+            # Found a line that isn't a header or separator -> content starts here
             break
 
     content = "\n".join(lines[content_start:]).strip()
@@ -337,6 +325,16 @@ def index():
     category = request.args.get("category", "all")
     tool = request.args.get("tool", "all")
     q = (request.args.get("q") or "").strip()
+    
+    sort_by = request.args.get("sort_by", "updated_at")
+    sort_dir = request.args.get("sort_dir", "desc")
+
+    ALLOWED_SORTS = {"updated_at", "created_at", "title", "category", "tool", "prompt_type"}
+    if sort_by not in ALLOWED_SORTS:
+        sort_by = "updated_at"
+    
+    if sort_dir not in ["asc", "desc"]:
+        sort_dir = "desc"
 
     categories = get_categories()
     tools = get_tools()
@@ -367,7 +365,7 @@ def index():
         like = f"%{q.lower()}%"
         params.extend([like, like, like, like, like, like])
 
-    query += " ORDER BY updated_at DESC"
+    query += f" ORDER BY {sort_by} {sort_dir.upper()}"
 
     prompts = conn.execute(query, params).fetchall()
     conn.close()
@@ -380,6 +378,8 @@ def index():
         active_category=category,
         active_tool=tool,
         q=q,
+        sort_by=sort_by,
+        sort_dir=sort_dir
     )
 
 
@@ -400,7 +400,6 @@ def new_prompt():
             flash("Title and content are required.")
             return redirect(url_for("new_prompt"))
 
-        # Clamp to known lists
         if category not in categories:
             category = "Other"
         if tool not in tools:
@@ -408,14 +407,15 @@ def new_prompt():
         if prompt_type not in PROMPT_TYPES:
             prompt_type = "Instruction"
 
-        # Thumbnail upload (optional)
         thumbnail_path = None
-        thumb_file = request.files.get("thumbnail_file")
-        if thumb_file and thumb_file.filename:
-            if not is_allowed_thumb(thumb_file.filename):
-                flash("Thumbnail must be PNG, JPG, WebP, or GIF.")
-                return redirect(url_for("new_prompt"))
-            thumbnail_path = save_thumbnail(thumb_file)
+        thumb_file = request.files.get("thumbnail")
+        if thumb_file:
+            print(f"DEBUG: New prompt thumb file detected: {thumb_file.filename}")
+            if thumb_file.filename:
+                if not is_allowed_thumb(thumb_file.filename):
+                    flash("Thumbnail must be PNG, JPG, WebP, or GIF.")
+                    return redirect(url_for("new_prompt"))
+                thumbnail_path = save_thumbnail(thumb_file)
 
         now = datetime.utcnow().isoformat()
         conn = get_db()
@@ -471,21 +471,20 @@ def edit_prompt(prompt_id: int):
         if prompt_type not in PROMPT_TYPES:
             prompt_type = "Instruction"
 
-        # Thumbnail logic
         new_thumbnail = prompt["thumbnail"]
         remove_thumb = request.form.get("remove_thumbnail") == "on"
-        thumb_file = request.files.get("thumbnail_file")
+        thumb_file = request.files.get("thumbnail")
 
         if remove_thumb and new_thumbnail:
             delete_thumbnail_if_unused(new_thumbnail)
             new_thumbnail = None
 
         if thumb_file and thumb_file.filename:
+            print(f"DEBUG: Edit prompt thumb file detected: {thumb_file.filename}")
             if not is_allowed_thumb(thumb_file.filename):
                 flash("Thumbnail must be PNG, JPG, WebP, or GIF.")
                 return redirect(url_for("edit_prompt", prompt_id=prompt_id))
 
-            # Replacing existing thumbnail -> delete if unused elsewhere
             if new_thumbnail:
                 delete_thumbnail_if_unused(new_thumbnail)
 
@@ -544,7 +543,6 @@ def duplicate_prompt(prompt_id: int):
     now = datetime.utcnow().isoformat()
     new_title = f"Copy of {prompt['title']}"
 
-    # Copy thumbnail file (so delete/edit won’t affect the original)
     new_thumb = copy_thumbnail(prompt["thumbnail"]) if prompt["thumbnail"] else None
 
     conn.execute(
@@ -618,6 +616,17 @@ def import_prompt():
             flash("No files selected.")
             return redirect(url_for("import_prompt"))
 
+        # Read Batch Form Options
+        batch_category = request.form.get("batch_category", "").strip()
+        batch_tool = request.form.get("batch_tool", "").strip()
+        batch_prompt_type = request.form.get("batch_prompt_type", "Instruction").strip()
+        batch_notes = request.form.get("batch_notes", "").strip()
+
+        # Read Flags
+        single_mode = request.form.get("single_prompt_per_file") == "on"
+        use_first_line_as_title = request.form.get("use_first_line_as_title") == "on"
+        prefer_metadata = request.form.get("prefer_file_metadata") == "on"
+
         imported = 0
         skipped = 0
 
@@ -633,36 +642,97 @@ def import_prompt():
                 skipped += 1
                 continue
 
-            raw = f.read().decode("utf-8", errors="ignore")
-            parsed = parse_prompt_txt(raw)
+            raw_full = f.read().decode("utf-8", errors="ignore")
+            
+            # SPLIT LOGIC: 
+            # If single_mode is False (default), split by double newline.
+            # Else, treat whole file as one prompt.
+            if single_mode:
+                chunks = [raw_full]
+            else:
+                # Split by 2 or more newlines (handling possible spaces)
+                chunks = re.split(r'\n\s*\n', raw_full)
 
-            title_default = filename.rsplit(".", 1)[0]
-            title = parsed["title"].strip() or title_default
-            category = parsed["category"].strip() or "Image"
-            tool = parsed["tool"].strip() or "Generic"
-            prompt_type = parsed["prompt_type"].strip() or "Instruction"
-            notes = parsed["notes"].strip() or ""
-            content = parsed["content"].strip()
+            for chunk in chunks:
+                chunk = chunk.strip()
+                if not chunk:
+                    continue
 
-            if not content:
-                skipped += 1
-                continue
+                parsed = parse_prompt_txt(chunk)
+                
+                # --- Title Logic ---
+                # Default: Filename
+                title_final = filename.rsplit(".", 1)[0]
+                
+                # If parsed title exists, use it
+                if parsed["title"]:
+                    title_final = parsed["title"]
+                elif use_first_line_as_title:
+                    # If no metadata title, use first line of content
+                    lines = parsed["content"].split('\n', 1)
+                    possible_title = lines[0].strip()
+                    if possible_title and len(possible_title) < 200: # sanity check
+                        title_final = possible_title
+                        # Remove that line from content
+                        parsed["content"] = lines[1].strip() if len(lines) > 1 else ""
 
-            if category not in categories:
-                category = "Other"
-            if tool not in tools:
-                tool = "Other"
-            if prompt_type not in PROMPT_TYPES:
-                prompt_type = "Instruction"
+                # --- Category Logic ---
+                # Priority: Metadata (if prefer_metadata AND present) > Batch Form > Metadata (if present) > Default
+                cat_final = "Image" # Default
+                
+                has_meta_cat = bool(parsed["category"])
+                has_batch_cat = bool(batch_category)
+                
+                if prefer_metadata and has_meta_cat:
+                    cat_final = parsed["category"]
+                elif has_batch_cat:
+                    cat_final = batch_category
+                elif has_meta_cat:
+                    cat_final = parsed["category"]
+                
+                # --- Tool Logic ---
+                tool_final = "Generic" # Default
+                
+                has_meta_tool = bool(parsed["tool"])
+                has_batch_tool = bool(batch_tool)
+                
+                if prefer_metadata and has_meta_tool:
+                    tool_final = parsed["tool"]
+                elif has_batch_tool:
+                    tool_final = batch_tool
+                elif has_meta_tool:
+                    tool_final = parsed["tool"]
 
-            conn.execute(
-                """
-                INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (title, category, tool, prompt_type, content, notes, None, now, now),
-            )
-            imported += 1
+                # --- Prompt Type Logic ---
+                type_final = batch_prompt_type # Default to form selection
+                if parsed["prompt_type"]:
+                     # If prefer_metadata is ON, or if we want to respect file specificity
+                     # Generally if file specifies it, we use it, unless overridden? 
+                     # Let's match the logic above:
+                     if prefer_metadata or not batch_prompt_type:
+                         type_final = parsed["prompt_type"]
+                
+                # --- Notes Logic ---
+                notes_final = parsed["notes"]
+                if batch_notes:
+                    if notes_final:
+                        notes_final = batch_notes + "\n\n" + notes_final
+                    else:
+                        notes_final = batch_notes
+
+                # Validate against known lists
+                if cat_final not in categories: cat_final = "Other"
+                if tool_final not in tools: tool_final = "Other"
+                if type_final not in PROMPT_TYPES: type_final = "Instruction"
+
+                conn.execute(
+                    """
+                    INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (title_final, cat_final, tool_final, type_final, parsed["content"], notes_final, None, now, now),
+                )
+                imported += 1
 
         conn.commit()
         conn.close()
@@ -732,7 +802,6 @@ OLLAMA_DEFAULT_MODEL = "gemma3:4b"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 def ollama_list_models():
-    """Return a list of locally available Ollama model names. Returns [] if Ollama isn't reachable."""
     try:
         r = requests.get("http://localhost:11434/api/tags", timeout=1.5)
         r.raise_for_status()
@@ -747,7 +816,6 @@ def ollama_list_models():
         return []
 
 def ollama_generate(prompt: str, model: str | None = None, system: str | None = None) -> str:
-    """Generate text via Ollama. Raises on failure."""
     payload = {
         "model": model or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL,
         "prompt": prompt,
@@ -779,46 +847,99 @@ def backup_download():
     if not DB_PATH.exists():
         flash("Database file not found.")
         return redirect(url_for("manage"))
+    
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"prompts_backup_{ts}.db"
-    return send_file(DB_PATH, as_attachment=True, download_name=filename)
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(DB_PATH, arcname="prompts.db")
+        if UPLOAD_DIR.exists():
+            for f in UPLOAD_DIR.iterdir():
+                if f.is_file() and f.name != ".gitkeep":
+                    zf.write(f, arcname=f"thumbs/{f.name}")
+    
+    zip_buffer.seek(0)
+    
+    return send_file(
+        zip_buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"prompts_backup_{ts}.zip"
+    )
 
 @app.route("/backup/restore", methods=["GET", "POST"])
 def restore_backup():
     init_db()
     if request.method == "GET":
         return render_template("restore.html")
+        
     f = request.files.get("db_file")
     if not f or f.filename.strip() == "":
         flash("No file selected.")
         return redirect(url_for("restore_backup"))
-    # basic extension check
+        
     filename = f.filename.lower()
-    if not (filename.endswith(".db") or filename.endswith(".sqlite") or filename.endswith(".sqlite3")):
-        flash("Please upload a .db / .sqlite file.")
-        return redirect(url_for("restore_backup"))
-    tmp_path = BASE_DIR / f"restore_{uuid.uuid4().hex}.db"
-    f.save(tmp_path)
-    # quick sanity: ensure it has prompts table
-    try:
-        with sqlite3.connect(tmp_path) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='prompts'")
-            if not cur.fetchone():
-                raise ValueError("No prompts table")
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        flash("That file doesn't look like a Prompt Hub database.")
-        return redirect(url_for("restore_backup"))
+    
+    if filename.endswith(".zip"):
+        try:
+            if DB_PATH.exists():
+                bk = BASE_DIR / f"prompts_before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+                shutil.copy2(DB_PATH, bk)
 
-    # backup current db first
-    if DB_PATH.exists():
-        bk = BASE_DIR / f"prompts_before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-        shutil.copy2(DB_PATH, bk)
-    shutil.copy2(tmp_path, DB_PATH)
-    tmp_path.unlink(missing_ok=True)
-    flash("Database restored successfully.")
-    return redirect(url_for("manage"))
+            with zipfile.ZipFile(f, 'r') as zf:
+                if "prompts.db" in zf.namelist():
+                    with zf.open("prompts.db") as source, open(DB_PATH, "wb") as target:
+                        shutil.copyfileobj(source, target)
+                else:
+                    flash("Invalid ZIP: 'prompts.db' not found inside.")
+                    return redirect(url_for("restore_backup"))
+
+                UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+                
+                for member in zf.namelist():
+                    if member.startswith("thumbs/") and not member.endswith("/"):
+                        filename = os.path.basename(member)
+                        if not filename: continue
+                        
+                        target_path = UPLOAD_DIR / filename
+                        with zf.open(member) as source, open(target_path, "wb") as target:
+                            shutil.copyfileobj(source, target)
+                            
+            flash("Full backup (Database + Thumbnails) restored successfully.")
+            return redirect(url_for("manage"))
+            
+        except zipfile.BadZipFile:
+            flash("The uploaded file is not a valid ZIP file.")
+            return redirect(url_for("restore_backup"))
+        except Exception as e:
+            flash(f"Restore error: {e}")
+            return redirect(url_for("restore_backup"))
+
+    elif filename.endswith(".db") or filename.endswith(".sqlite") or filename.endswith(".sqlite3"):
+        tmp_path = BASE_DIR / f"restore_{uuid.uuid4().hex}.db"
+        f.save(tmp_path)
+        try:
+            with sqlite3.connect(tmp_path) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='prompts'")
+                if not cur.fetchone():
+                    raise ValueError("No prompts table")
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            flash("That file doesn't look like a Prompt Hub database.")
+            return redirect(url_for("restore_backup"))
+
+        if DB_PATH.exists():
+            bk = BASE_DIR / f"prompts_before_restore_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            shutil.copy2(DB_PATH, bk)
+        shutil.copy2(tmp_path, DB_PATH)
+        tmp_path.unlink(missing_ok=True)
+        flash("Database (only) restored successfully.")
+        return redirect(url_for("manage"))
+
+    else:
+        flash("Please upload a .zip (full backup) or .db (database only) file.")
+        return redirect(url_for("restore_backup"))
 
 # ---------------------------
 # Raw prompt API for preview/copy
@@ -851,7 +972,6 @@ def bulk_update():
     new_tool = request.form.get("bulk_tool") or ""
     new_type = request.form.get("bulk_prompt_type") or ""
 
-    # nothing to change
     if not any([new_category, new_tool, new_type]):
         flash("No bulk changes selected.")
         return redirect(url_for("index"))
@@ -901,7 +1021,7 @@ def refine_prompt(prompt_id: int):
     model = request.form.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL
     session["ollama_model"] = model
     instruction = (request.form.get("instruction") or "").strip()
-    mode = request.form.get("mode") or "refine"  # refine | rewrite | expand
+    mode = request.form.get("mode") or "refine"
 
     base = prompt["content"] or ""
     sys = "You help refine AI prompts. Keep placeholders like [[name]] intact. Output only the prompt text."
@@ -935,7 +1055,6 @@ def refine_prompt(prompt_id: int):
         flash("Refined prompt saved as new.")
         return redirect(url_for("index"))
 
-    # overwrite existing content
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?", (refined, now_iso(), prompt_id))
@@ -952,7 +1071,6 @@ def refine_draft():
     models = ollama_list_models()
     ollama_available = bool(models)
     if not ollama_available:
-        # render edit template again with message
         categories = get_categories()
         tools = get_tools()
         refine_error = "Ollama not available. Start Ollama and try again."

@@ -5,13 +5,14 @@
   <h2>Restore from Backup</h2>
 
   <p class="notes">
-    Upload a backup ZIP created by Prompt Hub. This will replace your current database.
-    A safety backup ZIP will be created automatically in the <code>backups</code> folder.
+    Upload a backup <strong>ZIP</strong> created by Prompt Hub. This will restore your database and all thumbnails.
+    <br>Legacy <code>.db</code> files are also supported (restores database only).
+    <br>A safety backup of your current database will be created automatically in the <code>backups</code> folder.
   </p>
 
   <form method="post" enctype="multipart/form-data" style="margin-top: 1rem;">
-    <label>Backup ZIP
-      <input type="file" name="backup_file" accept=".zip" required>
+    <label>Backup File (.zip or .db)
+      <input type="file" name="db_file" accept=".zip,.db,.sqlite" required>
     </label>
 
     <div style="margin-top: 1rem; display:flex; gap:0.75rem; flex-wrap:wrap;">

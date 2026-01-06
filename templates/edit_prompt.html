@@ -102,10 +102,23 @@
       <div>
         <label>Thumbnail (optional)</label>
         <input type="file" name="thumbnail" accept="image/*">
-        {% if prompt.thumbnail_path %}
-          <div class="muted" style="margin-top:.25rem;">Current thumbnail is set.</div>
+        
+        {% if prompt.thumbnail %}
+          <div style="margin-top:0.75rem; padding: 0.5rem; border: 1px solid #333; border-radius: 4px; display: inline-block;">
+             <p style="margin: 0 0 0.5rem 0; font-size: 0.85em; color: #aaa;">Current Thumbnail:</p>
+             <img src="{{ url_for('static', filename=prompt.thumbnail) }}" alt="Thumbnail" style="max-height: 120px; border-radius: 4px; display: block;">
+             
+             <label style="font-weight: normal; font-size: 0.9em; display:flex; align-items:center; margin-top: 0.5rem;">
+               <input type="checkbox" name="remove_thumbnail" style="margin-right: 0.5rem;"> Remove thumbnail
+             </label>
+          </div>
         {% endif %}
       </div>
+    {% else %}
+        <div>
+            <label>Thumbnail (optional)</label>
+            <input type="file" name="thumbnail" accept="image/*">
+        </div>
     {% endif %}
 
     <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; margin-top:.5rem;">

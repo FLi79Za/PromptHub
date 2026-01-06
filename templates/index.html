@@ -4,7 +4,6 @@
 <section>
   <h2>Prompts</h2>
 
-  <!-- ================= FILTERS ================= -->
   <form method="get" class="filters" id="filterForm">
     <label for="q">Search</label>
     <input type="text" id="q" name="q" value="{{ q|default('') }}"
@@ -40,7 +39,6 @@
     <input type="hidden" name="page" value="{{ page|default(1) }}">
   </form>
 
-  <!-- ================= BULK / ORGANISE ================= -->
   <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
     <div id="organisePanel"
          style="display:none; margin-top:1rem; padding:1rem;
@@ -124,7 +122,6 @@
     </div>
   </form>
 
-  <!-- ================= PROMPT LIST ================= -->
   <ul class="prompt-list" id="promptList">
     {% for p in prompts %}
       <li class="prompt-card">
@@ -163,7 +160,6 @@
             <a class="btn-secondary"
                href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
 
-            <!-- DELETE: independent form, never associated with bulkForm -->
             <form method="post"
                   action="{{ url_for('delete_prompt', prompt_id=p.id) }}"
                   style="display:inline;"
@@ -208,6 +204,7 @@
   btnAll && btnAll.addEventListener('click', () => checks.forEach(c => c.checked = true));
   btnNone && btnNone.addEventListener('click', () => checks.forEach(c => c.checked = false));
 
+  // The key fix is in app.py logic, but this JS ensures the UI values are sent
   applySort && applySort.addEventListener('click', () => {
     filterForm.querySelector('input[name="sort_by"]').value = sortBy.value;
     filterForm.querySelector('input[name="sort_dir"]').value = sortDir.value;
