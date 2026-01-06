@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section>
+  <h2>Restore from Backup</h2>
+
+  <p class="notes">
+    Upload a backup ZIP created by Prompt Hub. This will replace your current database.
+    A safety backup ZIP will be created automatically in the <code>backups</code> folder.
+  </p>
+
+  <form method="post" enctype="multipart/form-data" style="margin-top: 1rem;">
+    <label>Backup ZIP
+      <input type="file" name="backup_file" accept=".zip" required>
+    </label>
+
+    <div style="margin-top: 1rem; display:flex; gap:0.75rem; flex-wrap:wrap;">
+      <button type="submit" class="danger">Restore</button>
+      <a class="btn-secondary" href="{{ url_for('manage') }}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

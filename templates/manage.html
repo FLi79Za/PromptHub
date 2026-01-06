@@ -2,54 +2,57 @@
 
 {% block content %}
 <section>
-  <h2>Manage Categories & Tools</h2>
+  <h2>Manage</h2>
 
-  <div class="manage-grid">
-    <div>
-      <h3>Categories</h3>
-
-      <form method="post" action="{{ url_for('add_category') }}">
-        <label>Add category
-          <input type="text" name="name" placeholder="e.g. LoRA Training" required>
-        </label>
-        <button type="submit">Add</button>
-      </form>
-
-      <ul class="manage-list">
-        {% for c in categories %}
-          <li>
-            <span>{{ c }}</span>
-            <form method="post" action="{{ url_for('delete_category') }}">
-              <input type="hidden" name="name" value="{{ c }}">
-              <button type="submit" onclick="return confirm('Delete category {{ c }}?');">Delete</button>
-            </form>
-          </li>
-        {% endfor %}
-      </ul>
-    </div>
-
-    <div>
-      <h3>Tools</h3>
-
-      <form method="post" action="{{ url_for('add_tool') }}">
-        <label>Add tool
-          <input type="text" name="name" placeholder="e.g. WAN FFLF" required>
-        </label>
-        <button type="submit">Add</button>
-      </form>
-
-      <ul class="manage-list">
-        {% for t in tools %}
-          <li>
-            <span>{{ t }}</span>
-            <form method="post" action="{{ url_for('delete_tool') }}">
-              <input type="hidden" name="name" value="{{ t }}">
-              <button type="submit" onclick="return confirm('Delete tool {{ t }}?');">Delete</button>
-            </form>
-          </li>
-        {% endfor %}
-      </ul>
-    </div>
+  <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin: 0.75rem 0 1.25rem 0;">
+    <a class="btn-secondary" href="{{ url_for('backup_download') }}">Download Backup (ZIP)</a>
+    <a class="btn-secondary" href="{{ url_for('restore_backup') }}">Restore from Backup</a>
   </div>
+
+  <p class="notes">
+    Backups include your <code>prompts.db</code> database and any thumbnail files.
+    Restoring will replace your current database. A safety backup is created automatically.
+  </p>
+
+  <hr style="margin: 1.25rem 0; border: 0; border-top: 1px solid #333;" />
+
+  <h3>Categories</h3>
+  <form method="post" action="{{ url_for('add_category') }}" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+    <input type="text" name="name" placeholder="New category" required>
+    <button type="submit">Add</button>
+  </form>
+
+  <div style="margin-top:0.75rem;">
+    {% for c in categories %}
+      <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.35rem;">
+        <span style="flex:1;">{{ c }}</span>
+        <form method="post" action="{{ url_for('delete_category') }}">
+          <input type="hidden" name="name" value="{{ c }}">
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </div>
+    {% endfor %}
+  </div>
+
+  <hr style="margin: 1.25rem 0; border: 0; border-top: 1px solid #333;" />
+
+  <h3>Tools</h3>
+  <form method="post" action="{{ url_for('add_tool') }}" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+    <input type="text" name="name" placeholder="New tool" required>
+    <button type="submit">Add</button>
+  </form>
+
+  <div style="margin-top:0.75rem;">
+    {% for t in tools %}
+      <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.35rem;">
+        <span style="flex:1;">{{ t }}</span>
+        <form method="post" action="{{ url_for('delete_tool') }}">
+          <input type="hidden" name="name" value="{{ t }}">
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </div>
+    {% endfor %}
+  </div>
+
 </section>
 {% endblock %}

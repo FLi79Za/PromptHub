@@ -4,33 +4,102 @@
 <section>
   <h2>Import Prompts</h2>
 
-  <p>
-    You can import .txt prompts in two ways:
-    <br>1) Preview a single file before saving
-    <br>2) Bulk import multiple files directly into the database
+  <p class="notes">
+    Import one or more <code>.txt</code> files. By default, each file is split into multiple prompts using blank lines.
+    The first line of each paragraph becomes the prompt title and is removed from the prompt text.
   </p>
+
+  <h3>Batch import (multiple files)</h3>
+  <form method="post" action="{{ url_for('import_prompt') }}" enctype="multipart/form-data">
+    <label>Select one or more .txt files
+      <input type="file" name="files" accept=".txt" multiple required>
+    </label>
+
+    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-top: 1rem;">
+      <label>Category
+        <input list="category_list" name="batch_category" placeholder="e.g. Image" />
+        <datalist id="category_list">
+          {% for c in categories %}
+            <option value="{{ c }}"></option>
+          {% endfor %}
+        </datalist>
+      </label>
+
+      <label>Tool
+        <input list="tool_list" name="batch_tool" placeholder="e.g. Flux Kontext" />
+        <datalist id="tool_list">
+          {% for t in tools %}
+            <option value="{{ t }}"></option>
+          {% endfor %}
+        </datalist>
+      </label>
+
+      <label>Prompt Type
+        <select name="batch_prompt_type">
+          {% for pt in prompt_types %}
+            <option value="{{ pt }}" {% if pt == "Instruction" %}selected{% endif %}>{{ pt }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+
+    <label style="margin-top: 0.75rem;">Notes (applied to all imported prompts)
+      <textarea name="batch_notes" rows="3" placeholder="Optional notes applied to all imported prompts..."></textarea>
+    </label>
+
+    <div style="margin-top: 0.75rem; display:flex; gap: 1rem; flex-wrap: wrap;">
+      <label style="display:flex; gap:0.5rem; align-items:center;">
+        <input type="checkbox" name="single_prompt_per_file">
+        Treat each file as a single prompt (disable paragraph splitting)
+      </label>
+
+      <label style="display:flex; gap:0.5rem; align-items:center;">
+        <input type="checkbox" name="use_first_line_as_title" checked>
+        Use first line as title (remove from prompt text)
+      </label>
+
+      <label style="display:flex; gap:0.5rem; align-items:center;">
+        <input type="checkbox" name="prefer_file_metadata">
+        Prefer metadata inside files (if present)
+      </label>
+    </div>
+
+    <div style="margin-top: 1rem;">
+      <button type="submit">Import</button>
+      <a class="btn-secondary" href="{{ url_for('index') }}">Cancel</a>
+    </div>
+  </form>
+
+  <hr style="margin: 1.5rem 0; border: 0; border-top: 1px solid #333;" />
 
   <h3>Preview one file</h3>
   <form method="post" action="{{ url_for('import_prompt_preview') }}" enctype="multipart/form-data">
     <label>Select a .txt file
       <input type="file" name="file" accept=".txt" required>
     </label>
-    <button type="submit">Preview</button>
+    <div style="margin-top: 0.75rem;">
+      <button type="submit">Preview</button>
+    </div>
   </form>
 
-  <hr>
+  <hr style="margin: 1.5rem 0; border: 0; border-top: 1px solid #333;" />
 
-  <h3>Bulk import (multi-select)</h3>
-  <form method="post" action="{{ url_for('import_prompt') }}" enctype="multipart/form-data">
-    <label>Select one or more .txt files
-      <input type="file" name="files" accept=".txt" multiple required>
-    </label>
-    <button type="submit">Import All</button>
-  </form>
+  <h3>Optional metadata header formats</h3>
+  <p class="notes">
+    If you enable “Prefer metadata inside files”, you can include metadata at the top of the file. Both formats are supported.
+  </p>
 
-  <hr>
+  <h4>Front matter</h4>
+  <pre class="code">---
+title: Flux Kontext - Render block
+category: Image
+tool: Flux Kontext
+type: Instruction
+notes: Best results at 1024px
+---
+Render a full resolution image of block [[block_number]]...</pre>
 
-  <h3>Optional metadata header format</h3>
+  <h4>Legacy header</h4>
   <pre class="code"># title: Flux Kontext - Render block
 # category: Image
 # tool: Flux Kontext
