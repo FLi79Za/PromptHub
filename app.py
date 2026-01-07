@@ -116,34 +116,25 @@ def get_all_tags() -> list[str]:
 def get_saved_views():
     with get_db() as conn: return conn.execute("SELECT * FROM saved_views ORDER BY name ASC").fetchall()
 
-# -------------------------
-# Helper: Fetch Single Prompt
-# -------------------------
 def get_prompt(prompt_id: int):
     with get_db() as conn:
-        cursor = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
-        return cursor.fetchone()
+        return conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
 
 # -------------------------
 # Tag Logic
 # -------------------------
 def save_tags(conn, prompt_id, tags_str):
-    """Parses comma-separated tags, creates them if needed, and links to prompt."""
     conn.execute("DELETE FROM prompt_tags WHERE prompt_id=?", (prompt_id,))
-    
-    if not tags_str:
-        return
+    if not tags_str: return
 
     raw_tags = [t.strip() for t in tags_str.split(',') if t.strip()]
-    
     for tag_name in raw_tags:
         try: conn.execute("INSERT INTO tags (name) VALUES (?)", (tag_name,))
         except sqlite3.IntegrityError: pass
         
         tag_row = conn.execute("SELECT id FROM tags WHERE name=?", (tag_name,)).fetchone()
         if tag_row:
-            tag_id = tag_row[0]
-            try: conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (prompt_id, tag_id))
+            try: conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (prompt_id, tag_row[0]))
             except sqlite3.IntegrityError: pass
 
 def get_tags_for_prompt(conn, prompt_id):
@@ -181,25 +172,33 @@ def save_thumbnail(file_storage) -> str:
     try:
         img = Image.open(file_storage)
         if ext == '.gif':
-            file_storage.seek(0)
-            file_storage.save(dest)
+            file_storage.seek(0); file_storage.save(dest)
         else:
             img.thumbnail((600, 600))
             if ext in ['.jpg', '.jpeg']:
                 if img.mode != 'RGB': img = img.convert('RGB')
                 img.save(dest, optimize=True, quality=85)
-            elif ext == '.png':
-                img.save(dest, optimize=True)
-            elif ext == '.webp':
-                img.save(dest, optimize=True, quality=85)
-            else:
-                img.save(dest)
+            elif ext == '.png': img.save(dest, optimize=True)
+            elif ext == '.webp': img.save(dest, optimize=True, quality=85)
+            else: img.save(dest)
         return f"uploads/thumbs/{new_name}"
     except Exception as e:
         print(f"Image processing failed: {e}")
-        file_storage.seek(0)
-        file_storage.save(dest)
+        file_storage.seek(0); file_storage.save(dest)
         return f"uploads/thumbs/{new_name}"
+
+def copy_thumbnail(existing_rel_path: str) -> str | None:
+    if not existing_rel_path: return None
+    src = BASE_DIR / "static" / existing_rel_path
+    if not src.exists(): return None
+    ext = src.suffix.lower()
+    new_name = f"{uuid.uuid4().hex}{ext}"
+    dest = UPLOAD_DIR / new_name
+    try:
+        shutil.copyfile(src, dest)
+        return f"uploads/thumbs/{new_name}"
+    except:
+        return None
 
 def delete_thumbnail_if_unused(rel_path: str) -> None:
     if not rel_path: return
@@ -218,15 +217,11 @@ def parse_prompt_txt(raw_text: str) -> dict:
     lines = raw_text.splitlines()
     content_start = 0
     for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped == "---":
-            content_start = i + 1; break
-        if stripped.startswith("#") and ":" in stripped:
-            try:
-                key, val = stripped[1:].split(":", 1)
-                meta[key.strip().lower()] = val.strip()
-                content_start = i + 1
-            except ValueError: pass
+        s = line.strip()
+        if s == "---": content_start = i + 1; break
+        if s.startswith("#") and ":" in s:
+            try: k, v = s[1:].split(":", 1); meta[k.strip().lower()] = v.strip(); content_start = i + 1
+            except: pass
         else: break
     return {
         "title": meta.get("title", ""), "category": meta.get("category", ""),
@@ -255,7 +250,6 @@ def index():
 
     conn = get_db()
     
-    # Query Construction
     base_query = " FROM prompts p"
     if tag_filter != "all":
         base_query += " JOIN prompt_tags pt ON p.id = pt.prompt_id JOIN tags t ON pt.tag_id = t.id"
@@ -269,15 +263,12 @@ def index():
     
     if q:
         base_query += " AND (LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(COALESCE(p.notes, '')) LIKE ?)"
-        like = f"%{q.lower()}%"
-        params.extend([like, like, like])
+        like = f"%{q.lower()}%"; params.extend([like, like, like])
 
-    # Count
     count_query = f"SELECT COUNT(DISTINCT p.id) {base_query}"
     total_items = conn.execute(count_query, params).fetchone()[0]
     total_pages = math.ceil(total_items / ITEMS_PER_PAGE)
     
-    # Fetch
     offset = (page - 1) * ITEMS_PER_PAGE
     data_query = f"""
         SELECT DISTINCT p.*, 
@@ -288,7 +279,6 @@ def index():
     """
     rows = conn.execute(data_query, params + [ITEMS_PER_PAGE, offset]).fetchall()
     
-    # Attach Tags
     prompts = []
     for r in rows:
         p_dict = dict(r)
@@ -318,48 +308,29 @@ def index():
     )
 
 
-# --- Drag & Drop API ---
 @app.route("/api/prompt/<int:prompt_id>/upload_thumb", methods=["POST"])
 def upload_thumb_api(prompt_id):
     f = request.files.get("file")
-    if not f or not is_allowed_thumb(f.filename):
-        return jsonify({"error": "Invalid file type"}), 400
-    
+    if not f or not is_allowed_thumb(f.filename): return jsonify({"error": "Invalid file type"}), 400
     conn = get_db()
     row = conn.execute("SELECT thumbnail FROM prompts WHERE id=?", (prompt_id,)).fetchone()
-    if not row:
-        conn.close()
-        return jsonify({"error": "Prompt not found"}), 404
-        
+    if not row: conn.close(); return jsonify({"error": "Prompt not found"}), 404
     old_thumb = row["thumbnail"]
     new_path = save_thumbnail(f)
-    
     if old_thumb: delete_thumbnail_if_unused(old_thumb)
-    
-    conn.execute("UPDATE prompts SET thumbnail=?, updated_at=? WHERE id=?", 
-                 (new_path, datetime.utcnow().isoformat(), prompt_id))
-    conn.commit()
-    conn.close()
-    
+    conn.execute("UPDATE prompts SET thumbnail=?, updated_at=? WHERE id=?", (new_path, datetime.utcnow().isoformat(), prompt_id))
+    conn.commit(); conn.close()
     return jsonify({"success": True, "thumbnail_url": url_for('static', filename=new_path)})
 
 
-# --- Saved Views ---
 @app.route("/view/save", methods=["POST"])
 def save_view():
-    name = request.form.get("view_name", "").strip()
-    query_string = request.form.get("query_string", "")
-    
-    if not name or not query_string:
-        flash("View name and filters are required.")
-        return redirect(url_for("index"))
-    
+    name, qs = request.form.get("view_name", "").strip(), request.form.get("query_string", "")
+    if not name or not qs: return redirect(url_for("index"))
     conn = get_db()
-    conn.execute("INSERT INTO saved_views (name, query_params, created_at) VALUES (?, ?, ?)", 
-                 (name, query_string, datetime.utcnow().isoformat()))
+    conn.execute("INSERT INTO saved_views (name, query_params, created_at) VALUES (?, ?, ?)", (name, qs, datetime.utcnow().isoformat()))
     conn.commit(); conn.close()
-    flash(f"View '{name}' saved.")
-    return redirect(f"/?{query_string}")
+    flash(f"View '{name}' saved."); return redirect(f"/?{qs}")
 
 @app.route("/view/delete/<int:view_id>", methods=["POST"])
 def delete_view(view_id):
@@ -369,71 +340,43 @@ def delete_view(view_id):
     return redirect(url_for("index"))
 
 
-# -------------------------
-# Prompt CRUD
-# -------------------------
 @app.route("/prompt/new", methods=["GET", "POST"])
 def new_prompt():
     categories, tools = get_categories(), get_tools()
-
     if request.method == "POST":
         title = request.form.get("title", "").strip()
         category = request.form.get("category", "Other").strip()
         tool = request.form.get("tool", "Generic").strip()
-        
         ensure_category_tool_exist(category, tool)
 
         prompt_type = request.form.get("prompt_type", "Instruction").strip()
-        content = request.form.get("content", "").strip()
-        notes = request.form.get("notes", "").strip()
+        content, notes = request.form.get("content", "").strip(), request.form.get("notes", "").strip()
         tags_str = request.form.get("tags", "").strip()
 
-        if not title or not content:
-            flash("Title and content are required.")
-            return redirect(url_for("new_prompt"))
+        if not title or not content: return redirect(url_for("new_prompt"))
 
         thumb_path = None
         f = request.files.get("thumbnail")
-        if f and f.filename and is_allowed_thumb(f.filename):
-            thumb_path = save_thumbnail(f)
+        if f and f.filename and is_allowed_thumb(f.filename): thumb_path = save_thumbnail(f)
 
         now = datetime.utcnow().isoformat()
         conn = get_db()
-        conn.execute(
-            """
-            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (title, category, tool, prompt_type, content, notes, thumb_path, now, now),
-        )
+        conn.execute("INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                     (title, category, tool, prompt_type, content, notes, thumb_path, now, now))
         new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         save_tags(conn, new_id, tags_str)
         conn.commit(); conn.close()
         return redirect(url_for("index"))
-
-    return render_template(
-        "edit_prompt.html",
-        prompt=None,
-        categories=categories,
-        tools=tools,
-        prompt_types=PROMPT_TYPES,
-        tags_str=""
-    )
+    return render_template("edit_prompt.html", prompt=None, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, tags_str="")
 
 
 @app.route("/prompt/<int:prompt_id>/edit", methods=["GET", "POST"])
 def edit_prompt(prompt_id: int):
-    # Fixed: Categories and Tools must be fetched for the template
     categories = get_categories()
     tools = get_tools()
-
     conn = get_db()
     prompt = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
-    
-    if not prompt:
-        conn.close()
-        flash("Prompt not found.")
-        return redirect(url_for("index"))
+    if not prompt: conn.close(); return redirect(url_for("index"))
 
     variants = conn.execute("SELECT id, title FROM prompts WHERE parent_id=?", (prompt_id,)).fetchall()
     parent = None
@@ -448,18 +391,15 @@ def edit_prompt(prompt_id: int):
         title = request.form.get("title", "").strip()
         category = request.form.get("category", "Other").strip()
         tool = request.form.get("tool", "Generic").strip()
-        
         ensure_category_tool_exist(category, tool)
 
         prompt_type = request.form.get("prompt_type", "Instruction").strip()
-        content = request.form.get("content", "").strip()
-        notes = request.form.get("notes", "").strip()
+        content, notes = request.form.get("content", "").strip(), request.form.get("notes", "").strip()
         tags_input = request.form.get("tags", "").strip()
 
         new_thumb = prompt["thumbnail"]
         if request.form.get("remove_thumbnail") == "on":
-            delete_thumbnail_if_unused(new_thumb)
-            new_thumb = None
+            delete_thumbnail_if_unused(new_thumb); new_thumb = None
         f = request.files.get("thumbnail")
         if f and f.filename and is_allowed_thumb(f.filename):
             if new_thumb: delete_thumbnail_if_unused(new_thumb)
@@ -467,64 +407,37 @@ def edit_prompt(prompt_id: int):
 
         now = datetime.utcnow().isoformat()
         with get_db() as conn:
-            conn.execute(
-                """
-                UPDATE prompts
-                SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, updated_at=?
-                WHERE id=?
-                """,
-                (title, category, tool, prompt_type, content, notes, new_thumb, now, prompt_id),
-            )
+            conn.execute("UPDATE prompts SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, updated_at=? WHERE id=?",
+                         (title, category, tool, prompt_type, content, notes, new_thumb, now, prompt_id))
             save_tags(conn, prompt_id, tags_input)
             conn.commit()
         return redirect(url_for("index"))
 
-    return render_template(
-        "edit_prompt.html",
-        prompt=prompt,
-        categories=categories,
-        tools=tools,
-        prompt_types=PROMPT_TYPES,
-        variants=variants,
-        parent=parent,
-        tags_str=tags_str
-    )
+    return render_template("edit_prompt.html", prompt=prompt, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, variants=variants, parent=parent, tags_str=tags_str)
 
 
 @app.route("/prompt/<int:prompt_id>/duplicate", methods=["POST"])
 def duplicate_prompt(prompt_id: int):
     conn = get_db()
     p = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
-
-    if not p:
-        conn.close()
-        flash("Prompt not found.")
-        return redirect(url_for("index"))
+    if not p: conn.close(); return redirect(url_for("index"))
 
     as_variant = request.form.get("as_variant") == "true"
     new_title = f"{p['title']} (Variant)" if as_variant else f"Copy of {p['title']}"
     parent_id = p["parent_id"] if (as_variant and p["parent_id"]) else (p["id"] if as_variant else None)
 
     new_thumb = None
-    if p["thumbnail"]:
-        new_thumb = copy_thumbnail(p["thumbnail"])
+    if p["thumbnail"]: new_thumb = copy_thumbnail(p["thumbnail"])
 
     now = datetime.utcnow().isoformat()
-    conn.execute(
-        """
-        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (new_title, p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], new_thumb, parent_id, now, now),
-    )
+    conn.execute("INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                 (new_title, p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], new_thumb, parent_id, now, now))
     new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     
     tags = get_tags_for_prompt(conn, prompt_id)
     save_tags(conn, new_id, ", ".join(tags))
     
-    conn.commit()
-    conn.close()
-
+    conn.commit(); conn.close()
     flash("Variant created." if as_variant else "Prompt duplicated.")
     return redirect(url_for("edit_prompt", prompt_id=new_id))
 
@@ -534,17 +447,11 @@ def delete_prompt(prompt_id: int):
     conn = get_db()
     row = conn.execute("SELECT thumbnail FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
     thumb = row["thumbnail"] if row else None
-
     conn.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
     conn.execute("UPDATE prompts SET parent_id = NULL WHERE parent_id = ?", (prompt_id,))
-    conn.commit()
-    conn.close()
-
-    if thumb:
-        delete_thumbnail_if_unused(thumb)
-
-    flash("Prompt deleted.")
-    return redirect(url_for("index"))
+    conn.commit(); conn.close()
+    if thumb: delete_thumbnail_if_unused(thumb)
+    flash("Prompt deleted."); return redirect(url_for("index"))
 
 
 @app.route("/prompt/<int:prompt_id>/render", methods=["GET", "POST"])
@@ -552,10 +459,7 @@ def render_prompt(prompt_id: int):
     conn = get_db()
     prompt = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
     conn.close()
-
-    if not prompt:
-        flash("Prompt not found.")
-        return redirect(url_for("index"))
+    if not prompt: return redirect(url_for("index"))
 
     content = prompt["content"]
     placeholders = find_placeholders(content)
@@ -569,54 +473,33 @@ def render_prompt(prompt_id: int):
         if request.form.get("final_override"):
             final_text = request.form.get("final_override").strip()
 
-    return render_template(
-        "render_prompt.html",
-        prompt=prompt,
-        placeholders=placeholders,
-        final_text=final_text,
-    )
+    return render_template("render_prompt.html", prompt=prompt, placeholders=placeholders, final_text=final_text)
 
 
-# -------------------------
-# Import / Export / Manage
-# -------------------------
 @app.route("/prompt/import", methods=["GET", "POST"])
 def import_prompt():
     categories, tools = get_categories(), get_tools()
-
     if request.method == "POST":
         files = request.files.getlist("files")
-        if not files or all((f is None or f.filename == "") for f in files):
-            return redirect(url_for("import_prompt"))
+        if not files: return redirect(url_for("import_prompt"))
 
-        batch_cat = request.form.get("batch_category", "").strip()
-        batch_tool = request.form.get("batch_tool", "").strip()
+        batch_cat, batch_tool = request.form.get("batch_category", ""), request.form.get("batch_tool", "")
         ensure_category_tool_exist(batch_cat, batch_tool)
-        
-        batch_type = request.form.get("batch_prompt_type", "Instruction").strip()
-        batch_notes = request.form.get("batch_notes", "").strip()
+        batch_type = request.form.get("batch_prompt_type", "Instruction")
+        batch_notes = request.form.get("batch_notes", "")
         single_mode = request.form.get("single_prompt_per_file") == "on"
         use_first_line_as_title = request.form.get("use_first_line_as_title") == "on"
         prefer_metadata = request.form.get("prefer_file_metadata") == "on"
 
-        imported = 0
-        conn = get_db()
-        now = datetime.utcnow().isoformat()
-
+        conn = get_db(); now = datetime.utcnow().isoformat()
         for f in files:
-            if not f or not f.filename: continue
-            filename = secure_filename(f.filename)
-            if not filename.lower().endswith(".txt"): continue
-
+            if not f or not f.filename.endswith(".txt"): continue
             raw = f.read().decode("utf-8", errors="ignore")
             chunks = [raw] if single_mode else re.split(r'\n\s*\n', raw)
-
             for chunk in chunks:
-                chunk = chunk.strip()
-                if not chunk: continue
+                if not chunk.strip(): continue
                 p = parse_prompt_txt(chunk)
-                
-                title = filename.rsplit(".", 1)[0]
+                title = secure_filename(f.filename).rsplit(".", 1)[0]
                 if p["title"]: title = p["title"]
                 elif use_first_line_as_title:
                     lines = p["content"].split('\n', 1)
@@ -627,56 +510,32 @@ def import_prompt():
                 cat = "Image"
                 if prefer_metadata and p["category"]: cat = p["category"]
                 elif batch_cat: cat = batch_cat
-                elif p["category"]: cat = p["category"]
                 
                 tool = "Generic"
                 if prefer_metadata and p["tool"]: tool = p["tool"]
                 elif batch_tool: tool = batch_tool
-                elif p["tool"]: tool = p["tool"]
-
+                
                 ensure_category_tool_exist(cat, tool)
-
                 ptype = batch_type
-                if p["prompt_type"] and (prefer_metadata or not batch_type):
-                    ptype = p["prompt_type"]
-
+                if p["prompt_type"] and (prefer_metadata or not batch_type): ptype = p["prompt_type"]
                 pnotes = p["notes"]
-                if batch_notes:
-                    pnotes = (batch_notes + "\n\n" + pnotes).strip()
+                if batch_notes: pnotes = (batch_notes + "\n\n" + pnotes).strip()
 
-                conn.execute(
-                    """
-                    INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (title, cat, tool, ptype, p["content"], pnotes, None, now, now),
-                )
-                imported += 1
-
-        conn.commit()
-        conn.close()
-        flash(f"Imported {imported} prompt(s).")
-        return redirect(url_for("index"))
-
-    return render_template(
-        "import_prompt.html",
-        categories=categories,
-        tools=tools,
-        prompt_types=PROMPT_TYPES,
-    )
+                conn.execute("INSERT INTO prompts (title, category, tool, prompt_type, content, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                             (title, cat, tool, ptype, p["content"], pnotes, now, now))
+        conn.commit(); conn.close()
+        flash("Import successful."); return redirect(url_for("index"))
+    return render_template("import_prompt.html", categories=categories, tools=tools, prompt_types=PROMPT_TYPES)
 
 @app.route("/prompt/import/preview", methods=["POST"])
 def import_prompt_preview():
     categories, tools = get_categories(), get_tools()
     f = request.files.get("file")
     if not f: return redirect(url_for("import_prompt"))
-    
     raw = f.read().decode("utf-8", errors="ignore")
     p = parse_prompt_txt(raw)
-    title = p["title"] or secure_filename(f.filename).rsplit(".", 1)[0]
-    
     prompt_like = {
-        "title": title,
+        "title": p["title"] or secure_filename(f.filename).rsplit(".", 1)[0],
         "category": p["category"] or "Image",
         "tool": p["tool"] or "Generic",
         "prompt_type": p["prompt_type"] or "Instruction",
@@ -684,25 +543,10 @@ def import_prompt_preview():
         "notes": p["notes"],
         "thumbnail": None
     }
-
-    if prompt_like["category"] not in categories: prompt_like["category"] = "Other"
-    if prompt_like["tool"] not in tools: prompt_like["tool"] = "Other"
-    if prompt_like["prompt_type"] not in PROMPT_TYPES: prompt_like["prompt_type"] = "Instruction"
-
-    return render_template(
-        "edit_prompt.html",
-        prompt=prompt_like,
-        categories=categories,
-        tools=tools,
-        prompt_types=PROMPT_TYPES,
-        imported_preview=True,
-        tags_str=""
-    )
-
+    return render_template("edit_prompt.html", prompt=prompt_like, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, imported_preview=True, tags_str="")
 
 @app.route("/manage", methods=["GET"])
-def manage():
-    return render_template("manage.html", categories=get_categories(), tools=get_tools())
+def manage(): return render_template("manage.html", categories=get_categories(), tools=get_tools())
 
 @app.route("/manage/category/add", methods=["POST"])
 def add_category():
@@ -713,7 +557,7 @@ def add_category():
 @app.route("/manage/category/delete", methods=["POST"])
 def delete_category():
     n = request.form.get("name", "").strip()
-    if n:
+    if n: 
         with get_db() as conn: conn.execute("DELETE FROM categories WHERE name=?", (n,)); conn.commit()
     return redirect(url_for("manage"))
 
@@ -726,221 +570,138 @@ def add_tool():
 @app.route("/manage/tool/delete", methods=["POST"])
 def delete_tool():
     n = request.form.get("name", "").strip()
-    if n:
+    if n: 
         with get_db() as conn: conn.execute("DELETE FROM tools WHERE name=?", (n,)); conn.commit()
     return redirect(url_for("manage"))
 
 @app.route("/bulk_update", methods=["POST"])
 def bulk_update():
     ids = request.form.getlist("prompt_ids")
-    cat = request.form.get("bulk_category")
-    tool = request.form.get("bulk_tool")
-    ptype = request.form.get("bulk_prompt_type")
+    cat, tool, ptype = request.form.get("bulk_category"), request.form.get("bulk_tool"), request.form.get("bulk_prompt_type")
     tags_str = request.form.get("bulk_tags", "").strip()
-    
     ensure_category_tool_exist(cat, tool)
 
     if ids:
         with get_db() as conn:
             for pid in ids:
                 now_str = datetime.utcnow().isoformat()
-                
                 if cat: conn.execute("UPDATE prompts SET category=?, updated_at=? WHERE id=?", (cat, now_str, pid))
                 if tool: conn.execute("UPDATE prompts SET tool=?, updated_at=? WHERE id=?", (tool, now_str, pid))
                 if ptype: conn.execute("UPDATE prompts SET prompt_type=?, updated_at=? WHERE id=?", (ptype, now_str, pid))
-                
                 if tags_str:
                     raw_tags = [t.strip() for t in tags_str.split(',') if t.strip()]
                     for tag_name in raw_tags:
                         try: conn.execute("INSERT INTO tags (name) VALUES (?)", (tag_name,))
                         except sqlite3.IntegrityError: pass
-                        
-                        tag_id_row = conn.execute("SELECT id FROM tags WHERE name=?", (tag_name,)).fetchone()
-                        if tag_id_row:
-                            try: conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (int(pid), tag_id_row[0]))
-                            except sqlite3.IntegrityError: pass
+                        tag_id = conn.execute("SELECT id FROM tags WHERE name=?", (tag_name,)).fetchone()[0]
+                        try: conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (int(pid), tag_id))
+                        except sqlite3.IntegrityError: pass
                     conn.execute("UPDATE prompts SET updated_at=? WHERE id=?", (now_str, pid))
             conn.commit()
     return redirect(url_for("index"))
 
-
-# -------------------------
-# Backup / Restore
-# -------------------------
 @app.route("/backup/download")
 def backup_download():
     init_db()
-    if not DB_PATH.exists():
-        flash("Database file not found.")
-        return redirect(url_for("manage"))
+    if not DB_PATH.exists(): return redirect(url_for("manage"))
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"prompts_backup_{ts}.db"
-    return send_file(DB_PATH, as_attachment=True, download_name=filename)
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(DB_PATH, arcname="prompts.db")
+        if UPLOAD_DIR.exists():
+            for f in UPLOAD_DIR.iterdir():
+                if f.is_file() and f.name != ".gitkeep": zf.write(f, arcname=f"thumbs/{f.name}")
+    zip_buffer.seek(0)
+    return send_file(zip_buffer, mimetype="application/zip", as_attachment=True, download_name=f"prompts_backup_{ts}.zip")
 
 @app.route("/backup/restore", methods=["GET", "POST"])
 def restore_backup():
     init_db()
-    if request.method == "GET":
-        return render_template("restore.html")
+    if request.method == "GET": return render_template("restore.html")
     f = request.files.get("db_file")
-    if not f or f.filename.strip() == "":
-        flash("No file selected.")
-        return redirect(url_for("restore_backup"))
-    
-    filename = f.filename.lower()
-    if filename.endswith(".zip"):
+    if not f or f.filename.strip() == "": return redirect(url_for("restore_backup"))
+    if f.filename.lower().endswith(".zip"):
         try:
             with zipfile.ZipFile(f, 'r') as zf:
                 if "prompts.db" in zf.namelist():
-                    with zf.open("prompts.db") as source, open(DB_PATH, "wb") as target:
-                        shutil.copyfileobj(source, target)
+                    with zf.open("prompts.db") as source, open(DB_PATH, "wb") as target: shutil.copyfileobj(source, target)
                 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
                 for member in zf.namelist():
                     if member.startswith("thumbs/") and not member.endswith("/"):
                         target_path = UPLOAD_DIR / os.path.basename(member)
-                        with zf.open(member) as source, open(target_path, "wb") as target:
-                            shutil.copyfileobj(source, target)
+                        with zf.open(member) as source, open(target_path, "wb") as target: shutil.copyfileobj(source, target)
             flash("Backup restored."); return redirect(url_for("manage"))
         except: flash("Restore failed."); return redirect(url_for("restore_backup"))
-    elif filename.endswith(".db") or filename.endswith(".sqlite"):
-        try:
-            f.save(DB_PATH)
-            flash("Database restored."); return redirect(url_for("manage"))
-        except: pass
-    
+    elif f.filename.lower().endswith((".db", ".sqlite")):
+        f.save(DB_PATH)
+        flash("Database restored."); return redirect(url_for("manage"))
     return redirect(url_for("restore_backup"))
 
-# ---------------------------
-# Ollama integration
-# ---------------------------
+@app.route("/prompt/<int:prompt_id>/raw", methods=["GET"])
+def prompt_raw(prompt_id):
+    p = get_prompt(prompt_id)
+    if not p: return jsonify({"error": "not found"}), 404
+    return jsonify({"id": p["id"], "title": p["title"], "content": p["content"]})
+
+# Ollama
 OLLAMA_DEFAULT_MODEL = "gemma3:4b"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 def ollama_list_models():
     try:
         r = requests.get("http://localhost:11434/api/tags", timeout=1.5)
-        r.raise_for_status()
-        data = r.json()
-        models = []
-        for m in data.get("models", []):
-            name = m.get("name")
-            if name: models.append(name)
-        return models
-    except Exception:
-        return []
+        if r.status_code == 200: return [m["name"] for m in r.json().get("models", [])]
+    except: pass
+    return []
 
-def ollama_generate(prompt: str, model: str | None = None, system: str | None = None) -> str:
-    payload = {
-        "model": model or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL,
-        "prompt": prompt,
-        "stream": False,
-    }
+def ollama_generate(prompt, model=None, system=None):
+    payload = {"model": model or OLLAMA_DEFAULT_MODEL, "prompt": prompt, "stream": False}
     if system: payload["system"] = system
     r = requests.post(OLLAMA_URL, json=payload, timeout=60)
     r.raise_for_status()
-    data = r.json()
-    return data.get("response", "").strip()
+    return r.json().get("response", "").strip()
 
 @app.route("/prompt/<int:prompt_id>/refine", methods=["GET", "POST"])
-def refine_prompt(prompt_id: int):
-    init_db()
-    prompt = get_prompt(prompt_id)  # <--- Now get_prompt is defined and works!
-    
-    if not prompt:
-        flash("Prompt not found.")
-        return redirect(url_for("index"))
-
+def refine_prompt(prompt_id):
+    prompt = get_prompt(prompt_id)
+    if not prompt: return redirect(url_for("index"))
     models = ollama_list_models()
-    ollama_available = bool(models)
-    if request.method == "GET":
-        return render_template("refine_prompt.html", prompt=prompt, models=models, ollama_available=ollama_available)
-
-    if not ollama_available:
-        flash("Ollama not available.")
-        return redirect(url_for("render_prompt", prompt_id=prompt_id))
-
-    model = request.form.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL
+    if request.method == "GET": return render_template("refine_prompt.html", prompt=prompt, models=models, ollama_available=bool(models))
+    if not models: return redirect(url_for("render_prompt", prompt_id=prompt_id))
+    
+    model = request.form.get("model")
     session["ollama_model"] = model
-    instruction = (request.form.get("instruction") or "").strip()
-    mode = request.form.get("mode") or "refine"
-
-    base = prompt["content"] or ""
     try:
-        refined = ollama_generate(f"MODE: {mode}\nINSTRUCTION: {instruction}\n\nPROMPT:\n{base}", model=model, system="Output only refined prompt.")
+        refined = ollama_generate(f"MODE: {request.form.get('mode')}\nINSTRUCTION: {request.form.get('instruction')}\n\nPROMPT:\n{prompt['content']}", model=model, system="Refine prompt.")
     except Exception as e:
-        flash(f"Ollama error: {e}")
-        return redirect(url_for("render_prompt", prompt_id=prompt_id))
+        flash(f"Ollama error: {e}"); return redirect(url_for("render_prompt", prompt_id=prompt_id))
 
-    if request.form.get("save_as_new") == "on":
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    f"{prompt['title']} (refined)",
-                    prompt["category"],
-                    prompt["tool"],
-                    prompt["prompt_type"],
-                    refined,
-                    prompt["notes"],
-                    datetime.utcnow().isoformat(),
-                    datetime.utcnow().isoformat(),
-                ),
-            )
+    if request.form.get("save_as_new"):
+        with get_db() as conn:
+            conn.execute("INSERT INTO prompts (title, category, tool, prompt_type, content, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                         (f"{prompt['title']} (Refined)", prompt["category"], prompt["tool"], prompt["prompt_type"], refined, prompt["notes"], datetime.utcnow().isoformat(), datetime.utcnow().isoformat()))
             conn.commit()
         return redirect(url_for("index"))
     else:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?", (refined, datetime.utcnow().isoformat(), prompt_id))
+        with get_db() as conn:
+            conn.execute("UPDATE prompts SET content=?, updated_at=? WHERE id=?", (refined, datetime.utcnow().isoformat(), prompt_id))
             conn.commit()
         return redirect(url_for("render_prompt", prompt_id=prompt_id))
 
 @app.route("/refine_draft", methods=["POST"])
 def refine_draft():
-    init_db()
     models = ollama_list_models()
-    ollama_available = bool(models)
+    categories, tools = get_categories(), get_tools()
+    base = request.form.get("content", "")
+    p_like = {"title": request.form.get("title"), "category": "Other", "tool": "Generic", "prompt_type": "Instruction", "content": base, "notes": ""}
     
-    categories = get_categories()
-    tools = get_tools()
-    base = request.form.get("content") or ""
+    if not models: return render_template("edit_prompt.html", prompt=p_like, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, refine_error="Ollama unavailable", ollama_available=False, tags_str="")
     
-    prompt_like = {
-        "id": None,
-        "title": request.form.get("title", ""),
-        "category": request.form.get("category", categories[0] if categories else "Other"),
-        "tool": request.form.get("tool", tools[0] if tools else "Other"),
-        "prompt_type": request.form.get("prompt_type", "Instruction"),
-        "content": base,
-        "notes": request.form.get("notes", ""),
-    }
-    
-    if not models:
-        return render_template("edit_prompt.html", prompt=prompt_like, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, refine_error="Ollama unavailable", ollama_available=False, tags_str="")
-
-    model = request.form.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL
-    session["ollama_model"] = model
     try:
-        refined = ollama_generate(f"MODE: {request.form.get('mode')}\nINSTRUCTION: {request.form.get('instruction')}\n\nPROMPT:\n{base}", model=model, system="Output only refined prompt.")
-        return render_template("edit_prompt.html", prompt=prompt_like, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, refined_draft=refined, ollama_available=True, tags_str="")
+        refined = ollama_generate(f"MODE: {request.form.get('mode')}\nINSTRUCTION: {request.form.get('instruction')}\n\nPROMPT:\n{base}", model=request.form.get("model"), system="Refine prompt.")
+        return render_template("edit_prompt.html", prompt=p_like, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, refined_draft=refined, ollama_available=True, tags_str="")
     except Exception as e:
-        return render_template("edit_prompt.html", prompt=prompt_like, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, refine_error=str(e), ollama_available=True, tags_str="")
-
-# Raw API
-@app.route("/prompt/<int:prompt_id>/raw", methods=["GET"])
-def prompt_raw(prompt_id: int):
-    p = get_prompt(prompt_id)
-    if not p:
-        return jsonify({"error": "not found"}), 404
-    return jsonify({
-        "id": p["id"],
-        "title": p["title"],
-        "content": p["content"] or "",
-        "category": p["category"],
-        "tool": p["tool"],
-        "prompt_type": p["prompt_type"],
-    })
-
+        return render_template("edit_prompt.html", prompt=p_like, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, refine_error=str(e), ollama_available=True, tags_str="")
 
 if __name__ == "__main__":
     init_db()
