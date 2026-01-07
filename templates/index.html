@@ -36,7 +36,7 @@
 
     <input type="hidden" name="sort_by" value="{{ sort_by|default('updated_at') }}">
     <input type="hidden" name="sort_dir" value="{{ sort_dir|default('desc') }}">
-    <input type="hidden" name="page" value="{{ page|default(1) }}">
+    <input type="hidden" name="page" value="1" disabled> 
   </form>
 
   <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
@@ -177,6 +177,32 @@
     {% endfor %}
   </ul>
 
+  {% if total_pages > 1 %}
+    <div style="margin-top:2rem; display:flex; justify-content:center; align-items:center; gap:0.5rem;">
+      {% if page > 1 %}
+        <a class="btn-secondary"
+           href="{{ url_for('index', page=page-1, q=q, category=active_category, tool=active_tool, sort_by=sort_by, sort_dir=sort_dir) }}">
+          &laquo; Prev
+        </a>
+      {% else %}
+        <span class="btn-secondary" style="opacity:0.5; cursor:default;">&laquo; Prev</span>
+      {% endif %}
+
+      <span style="padding:0 0.5rem; font-size:0.9em; color:#888;">
+        Page {{ page }} of {{ total_pages }}
+      </span>
+
+      {% if page < total_pages %}
+        <a class="btn-secondary"
+           href="{{ url_for('index', page=page+1, q=q, category=active_category, tool=active_tool, sort_by=sort_by, sort_dir=sort_dir) }}">
+          Next &raquo;
+        </a>
+      {% else %}
+        <span class="btn-secondary" style="opacity:0.5; cursor:default;">Next &raquo;</span>
+      {% endif %}
+    </div>
+  {% endif %}
+
 </section>
 
 <script>
@@ -204,10 +230,13 @@
   btnAll && btnAll.addEventListener('click', () => checks.forEach(c => c.checked = true));
   btnNone && btnNone.addEventListener('click', () => checks.forEach(c => c.checked = false));
 
-  // The key fix is in app.py logic, but this JS ensures the UI values are sent
   applySort && applySort.addEventListener('click', () => {
+    // We want to sort AND reset to page 1
     filterForm.querySelector('input[name="sort_by"]').value = sortBy.value;
     filterForm.querySelector('input[name="sort_dir"]').value = sortDir.value;
+    // Note: ensure page param is removed or set to 1 before submit if it exists as hidden
+    const pageInput = filterForm.querySelector('input[name="page"]');
+    if(pageInput) pageInput.disabled = false; // enable it so it sends value=1
     filterForm.submit();
   });
 })();
