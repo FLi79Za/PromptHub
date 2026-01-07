@@ -52,8 +52,13 @@
 
     <form method="get" class="filters" id="filterForm" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1.5rem;">
       <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
-        <div style="flex:1; min-width:200px;">
+        
+        <div style="flex:1; min-width:180px;">
           <input type="text" name="q" value="{{ q|default('') }}" placeholder="Search..." style="width:100%;">
+        </div>
+
+        <div style="flex:1; min-width:180px;">
+          <input type="text" name="q_not" value="{{ q_not|default('') }}" placeholder="Exclude..." style="width:100%; border-color:#d32f2f;">
         </div>
         
         <select name="category">
@@ -79,7 +84,7 @@
 
         <button type="submit">Filter</button>
         
-        {% if q or active_category!='all' or active_tool!='all' or active_tag!='all' %}
+        {% if q or q_not or active_category!='all' or active_tool!='all' or active_tag!='all' %}
           <a href="{{ url_for('index') }}" style="align-self:center; font-size:0.9em; margin-left:0.5rem;">Clear</a>
         {% endif %}
       </div>
@@ -141,7 +146,6 @@
           <div class="prompt-meta">
             <div style="display:flex; justify-content:space-between; align-items:start;">
                 <h3 style="margin:0;">{{ p.title }}</h3>
-                
                 <div style="display:flex; gap:4px;">
                     {% if p.child_count > 0 %}
                         <span title="{{ p.child_count }} variants" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">
@@ -173,7 +177,6 @@
               <button type="button" class="btn-secondary" onclick="copyPrompt({{ p.id }})">Copy</button>
               <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
               <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
-              
               <form method="post" action="{{ url_for('delete_prompt', prompt_id=p.id) }}" 
                     style="display:inline;" onsubmit="return confirm('Delete permanently?');">
                   <button type="submit" class="btn-danger" style="padding:0.4rem 0.6rem;">&times;</button>
@@ -191,7 +194,7 @@
     {% if total_pages > 1 %}
       <div style="margin-top:2rem; display:flex; justify-content:center; gap:0.5rem;">
         {% if page > 1 %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">&laquo; Prev</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, q_not=q_not, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">&laquo; Prev</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">&laquo; Prev</span>
         {% endif %}
@@ -199,7 +202,7 @@
         <span style="padding:0.5rem;">Page {{ page }} of {{ total_pages }}</span>
         
         {% if page < total_pages %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">Next &raquo;</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">Next &raquo;</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">Next &raquo;</span>
         {% endif %}
@@ -217,7 +220,7 @@
   .drop-overlay {
       display: none; 
       position: absolute; top:0; left:0; right:0; bottom:0;
-      background: rgba(0,0,0,0.6); /* Semi-transparent black tint */
+      background: rgba(0,0,0,0.6); 
       color: white;
       justify-content: center; align-items: center; font-weight: bold;
       z-index: 5; border-radius: 8px; pointer-events: none;
@@ -234,37 +237,32 @@
       display: flex; align-items: center; justify-content: center; 
   }
   
-  /* FIXED: Ensure full image is visible (uncropped) */
+  /* Full image visible (uncropped) */
   .card-thumb-area img { 
       width: 100%; height: 100%; object-fit: contain; 
   }
 </style>
 
 <script>
-// --- Preview Toggle ---
 function togglePreview(id){
   const el = document.getElementById(`preview-${id}`);
   if(el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
-// --- Copy to Clipboard ---
 function copyPrompt(id){
   const el = document.querySelector(`#preview-${id} pre`);
   if(el) {
       navigator.clipboard.writeText(el.innerText);
-      // Optional: Visual feedback could be added here
       const btn = event.target;
       const originalText = btn.textContent;
       btn.textContent = "Copied!";
       setTimeout(() => btn.textContent = originalText, 1500);
   } else {
-      // If the preview isn't in DOM, we can't copy easily without fetching
       alert("Please open the preview first to copy the text.");
   }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    // --- Organise Panel Toggle ---
     const toggle = document.getElementById('toggleOrganise');
     const panel = document.getElementById('organisePanel');
     const checks = document.querySelectorAll('.organise-checkbox');
@@ -306,7 +304,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     function handleUpload(id, file, zoneElement) {
-        // Validate Image
         if (!file.type.startsWith('image/')) { 
             alert("Please drop an image file."); 
             return; 
@@ -323,17 +320,12 @@ document.addEventListener('DOMContentLoaded', () => {
         .then(res => res.json())
         .then(data => {
             if(data.success) {
-                // Success: Update the image
                 let img = zoneElement.querySelector('img.thumb');
-                
-                // If it was a placeholder div, replace it with an img tag
                 if (!img) {
                     const container = zoneElement.querySelector('.card-thumb-area');
                     container.innerHTML = '<img class="thumb" alt="Thumbnail">';
                     img = container.querySelector('img');
                 }
-                
-                // Set source with timestamp to bust cache
                 img.src = data.thumbnail_url + '?t=' + new Date().getTime();
             } else {
                 alert('Upload failed: ' + data.error);
@@ -341,7 +333,6 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         .catch(err => alert('Error: ' + err))
         .finally(() => { 
-            // Reset overlay to hidden and empty (Blank Box)
             overlay.style.display = 'none'; 
             overlay.textContent = ''; 
         });

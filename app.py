@@ -248,6 +248,7 @@ def index():
     tool = request.args.get("tool", "all")
     tag_filter = request.args.get("tag", "all")
     q = (request.args.get("q") or "").strip()
+    q_not = (request.args.get("q_not") or "").strip()  # NEW: Exclude filter
     sort_by = request.args.get("sort_by", "updated_at")
     sort_dir = request.args.get("sort_dir", "desc")
     try: page = max(1, int(request.args.get("page", 1)))
@@ -270,9 +271,15 @@ def index():
     if tool != "all": base_query += " AND p.tool = ?"; params.append(tool)
     if tag_filter != "all": base_query += " AND t.name = ?"; params.append(tag_filter)
     
+    # Positive Search
     if q:
         base_query += " AND (LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(COALESCE(p.notes, '')) LIKE ?)"
         like = f"%{q.lower()}%"; params.extend([like, like, like])
+
+    # Negative Search (Exclude)
+    if q_not:
+        base_query += " AND NOT (LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(COALESCE(p.notes, '')) LIKE ?)"
+        not_like = f"%{q_not.lower()}%"; params.extend([not_like, not_like, not_like])
 
     count_query = f"SELECT COUNT(DISTINCT p.id) {base_query}"
     total_items = conn.execute(count_query, params).fetchone()[0]
@@ -307,6 +314,7 @@ def index():
         active_tool=tool,
         active_tag=tag_filter,
         q=q,
+        q_not=q_not,
         sort_by=sort_by,
         sort_dir=sort_dir,
         page=page,
@@ -738,17 +746,14 @@ def bulk_update():
                 if cat: conn.execute("UPDATE prompts SET category=?, updated_at=? WHERE id=?", (cat, now_str, pid))
                 if tool: conn.execute("UPDATE prompts SET tool=?, updated_at=? WHERE id=?", (tool, now_str, pid))
                 if ptype: conn.execute("UPDATE prompts SET prompt_type=?, updated_at=? WHERE id=?", (ptype, now_str, pid))
-                
                 if tags_str:
                     raw_tags = [t.strip() for t in tags_str.split(',') if t.strip()]
                     for tag_name in raw_tags:
                         try: conn.execute("INSERT INTO tags (name) VALUES (?)", (tag_name,))
                         except sqlite3.IntegrityError: pass
-                        
-                        tag_id_row = conn.execute("SELECT id FROM tags WHERE name=?", (tag_name,)).fetchone()
-                        if tag_id_row:
-                            try: conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (int(pid), tag_id_row[0]))
-                            except sqlite3.IntegrityError: pass
+                        tag_id = conn.execute("SELECT id FROM tags WHERE name=?", (tag_name,)).fetchone()[0]
+                        try: conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (int(pid), tag_id))
+                        except sqlite3.IntegrityError: pass
                     conn.execute("UPDATE prompts SET updated_at=? WHERE id=?", (now_str, pid))
             conn.commit()
     return redirect(url_for("index"))
