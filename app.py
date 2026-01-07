@@ -871,9 +871,11 @@ def refine_prompt(prompt_id: int):
 
     models = ollama_list_models()
     ollama_available = bool(models)
+    
     if request.method == "GET":
         return render_template("refine_prompt.html", prompt=prompt, models=models, ollama_available=ollama_available)
 
+    # --- POST Handling ---
     if not ollama_available:
         flash("Ollama not available.")
         return redirect(url_for("render_prompt", prompt_id=prompt_id))
@@ -883,20 +885,24 @@ def refine_prompt(prompt_id: int):
     instruction = (request.form.get("instruction") or "").strip()
     mode = request.form.get("mode") or "refine"
 
-    base = prompt["content"] or ""
+    # Grab content from FORM (allows editing source before refining)
+    base = request.form.get("content") or prompt["content"]
+
     try:
         refined = ollama_generate(f"MODE: {mode}\nINSTRUCTION: {instruction}\n\nPROMPT:\n{base}", model=model, system="Output only refined prompt.")
     except Exception as e:
         flash(f"Ollama error: {e}")
         return redirect(url_for("render_prompt", prompt_id=prompt_id))
 
+    # --- SAVE LOGIC ---
     if request.form.get("save_as_new") == "on":
+        # 1. Save as New Variant
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute(
                 """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, created_at, updated_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    f"{prompt['title']} (Refined)",
+                    request.form.get("new_title") or f"{prompt['title']} (Refined)",
                     prompt["category"],
                     prompt["tool"],
                     prompt["prompt_type"],
@@ -907,12 +913,26 @@ def refine_prompt(prompt_id: int):
                 ),
             )
             conn.commit()
+        flash("Refined prompt saved as new.")
         return redirect(url_for("index"))
-    else:
+
+    elif request.form.get("overwrite") == "on":
+        # 2. Explicit Overwrite
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?", (refined, datetime.utcnow().isoformat(), prompt_id))
             conn.commit()
+        flash("Prompt updated.")
         return redirect(url_for("render_prompt", prompt_id=prompt_id))
+
+    else:
+        # 3. Preview Mode (No DB Save)
+        flash("Refinement generated (Unsaved). Check a box to save.")
+        
+        # Create a temporary dict to show the result in the UI
+        p_preview = dict(prompt)
+        p_preview['content'] = refined
+        
+        return render_template("refine_prompt.html", prompt=p_preview, models=models, ollama_available=ollama_available)
 
 @app.route("/refine_draft", methods=["POST"])
 def refine_draft():

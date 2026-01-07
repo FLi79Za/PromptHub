@@ -1,72 +1,71 @@
 {% extends "base.html" %}
-{% block content %}
-<section>
-  <h2>Refine Prompt (Ollama)</h2>
 
-  <div class="card" style="margin-bottom: 1rem;">
-    <h3 style="margin:0;">{{ prompt.title }}</h3>
-    <div class="meta">
-      <span>{{ prompt.category }}</span> · <span>{{ prompt.tool }}</span> · <span>{{ prompt.prompt_type }}</span>
-    </div>
+{% block content %}
+<section class="page" style="max-width: 800px; margin: 0 auto;">
+  <div class="page-header">
+    <h2>Refine Prompt (Ollama)</h2>
+    <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}">Back to Use</a>
   </div>
 
-  {% if models|length == 0 %}
-    <div class="flash flash-warn">
-      <strong>Ollama not available.</strong> Make sure Ollama is installed and running, then refresh this page.
-    </div>
-    <div style="margin-top:0.75rem;">
-      <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}">Back to Use</a>
-      <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=prompt.id) }}">Edit</a>
+  <div class="prompt-meta" style="margin-bottom:1.5rem;">
+      <h3 style="margin:0;">{{ prompt.title }}</h3>
+      <p style="opacity:0.7; margin-top:0.25rem;">{{ prompt.category }} · {{ prompt.tool }} · {{ prompt.prompt_type }}</p>
+  </div>
+
+  {% if not ollama_available %}
+    <div style="background: #300; color: #fcc; padding: 1rem; border-radius: 8px; border: 1px solid #c00;">
+        <strong>Error:</strong> Ollama is not detected. Please ensure Ollama is running.
     </div>
   {% else %}
-    <form method="post">
-      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.75rem;">
-        <label>Model
-          <select name="model">
-            {% for m in models %}
-              <option value="{{ m }}" {% if m == selected_model %}selected{% endif %}>{{ m }}</option>
-            {% endfor %}
-          </select>
-        </label>
-
-        <label>Instruction
-          <textarea name="instruction" rows="4" placeholder="{{ instruction_default }}">{{ request.form.get('instruction','') }}</textarea>
-        </label>
+    <form method="post" class="form">
+      
+      <div class="grid-2">
+          <div>
+              <label>Model</label>
+              <select name="model">
+                  {% for m in models %}
+                    <option value="{{ m }}" {% if session.get('ollama_model') == m %}selected{% endif %}>{{ m }}</option>
+                  {% endfor %}
+              </select>
+          </div>
+          <div>
+              <label>Instruction (Optional)</label>
+              <textarea name="instruction" rows="2" placeholder="e.g. Make it more descriptive, remove negative words..."></textarea>
+          </div>
       </div>
 
-      <label style="margin-top:0.75rem;">Source text (edit before sending to Ollama if you want)
-        <textarea name="source_text" rows="10">{{ request.form.get('source_text', prompt.content or '') }}</textarea>
-      </label>
-
-      <div style="margin-top:0.75rem; display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
-        <button type="submit">Refine</button>
-        <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}">Back to Use</a>
+      <div style="margin-top:1rem;">
+          <label>Source text (Edit before sending if desired)</label>
+          <textarea name="content" rows="12" style="font-family:monospace; line-height:1.4;">{{ prompt.content }}</textarea>
       </div>
 
-      <div style="margin-top:0.75rem; display:flex; gap:1.25rem; flex-wrap:wrap; align-items:center;">
-        <label style="display:flex; gap:0.5rem; align-items:center;">
-          <input type="checkbox" name="overwrite">
-          Overwrite this prompt’s content
-        </label>
+      <div style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-top:1.5rem; border:1px solid #333;">
+          <div style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; margin-bottom:1rem;">
+              <button type="submit" class="btn-primary">Refine</button>
+              <span style="opacity:0.5; font-size:0.9em;">(Generates preview if no save option selected)</span>
+          </div>
 
-        <label style="display:flex; gap:0.5rem; align-items:center;">
-          <input type="checkbox" name="save_as_new">
-          Save as new prompt
-        </label>
+          <hr style="border-color:#333; margin: 1rem 0;">
 
-        <label>New title (when saving as new)
-          <input type="text" name="new_title" placeholder="{{ prompt.title }} (Refined)">
-        </label>
+          <div style="display:grid; gap:1rem;">
+              <div style="display:flex; align-items:center;">
+                  <input type="checkbox" name="overwrite" id="overwrite" style="margin-right:0.5rem;">
+                  <label for="overwrite" style="cursor:pointer; color:#ff6b6b;">Overwrite this prompt's content</label>
+              </div>
+
+              <div style="display:flex; align-items:center; flex-wrap:wrap; gap:1rem;">
+                  <div style="display:flex; align-items:center;">
+                      <input type="checkbox" name="save_as_new" id="save_as_new" style="margin-right:0.5rem;" onclick="document.getElementById('newTitleBox').style.display = this.checked ? 'block' : 'none'">
+                      <label for="save_as_new" style="cursor:pointer; color:#51cf66;">Save as new prompt</label>
+                  </div>
+                  
+                  <div id="newTitleBox" style="display:none; flex:1; min-width:200px;">
+                      <input type="text" name="new_title" placeholder="New Title (Optional)" value="{{ prompt.title }} (Refined)" style="width:100%; padding:0.4rem;">
+                  </div>
+              </div>
+          </div>
       </div>
 
-      {% if refined_text %}
-        <hr style="margin: 1.25rem 0; border: 0; border-top: 1px solid #333;" />
-        <h3>Refined result</h3>
-        <textarea id="refinedText" rows="12" style="width:100%;" readonly>{{ refined_text }}</textarea>
-        <div style="margin-top:0.75rem; display:flex; gap:0.75rem; flex-wrap:wrap;">
-          <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('refinedText').value)">Copy refined text</button>
-        </div>
-      {% endif %}
     </form>
   {% endif %}
 </section>

@@ -1,96 +1,84 @@
 {% extends "base.html" %}
+
 {% block content %}
-<section>
-  <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:1rem;">
+<section class="page" style="max-width: 800px; margin: 0 auto;">
+  
+  <div class="page-header" style="margin-bottom: 2rem;">
     <div>
-      <h2>Use Prompt</h2>
-      <h3 style="margin-top:0.25rem;">{{ prompt.title }}</h3>
-      <p class="notes">{{ prompt.category }} · {{ prompt.tool }} · {{ prompt.prompt_type }}</p>
+        <h2 style="margin:0;">Use Prompt</h2>
+        <h3 style="margin:0; opacity: 0.6; font-weight: normal;">{{ prompt.title }}</h3>
     </div>
-    <div style="text-align:right;">
-      <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=prompt.id) }}">Edit</a>
-      {% if ENABLE_OLLAMA|default(false) %}
-        <a class="btn-secondary" href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}">Refine (Ollama)</a>
-      {% endif %}
-    </div>
+    <a class="btn-secondary" href="{{ url_for('index') }}">Back to Library</a>
   </div>
 
-  <h4 style="margin-top:1rem;">Prompt (reference)</h4>
-  <textarea id="basePrompt" rows="8" style="width:100%;" readonly>{{ prompt.content }}</textarea>
-
-  <form method="post" id="renderForm" style="margin-top:1rem;">
-    {% if placeholders %}
-      <h4>Placeholders</h4>
-      <div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:0.75rem;">
-        {% for ph in placeholders %}
+  {% if placeholders %}
+  <div style="background:#1a1a1a; padding:1.5rem; border-radius:8px; margin-bottom:2rem; border:1px solid #333;">
+      <h4 style="margin-top:0; color:#00bfff; margin-bottom:1rem;">Variables</h4>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:1rem;">
+          {% for name in placeholders %}
           <div>
-            <label for="ph_{{ ph }}">{{ ph }}</label>
-            <input type="text" id="ph_{{ ph }}" name="{{ ph }}" value="{{ request.form.get(ph,'') }}" placeholder="Value for {{ ph }}">
+              <label style="font-size:0.85em; text-transform:uppercase; letter-spacing:1px; opacity:0.7;">{{ name }}</label>
+              <input type="text" class="placeholder-input" data-target="{{ name }}" oninput="updateFinal()" placeholder="Value for {{ name }}..." style="width:100%;">
           </div>
-        {% endfor %}
+          {% endfor %}
       </div>
-    {% endif %}
-
-    <div style="margin-top:1rem;">
-      <label for="override"><strong>Override final text (optional)</strong></label>
-      <textarea name="override" id="override" rows="5" placeholder="Optional manual edits after placeholder substitution">{{ request.form.get('override','') }}</textarea>
-      <p class="notes">Tip: leave Override empty to use the auto-substituted version.</p>
-    </div>
-
-    <button type="submit" class="btn-primary" style="margin-top:0.75rem;">Render</button>
-  </form>
-  {% if prompt and prompt.id %}
-  <a class="btn-secondary"
-     href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}">
-    Refine with Ollama
-  </a>
-{% endif %}
-
-
-  <h3 style="margin-top:1.25rem;">Final Prompt</h3>
-  <textarea id="finalPrompt" rows="10" style="width:100%;" readonly>{{ final_text }}</textarea>
-
-  <div style="display:flex; gap:0.75rem; align-items:center; margin-top:0.75rem;">
-    <button type="button" class="btn-primary" onclick="copyFinal()">Copy to clipboard</button>
-    <a class="btn-secondary" href="{{ url_for('index') }}">Back</a>
   </div>
+  {% endif %}
+
+  <form action="{{ url_for('refine_prompt', prompt_id=prompt.id) }}" method="POST">
+      
+      <div style="display:flex; justify-content:space-between; align-items:end; margin-bottom:0.5rem;">
+          <label>Final Prompt (Editable)</label>
+          <span id="copyFeedback" style="font-size:0.85em; color:#51cf66; opacity:0; transition:opacity 0.3s;">Copied!</span>
+      </div>
+
+      <textarea id="templateSource" style="display:none;">{{ prompt.content }}</textarea>
+
+      <textarea name="content" id="finalOutput" rows="12" style="font-family:monospace; line-height:1.5; font-size:1.1em; padding:1rem;">{{ prompt.content }}</textarea>
+
+      <div class="action-bar" style="margin-top:1rem; display:flex; gap:1rem; flex-wrap:wrap;">
+          <button type="button" class="btn-primary" onclick="copyToClipboard()" style="flex:2;">
+              Copy to Clipboard
+          </button>
+
+          <button type="submit" class="btn-secondary" style="flex:1;" title="Send this text to Ollama for refinement">
+              ✨ Refine with Ollama
+          </button>
+      </div>
+  </form>
+
 </section>
 
 <script>
-(function(){
-  const base = document.getElementById('basePrompt');
-  const finalBox = document.getElementById('finalPrompt');
-  const override = document.getElementById('override');
+// 1. LIVE UPDATE FUNCTION
+function updateFinal() {
+    let text = document.getElementById('templateSource').value;
+    const inputs = document.querySelectorAll('.placeholder-input');
+    
+    // Loop through all placeholder inputs
+    inputs.forEach(input => {
+        const key = input.getAttribute('data-target');
+        const val = input.value;
+        
+        // Replace all instances of [[key]] with the value (or keep [[key]] if empty)
+        // We use a RegExp with 'g' (global) flag to replace multiple occurrences
+        if(val) {
+            const regex = new RegExp(`\\[\\[${key}\\]\\]`, 'g');
+            text = text.replace(regex, val);
+        }
+    });
 
-  function computeFinal(){
-    // If override has content, show it as the live final.
-    if (override && override.value.trim().length > 0){
-      finalBox.value = override.value;
-      return;
-    }
+    document.getElementById('finalOutput').value = text;
+}
 
-    let text = base.value;
-    {% for ph in placeholders %}
-      const v_{{ loop.index }} = document.getElementById('ph_{{ ph }}').value || '';
-      text = text.split('[[{{ ph }}]]').join(v_{{ loop.index }});
-    {% endfor %}
-    finalBox.value = text;
-  }
-
-  // Live update on typing
-  {% for ph in placeholders %}
-    document.getElementById('ph_{{ ph }}').addEventListener('input', computeFinal);
-  {% endfor %}
-  if (override){
-    override.addEventListener('input', computeFinal);
-  }
-
-  computeFinal();
-})();
-
-function copyFinal(){
-  const txt = document.getElementById('finalPrompt').value || '';
-  navigator.clipboard.writeText(txt);
+// 2. COPY FUNCTION
+function copyToClipboard() {
+    const text = document.getElementById('finalOutput').value;
+    navigator.clipboard.writeText(text).then(() => {
+        const feedback = document.getElementById('copyFeedback');
+        feedback.style.opacity = '1';
+        setTimeout(() => feedback.style.opacity = '0', 2000);
+    });
 }
 </script>
 {% endblock %}
