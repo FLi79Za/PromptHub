@@ -738,14 +738,17 @@ def bulk_update():
                 if cat: conn.execute("UPDATE prompts SET category=?, updated_at=? WHERE id=?", (cat, now_str, pid))
                 if tool: conn.execute("UPDATE prompts SET tool=?, updated_at=? WHERE id=?", (tool, now_str, pid))
                 if ptype: conn.execute("UPDATE prompts SET prompt_type=?, updated_at=? WHERE id=?", (ptype, now_str, pid))
+                
                 if tags_str:
                     raw_tags = [t.strip() for t in tags_str.split(',') if t.strip()]
                     for tag_name in raw_tags:
                         try: conn.execute("INSERT INTO tags (name) VALUES (?)", (tag_name,))
                         except sqlite3.IntegrityError: pass
-                        tag_id = conn.execute("SELECT id FROM tags WHERE name=?", (tag_name,)).fetchone()[0]
-                        try: conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (int(pid), tag_id))
-                        except sqlite3.IntegrityError: pass
+                        
+                        tag_id_row = conn.execute("SELECT id FROM tags WHERE name=?", (tag_name,)).fetchone()
+                        if tag_id_row:
+                            try: conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (int(pid), tag_id_row[0]))
+                            except sqlite3.IntegrityError: pass
                     conn.execute("UPDATE prompts SET updated_at=? WHERE id=?", (now_str, pid))
             conn.commit()
     return redirect(url_for("index"))
@@ -760,9 +763,26 @@ def backup_download():
     if not DB_PATH.exists():
         flash("Database file not found.")
         return redirect(url_for("manage"))
+    
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"prompts_backup_{ts}.db"
-    return send_file(DB_PATH, as_attachment=True, download_name=filename)
+    zip_buffer = io.BytesIO()
+
+    # Create ZIP archive (DB + Thumbs)
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(DB_PATH, arcname="prompts.db")
+        if UPLOAD_DIR.exists():
+            for f in UPLOAD_DIR.iterdir():
+                if f.is_file() and f.name != ".gitkeep":
+                    zf.write(f, arcname=f"thumbs/{f.name}")
+    
+    zip_buffer.seek(0)
+    
+    return send_file(
+        zip_buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"prompts_backup_{ts}.zip"
+    )
 
 @app.route("/backup/restore", methods=["GET", "POST"])
 def restore_backup():
