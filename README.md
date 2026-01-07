@@ -4,6 +4,8 @@ A local, self-hosted web app for storing, organising, searching, refining, and r
 
 Prompt Hub is designed for **real-world AI workflows**, not toy examples. It supports full-sentence prompts, instruction-based editing, iterative refinement, and visual context — all running **entirely locally**.
 
+**New:** Now features **Vision-Assisted Drafting** (reverse-engineer images to prompts), **Prompt Variants**, and **Smart Tagging**.
+
 No cloud services required.
 
 ---
@@ -11,328 +13,169 @@ No cloud services required.
 ## ⚡ Quick Start
 
 ```bash
-git clone https://github.com/<your-username>/<repo-name>.git
+# 1. Clone the repo
+git clone [https://github.com/](https://github.com/)<your-username>/<repo-name>.git
 cd <repo-name>
+
+# 2. Create virtual env
 python -m venv env
+# Windows:
 env\Scripts\activate
+# Mac/Linux:
+# source env/bin/activate
+
+# 3. Install dependencies
 pip install -r requirements.txt
+
+# 4. Run the app
 python app.py
-Open in your browser:
-👉 http://127.0.0.1:5000
+Open in your browser: 👉 http://127.0.0.1:5000
 
 🧠 What this is good for
-Image generation prompts (Flux, Stable Diffusion, etc.)
+Image generation prompts (Flux, Stable Diffusion, Midjourney, etc.)
 
-Instruction-based image editing prompts
-(Qwen Edit, Nano Banana, Flux Kontext)
+Instruction-based image editing (Qwen Edit, Nano Banana, Flux Kontext)
 
-Video, music, and other AI tool prompts
+Reverse-engineering images into prompts using Vision AI
 
-Prompt variants and experimentation
+Prompt variants (A/B testing different styles)
 
 Iterative refinement using a local LLM (Ollama)
 
 🚀 Key Features
-Core prompt management
-Create, edit, delete, and duplicate prompts
+Core Prompt Management
+Create, edit, delete, and duplicate prompts.
 
-Organise prompts by Category and Tool
+Prompt Variants: Create child "variants" of a prompt to iterate on ideas without losing the original.
 
-Add new categories and tools via the UI (no code changes)
+Smart Tagging: Add free-form tags to prompts for flexible grouping.
 
-SQLite database (local, lightweight)
+Saved Views: Save your favorite filter combinations (e.g., "Flux Characters") to the sidebar for one-click access.
 
-Prompt authoring & usage
-Full-sentence prompts supported (not just templates)
+Dynamic Organization: Categories and Tools are created automatically when you type them—no manual setup needed.
 
-Placeholder support using [[placeholders]]
+👁️ Vision-Assisted Drafting (New!)
+Image-to-Prompt: Drag an image into the "New Prompt" screen to auto-generate a prompt draft.
 
-Render prompts with live substitution
+Two-Stage Pipeline: Uses a Vision model (e.g., LLaVA/Qwen-VL) to see and a Text model (e.g., Gemma) to write.
 
-Edit final rendered output before copying
+Auto-Thumbnail: The analyzed image is automatically set as the prompt's thumbnail.
 
-One-click copy to clipboard
+Custom Instructions: Guide the AI on what to look for and how to write the prompt.
 
-Search & scale
-Full-text search across:
+Visual Context
+Thumbnails: Upload reference images for any prompt.
 
-Title
+Drag-and-Drop: Drag an image directly onto a prompt card in the library to instantly update its thumbnail.
 
-Content
+Optimization: Images are automatically resized and compressed to keep the app fast.
 
-Notes
+Search & Scale
+Full-text search across Title, Content, Notes, Category, Tool, and Tags.
 
-Category
+Pagination: Handles large libraries efficiently (12 items per page).
 
-Tool
+Bulk Actions: Bulk update Category, Tool, Type, and Tags for multiple prompts at once.
 
-Prompt type
+Local LLM Integration (Ollama)
+Refine Prompts: Reword, shorten, or expand prompts locally.
 
-Combine search with category and tool filters
+Drafting: Generate prompt drafts from scratch or images.
 
-Designed to scale to large prompt libraries
-
-Import / export
-Import prompts from .txt files
-
-Preview before saving
-
-Bulk import supported
-
-Optional metadata headers supported
-
-Visual context
-Optional thumbnail images per prompt
-
-Useful for image and video prompts
-
-Supports portrait, landscape, or square images
-
-Thumbnails improve browsing and recognition
-
-Local LLM integration (optional)
-Ollama integration for prompt refinement
-
-Runs entirely locally
-
-Can be disabled without breaking the app
-
-Supported workflows:
-
-Refine an existing prompt
-
-Refine a prompt at the “New Prompt” draft stage
-
-Create variants (save as new prompts)
-
-Convert between prompt styles (e.g. Flux ↔ instruction-based)
-
-Shorten, expand, or rewrite prompts
-
-The app remains fully usable even if Ollama is not installed or running.
+Zero Setup: Automatically detects your local Ollama models.
 
 🛠 Requirements
 Python 3.10+ (3.11 recommended)
 
 Git (optional, but recommended)
 
-Windows 11 tested (should also work on macOS/Linux)
+Ollama (Optional, required for AI refinement/vision features)
 
-Check Python version:
+Python Dependencies
+Flask (Web framework)
 
-bash
-Copy code
-python --version
-🧩 Setup (Windows 11)
-1) Clone the repository
-bash
-Copy code
-git clone https://github.com/<your-username>/<repo-name>.git
-cd <repo-name>
-2) Create a virtual environment
-bash
-Copy code
-python -m venv env
-Activate it:
+Pillow (Image processing)
 
-bash
-Copy code
-env\Scripts\activate
-You should now see (env) in your terminal prompt.
+requests (API calls)
 
-3) Install dependencies
-bash
-Copy code
-pip install -r requirements.txt
-Minimum requirements.txt:
-
-txt
-Copy code
-Flask>=3.0.0
-4) Run the app
-bash
-Copy code
-python app.py
-On first run, the app will:
-
-Create prompts.db
-
-Create default categories and tools
-
-You should see:
-
-nginx
-Copy code
-Running on http://127.0.0.1:5000
 📘 Usage Overview
-Creating prompts
-Click New Prompt
+Creating Prompts
+Click New Prompt.
 
-Fill in:
+Vision Draft (Optional): Drag an image into the "Generate Draft" box. Select your local Vision and Text models (via Ollama) and click Generate.
 
-Title
+Fill in details: Title, Category, Tool, Tags.
 
-Category
+Use [[placeholders]] for variable sections.
 
-Tool
+Example: Change only the [[target_area]] so it becomes [[new_look]].
 
-Prompt type
+Using a Prompt
+Click Use on any card.
 
-Content
+Fill in the placeholders in the form.
 
-Optionally add:
+Click Copy to Clipboard.
 
-Notes
+Variants & Versioning
+Make Variant: On the Edit screen, click "Make Variant" to create a linked copy.
 
-Thumbnail image
+Tracking: Variants show a badge on the card (e.g., 2 ⑂) indicating how many versions exist.
 
-Use [[placeholders]] for variable sections
+Importing Prompts
+Import individual .txt files or batch import multiple files.
 
-Example:
+Supports metadata headers in files:
 
-text
-Copy code
-Change only the [[target_area]] so it becomes [[new_look]].
-Keep everything else the same.
-Using a prompt
-Click Use
+YAML
 
-Fill in placeholders
-
-Optionally tweak the final text
-
-Click Copy to clipboard
-
-Duplicating prompts
-Click Duplicate
-
-A copy opens immediately for editing
-
-Ideal for creating variations without overwriting originals
-
-Importing prompts from .txt
-Go to Import
-
-Preview a single file or bulk import multiple files
-
-Optional metadata header supported:
-
-text
-Copy code
-# title: Flux Kontext – Render Block
+# title: Flux Kontext - Render Block
 # category: Image
-# tool: Flux Kontext
-# type: Instruction
-# notes: Best results at 1024px
+# tags: realistic, 8k, portrait
 ---
-Render a full resolution image of block [[block_number]]...
-Managing categories and tools
-Go to Manage
+Render a full resolution image...
+Backup & Restore
+Go to Manage.
 
-Add or remove categories/tools via the UI
+Download Backup: Get a ZIP file containing your database (prompts.db) and all thumbnail images.
 
-Deletion is blocked if items are in use (data safety)
-
-Searching
-Use the search bar on the main page.
-
-Searches across:
-
-Title
-
-Content
-
-Notes
-
-Tool
-
-Category
-
-Prompt type
-
-Combine with category and tool filters for large libraries.
+Restore: Upload a backup ZIP to restore your library perfectly.
 
 🧠 Ollama Integration (Optional)
-If you have Ollama installed and running:
+To enable AI features, install Ollama and pull models:
 
-bash
-Copy code
-ollama list
-The app will:
+Bash
 
-Detect available models
+# Text model for drafting/refining
+ollama pull gemma3:4b
 
-Default to gemma3:4b
-
-Remember the last model you selected
-
-You can:
-
-Refine prompts from Edit
-
-Refine prompts from Use
-
-Refine drafts before saving a new prompt
-
-If Ollama is not installed or running:
-
-The app still works normally
-
-Refinement buttons are optional and safe
+# Vision model for image analysis
+ollama pull llava
+# OR
+ollama pull qwen2.5-vl
+The app will automatically detect these models in the dropdowns.
 
 🗂 Project Structure
-pgsql
-Copy code
+Plaintext
+
 .
-├── app.py
-├── prompts.db              # Local database (not committed)
-├── requirements.txt
-├── templates/
-│   ├── base.html
-│   ├── index.html
-│   ├── edit_prompt.html
-│   ├── render_prompt.html
-│   ├── refine_prompt.html
-│   ├── import_prompt.html
-│   └── manage.html
+├── app.py                  # Main application logic
+├── prompts.db              # Local SQLite database (not committed)
+├── requirements.txt        # Python dependencies
+├── templates/              # HTML templates (Jinja2)
+│   ├── index.html          # Library view with Filters/Sidebar
+│   ├── edit_prompt.html    # Create/Edit + Vision Drafting
+│   ├── render_prompt.html  # Usage view
+│   └── ...
 ├── static/
-│   └── styles.css
-└── env/                    # Virtual environment (not committed)
-🧾 Git Notes
-Ensure your .gitignore includes:
-
-gitignore
-Copy code
-env/
-venv/
-__pycache__/
-*.pyc
-prompts.db
-This prevents committing your local database or virtual environment.
-
+│   ├── styles.css          # CSS Styling
+│   └── uploads/thumbs/     # Stored thumbnails
+└── env/                    # Virtual environment
 🔐 Security Notes
-This app is intended for local use.
+This app is intended for local use. If you expose it beyond your local machine:
 
-If you expose it beyond your local machine:
+Add authentication.
 
-Add authentication
+Use HTTPS or a VPN.
 
-Use HTTPS or a VPN
-
-Do not expose it publicly without protection
-
-🛣 Roadmap Ideas (Optional)
-Tags (free-form)
-
-Export prompts back to .txt
-
-Prompt version history
-
-Batch refinement
-
-Mobile-friendly layout / PWA
-
-Cloud or VPN-based access with sync
-
-yaml
-Copy code
+Do not expose publicly without protection.

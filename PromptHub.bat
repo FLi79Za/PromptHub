@@ -1,5 +1,5 @@
 @Echo off
-title Prompt Library
+title Prompt Hub
 call env\scripts\activate
 python app.py
 pause

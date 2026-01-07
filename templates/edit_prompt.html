@@ -31,10 +31,69 @@
     </div>
   </div>
 
+  {% if not prompt or not prompt.id %}
+    {% if ollama_models %}
+    <details style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1.5rem; border:1px solid #333;">
+        <summary style="cursor:pointer; font-weight:bold; color:#00bfff;">✨ Generate Draft Prompt from Image (Vision)</summary>
+        
+        <div style="margin-top:1rem; display:grid; grid-template-columns: 1fr 1fr; gap:1.5rem;">
+            
+            <div>
+                <label style="margin-bottom:0.5rem; display:block;">Reference Image</label>
+                <div id="visionDropZone" class="drop-zone" style="border:2px dashed #444; padding:2rem; text-align:center; border-radius:8px; cursor:pointer; background:#111;">
+                    <div id="visionDropText" style="color:#888;">
+                        Drag image here or click to upload
+                    </div>
+                    <input type="file" id="visionFile" accept="image/*" style="display:none;">
+                    <img id="visionPreview" style="max-width:100%; max-height:200px; margin-top:1rem; display:none; border-radius:4px;">
+                </div>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:1rem;">
+               <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
+                   <div>
+                       <label>Vision Model</label>
+                       <select id="visionModel" style="width:100%;">
+                           {% for m in ollama_models %}
+                               <option value="{{ m }}" {% if 'llava' in m or 'vision' in m or 'qwen' in m %}selected{% endif %}>{{ m }}</option>
+                           {% endfor %}
+                       </select>
+                   </div>
+                   <div>
+                       <label>Text Model</label>
+                       <select id="textModel" style="width:100%;">
+                           {% for m in ollama_models %}
+                               <option value="{{ m }}">{{ m }}</option>
+                           {% endfor %}
+                       </select>
+                   </div>
+               </div>
+
+               <div>
+                   <label>Vision Instructions (Optional)</label>
+                   <textarea id="customVisionInstruction" rows="2" placeholder="Tell the vision model what to look for (e.g. 'Describe lighting details')" style="width:100%; font-size:0.9em;"></textarea>
+               </div>
+
+               <div>
+                   <label>Drafting Instructions (Optional)</label>
+                   <textarea id="customDraftInstruction" rows="2" placeholder="Tell the text model how to write (e.g. 'Use colourful, poetic language')" style="width:100%; font-size:0.9em;"></textarea>
+               </div>
+
+               <div id="visionStatus" style="font-size:0.9em; color:#888; min-height:1.2em;"></div>
+               
+               <button type="button" id="btnGenerateDraft" class="btn-primary" style="margin-top:auto;">Generate Draft & Set Thumbnail</button>
+            </div>
+        </div>
+    </details>
+    {% endif %}
+  {% endif %}
+
   <form method="post"
         {% if prompt and prompt.id %} action="{{ url_for('edit_prompt', prompt_id=prompt.id) }}"
         {% else %} action="{{ url_for('new_prompt') }}" {% endif %}
         enctype="multipart/form-data" class="form">
+
+    <input type="hidden" name="hidden_thumbnail_path" id="hiddenThumb">
 
     <div class="grid-2">
       <div>
@@ -88,16 +147,20 @@
     </div>
 
     <div>
-        <label>Thumbnail</label>
+        <label id="mainThumbLabel">Thumbnail (optional)</label>
         <input type="file" name="thumbnail" accept="image/*">
-        {% if prompt and prompt.thumbnail %}
-          <div style="margin-top:0.75rem; padding: 0.5rem; border: 1px solid #333; border-radius: 4px; display: inline-block;">
-             <img src="{{ url_for('static', filename=prompt.thumbnail) }}" style="max-height: 120px; border-radius: 4px; display: block;">
-             <label style="font-weight: normal; font-size: 0.9em; display:flex; align-items:center; margin-top: 0.5rem;">
-               <input type="checkbox" name="remove_thumbnail" style="margin-right: 0.5rem;"> Remove
-             </label>
-          </div>
-        {% endif %}
+        
+        <div style="margin-top:0.75rem; padding: 0.5rem; border: 1px solid #333; border-radius: 4px; display: inline-block;">
+             <img id="mainThumbPreview" 
+                  src="{{ url_for('static', filename=prompt.thumbnail) if prompt and prompt.thumbnail else '' }}" 
+                  style="max-height: 120px; border-radius: 4px; display: {% if prompt and prompt.thumbnail %}block{% else %}none{% endif %};">
+             
+             {% if prompt and prompt.thumbnail %}
+                 <label style="font-weight: normal; font-size: 0.9em; display:flex; align-items:center; margin-top: 0.5rem;">
+                   <input type="checkbox" name="remove_thumbnail" style="margin-right: 0.5rem;"> Remove
+                 </label>
+             {% endif %}
+        </div>
     </div>
 
     {% if variants and variants|length > 0 %}
@@ -119,4 +182,127 @@
     </div>
   </form>
 </section>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    // Only run this logic if the Vision elements exist (New Prompt mode)
+    const dropZone = document.getElementById('visionDropZone');
+    if (!dropZone) return;
+
+    const fileInput = document.getElementById('visionFile');
+    const preview = document.getElementById('visionPreview');
+    const dropText = document.getElementById('visionDropText');
+    const btn = document.getElementById('btnGenerateDraft');
+    const statusDiv = document.getElementById('visionStatus');
+    const contentBox = document.getElementById('content');
+    
+    // --- Drag & Drop Handling ---
+    dropZone.addEventListener('click', () => fileInput.click());
+    
+    fileInput.addEventListener('change', (e) => {
+        if(fileInput.files.length) showPreview(fileInput.files[0]);
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = '#00bfff';
+    });
+
+    dropZone.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = '#444';
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.style.borderColor = '#444';
+        if (e.dataTransfer.files.length) {
+            fileInput.files = e.dataTransfer.files; // Assign to input
+            showPreview(e.dataTransfer.files[0]);
+        }
+    });
+
+    function showPreview(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            preview.src = e.target.result;
+            preview.style.display = 'block';
+            dropText.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+    }
+
+    // --- Generation Logic ---
+    btn.addEventListener('click', async () => {
+        if (!fileInput.files.length) {
+            alert("Please select an image first.");
+            return;
+        }
+
+        // Lock UI
+        btn.disabled = true;
+        btn.textContent = "Processing... (This may take a moment)";
+        statusDiv.textContent = "Step 1: Uploading & Analyzing Image...";
+
+        const formData = new FormData();
+        formData.append('image', fileInput.files[0]);
+        formData.append('vision_model', document.getElementById('visionModel').value);
+        formData.append('text_model', document.getElementById('textModel').value);
+        // Added: Both instructions
+        formData.append('custom_vision_instruction', document.getElementById('customVisionInstruction').value);
+        formData.append('custom_draft_instruction', document.getElementById('customDraftInstruction').value);
+
+        try {
+            const response = await fetch('/api/generate_draft_from_image', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                statusDiv.textContent = "Error: " + data.error;
+                alert("Generation failed: " + data.error);
+            } else {
+                statusDiv.textContent = "Success! Draft generated & Thumbnail set.";
+                
+                // 1. Populate Text
+                if (contentBox && contentBox.value.trim().length > 0) {
+                    if (confirm("Draft generated. Overwrite current prompt text?")) {
+                        contentBox.value = data.draft_prompt;
+                    }
+                } else if (contentBox) {
+                    contentBox.value = data.draft_prompt;
+                }
+
+                // 2. Set Thumbnail (Hidden Input & Visual)
+                const thumbPath = data.thumbnail_path;
+                if(thumbPath) {
+                    // Set hidden input value for form submission
+                    const hiddenInput = document.getElementById('hiddenThumb');
+                    if(hiddenInput) hiddenInput.value = thumbPath;
+                    
+                    // Update visual preview in the main form section
+                    const mainThumbPreview = document.getElementById('mainThumbPreview');
+                    const mainThumbLabel = document.getElementById('mainThumbLabel');
+                    
+                    if(mainThumbPreview) {
+                        mainThumbPreview.src = "{{ url_for('static', filename='') }}" + thumbPath;
+                        mainThumbPreview.style.display = 'block';
+                    }
+                    if(mainThumbLabel) {
+                        mainThumbLabel.textContent = "Thumbnail set from Vision (Save to confirm)";
+                    }
+                }
+            }
+        } catch (e) {
+            statusDiv.textContent = "Network error.";
+            alert("Error: " + e);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Generate Draft & Set Thumbnail";
+        }
+    });
+});
+</script>
 {% endblock %}
