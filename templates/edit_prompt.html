@@ -8,9 +8,11 @@
         {% if prompt and prompt.id %}Edit Prompt{% else %}New Prompt{% endif %}
       </h2>
       {% if prompt %}
-        <div class="muted" style="margin-top:.25rem;">
-          {{ prompt.category }} · {{ prompt.tool }} · {{ prompt.prompt_type }}
-        </div>
+        {% if parent %}
+           <div style="font-size:0.9rem; margin-top:0.25rem;">
+              ↳ Variant of <a href="{{ url_for('edit_prompt', prompt_id=parent.id) }}" style="color:#00bfff;">{{ parent.title }}</a>
+           </div>
+        {% endif %}
       {% endif %}
     </div>
 
@@ -18,40 +20,32 @@
       {% if prompt and prompt.id %}
         <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}">Use</a>
         <form method="post" action="{{ url_for('duplicate_prompt', prompt_id=prompt.id) }}" style="display:inline;">
-          <button class="btn-secondary" type="submit">Duplicate</button>
+          <button class="btn-secondary" type="submit">Copy</button>
+        </form>
+        <form method="post" action="{{ url_for('duplicate_prompt', prompt_id=prompt.id) }}" style="display:inline;">
+          <input type="hidden" name="as_variant" value="true">
+          <button class="btn-secondary" type="submit" title="Create a child version linked to this prompt">Make Variant</button>
         </form>
       {% endif %}
       <a class="btn-secondary" href="{{ url_for('index') }}">Back</a>
     </div>
   </div>
 
-  {% if imported_preview %}
-    <p class="notes">Imported preview: review and click <strong>Save</strong> to add it to your library.</p>
-  {% endif %}
-
   <form method="post"
-        {% if prompt and prompt.id %}
-          action="{{ url_for('edit_prompt', prompt_id=prompt.id) }}"
-        {% else %}
-          action="{{ url_for('new_prompt') }}"
-        {% endif %}
-        enctype="multipart/form-data"
-        class="form">
+        {% if prompt and prompt.id %} action="{{ url_for('edit_prompt', prompt_id=prompt.id) }}"
+        {% else %} action="{{ url_for('new_prompt') }}" {% endif %}
+        enctype="multipart/form-data" class="form">
 
     <div class="grid-2">
       <div>
         <label>Title</label>
         <input type="text" name="title" value="{{ prompt.title if prompt else '' }}" required>
       </div>
-
       <div>
         <label>Prompt Type</label>
         <select name="prompt_type" required>
           {% for pt in prompt_types %}
-            <option value="{{ pt }}"
-              {% if prompt and prompt.prompt_type == pt %}selected{% endif %}>
-              {{ pt }}
-            </option>
+            <option value="{{ pt }}" {% if prompt and prompt.prompt_type == pt %}selected{% endif %}>{{ pt }}</option>
           {% endfor %}
         </select>
       </div>
@@ -60,166 +54,69 @@
     <div class="grid-2">
       <div>
         <label>Category</label>
-        <select name="category" required>
+        <input list="category_list" name="category" value="{{ prompt.category if prompt else '' }}" placeholder="Select or type new..." autocomplete="off" required>
+        <datalist id="category_list">
           {% for c in categories %}
-            <option value="{{ c }}"
-              {% if prompt and prompt.category == c %}selected{% endif %}>
-              {{ c }}
-            </option>
+            <option value="{{ c }}">
           {% endfor %}
-        </select>
-        <div class="muted" style="margin-top:.25rem;">Add new categories via <a href="{{ url_for('manage') }}">Manage</a>.</div>
+        </datalist>
       </div>
-
       <div>
         <label>Tool</label>
-        <select name="tool" required>
+        <input list="tool_list" name="tool" value="{{ prompt.tool if prompt else '' }}" placeholder="Select or type new..." autocomplete="off" required>
+        <datalist id="tool_list">
           {% for t in tools %}
-            <option value="{{ t }}"
-              {% if prompt and prompt.tool == t %}selected{% endif %}>
-              {{ t }}
-            </option>
+            <option value="{{ t }}">
           {% endfor %}
-        </select>
-        <div class="muted" style="margin-top:.25rem;">Add new tools via <a href="{{ url_for('manage') }}">Manage</a>.</div>
+        </datalist>
       </div>
+    </div>
+
+    <div>
+      <label>Tags (comma separated)</label>
+      <input type="text" name="tags" value="{{ tags_str }}" placeholder="e.g. Portrait, Realistic, Sci-Fi, Dark">
     </div>
 
     <div>
       <label>Prompt Content</label>
       <textarea name="content" id="content" rows="10" required>{{ prompt.content if prompt else '' }}</textarea>
-      <div class="muted" style="margin-top:.25rem;">
-        Use placeholders like <code>[[subject]]</code>, <code>[[style]]</code>, <code>[[block_number]]</code>.
-      </div>
     </div>
 
     <div>
-      <label>Notes (optional)</label>
+      <label>Notes</label>
       <textarea name="notes" id="notes" rows="4">{{ prompt.notes if prompt and prompt.notes else '' }}</textarea>
     </div>
 
-    {% if prompt and prompt.id %}
-      <div>
-        <label>Thumbnail (optional)</label>
+    <div>
+        <label>Thumbnail</label>
         <input type="file" name="thumbnail" accept="image/*">
-        
-        {% if prompt.thumbnail %}
+        {% if prompt and prompt.thumbnail %}
           <div style="margin-top:0.75rem; padding: 0.5rem; border: 1px solid #333; border-radius: 4px; display: inline-block;">
-             <p style="margin: 0 0 0.5rem 0; font-size: 0.85em; color: #aaa;">Current Thumbnail:</p>
-             <img src="{{ url_for('static', filename=prompt.thumbnail) }}" alt="Thumbnail" style="max-height: 120px; border-radius: 4px; display: block;">
-             
+             <img src="{{ url_for('static', filename=prompt.thumbnail) }}" style="max-height: 120px; border-radius: 4px; display: block;">
              <label style="font-weight: normal; font-size: 0.9em; display:flex; align-items:center; margin-top: 0.5rem;">
-               <input type="checkbox" name="remove_thumbnail" style="margin-right: 0.5rem;"> Remove thumbnail
+               <input type="checkbox" name="remove_thumbnail" style="margin-right: 0.5rem;"> Remove
              </label>
           </div>
         {% endif %}
+    </div>
+
+    {% if variants and variants|length > 0 %}
+      <div style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-top:1rem;">
+         <h4 style="margin-top:0;">Variants</h4>
+         <ul style="margin:0; padding-left:1.5rem;">
+           {% for v in variants %}
+             <li><a href="{{ url_for('edit_prompt', prompt_id=v.id) }}" style="color:#00bfff;">{{ v.title }}</a></li>
+           {% endfor %}
+         </ul>
       </div>
-    {% else %}
-        <div>
-            <label>Thumbnail (optional)</label>
-            <input type="file" name="thumbnail" accept="image/*">
-        </div>
     {% endif %}
 
-    <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; margin-top:.5rem;">
+    <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; margin-top:1.5rem;">
       <button type="submit">Save</button>
-
-{% if prompt and prompt.id %}
-  <a class="btn-secondary"
-     href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}">
-    Refine with Ollama
-  </a>
-{% endif %}
-
+      {% if prompt and prompt.id %}
+        <a class="btn-secondary" href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}">Refine with Ollama</a>
+      {% endif %}
     </div>
   </form>
-
-  {# --- Optional Ollama refine --- #}
-  {% if ollama_models is defined and ollama_models %}
-    <hr style="margin:1.5rem 0;">
-    <h3 style="margin-top:0;">Refine with Ollama (optional)</h3>
-
-    {% if prompt and prompt.id %}
-      <form method="post" action="{{ url_for('refine_prompt', prompt_id=prompt.id) }}" class="form">
-        <div class="grid-2">
-          <div>
-            <label>Model</label>
-            <select name="model">
-              {% for m in ollama_models %}
-                <option value="{{ m }}" {% if selected_model and selected_model == m %}selected{% endif %}>{{ m }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label>Instruction</label>
-            <input type="text" name="instruction" placeholder="E.g. Make it shorter, more cinematic, keep placeholders intact" required>
-          </div>
-        </div>
-
-        <div class="muted" style="margin-top:.25rem;">
-          Tip: say “keep all [[placeholders]] unchanged” if you want them preserved.
-        </div>
-
-        <button type="submit" style="margin-top:.75rem;">Refine saved prompt</button>
-      </form>
-    {% else %}
-      <form method="post" action="{{ url_for('refine_draft') }}" class="form" id="refineDraftForm">
-        <input type="hidden" name="title" id="rd_title">
-        <input type="hidden" name="category" id="rd_category">
-        <input type="hidden" name="tool" id="rd_tool">
-        <input type="hidden" name="prompt_type" id="rd_prompt_type">
-        <input type="hidden" name="content" id="rd_content">
-        <input type="hidden" name="notes" id="rd_notes">
-
-        <div class="grid-2">
-          <div>
-            <label>Model</label>
-            <select name="model" id="rd_model">
-              {% for m in ollama_models %}
-                <option value="{{ m }}" {% if selected_model and selected_model == m %}selected{% endif %}>{{ m }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div>
-            <label>Instruction</label>
-            <input type="text" name="instruction" id="rd_instruction" placeholder="Refine this draft prompt..." required>
-          </div>
-        </div>
-
-        <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; margin-top:.75rem;">
-          <button type="submit">Refine draft</button>
-        </div>
-      </form>
-
-      <script>
-        (function(){
-          const form = document.getElementById('refineDraftForm');
-          if(!form) return;
-
-          form.addEventListener('submit', function(){
-            const q = (sel) => document.querySelector(sel);
-
-            const titleEl = q('input[name="title"]');
-            document.getElementById('rd_title').value = titleEl ? titleEl.value : '';
-
-            const catEl = q('select[name="category"]');
-            document.getElementById('rd_category').value = catEl ? catEl.value : '';
-
-            const toolEl = q('select[name="tool"]');
-            document.getElementById('rd_tool').value = toolEl ? toolEl.value : '';
-
-            const ptEl = q('select[name="prompt_type"]');
-            document.getElementById('rd_prompt_type').value = ptEl ? ptEl.value : '';
-
-            const contentEl = q('textarea[name="content"]');
-            document.getElementById('rd_content').value = contentEl ? contentEl.value : '';
-
-            const notesEl = q('textarea[name="notes"]');
-            document.getElementById('rd_notes').value = notesEl ? notesEl.value : '';
-          });
-        })();
-      </script>
-    {% endif %}
-  {% endif %}
 </section>
 {% endblock %}

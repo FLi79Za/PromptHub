@@ -1,255 +1,351 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section>
-  <h2>Prompts</h2>
+<div class="layout-wrapper" style="display: grid; grid-template-columns: 240px 1fr; gap: 2rem; align-items: start;">
 
-  <form method="get" class="filters" id="filterForm">
-    <label for="q">Search</label>
-    <input type="text" id="q" name="q" value="{{ q|default('') }}"
-           placeholder="Search title, content, notes, tool, category...">
-
-    <label for="category">Category</label>
-    <select name="category" id="category">
-      <option value="all" {% if active_category == 'all' %}selected{% endif %}>All</option>
-      {% for c in categories %}
-        <option value="{{ c }}" {% if active_category == c %}selected{% endif %}>{{ c }}</option>
-      {% endfor %}
-    </select>
-
-    <label for="tool">Tool</label>
-    <select name="tool" id="tool">
-      <option value="all" {% if active_tool == 'all' %}selected{% endif %}>All</option>
-      {% for t in tools %}
-        <option value="{{ t }}" {% if active_tool == t %}selected{% endif %}>{{ t }}</option>
-      {% endfor %}
-    </select>
-
-    <button type="submit">Apply</button>
-    <a class="btn-secondary" href="{{ url_for('index') }}">Reset</a>
-
-    <a class="btn-secondary" href="{{ url_for('new_prompt') }}">New Prompt</a>
-    <a class="btn-secondary" href="{{ url_for('import_prompt') }}">Import</a>
-    <a class="btn-secondary" href="{{ url_for('manage') }}">Manage</a>
-
-    <button type="button" class="btn-secondary" id="toggleOrganise">Organise</button>
-
-    <input type="hidden" name="sort_by" value="{{ sort_by|default('updated_at') }}">
-    <input type="hidden" name="sort_dir" value="{{ sort_dir|default('desc') }}">
-    <input type="hidden" name="page" value="1" disabled> 
-  </form>
-
-  <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
-    <div id="organisePanel"
-         style="display:none; margin-top:1rem; padding:1rem;
-                border:1px solid #333; border-radius:10px;">
-
-      <h3 style="margin-top:0;">Organise mode</h3>
-
-      <div class="grid"
-           style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-                  gap:0.75rem;">
-        <div>
-          <label for="sort_by_ui">Sort by</label>
-          <select id="sort_by_ui">
-            <option value="updated_at" {% if sort_by=='updated_at' %}selected{% endif %}>Updated</option>
-            <option value="created_at" {% if sort_by=='created_at' %}selected{% endif %}>Created</option>
-            <option value="title" {% if sort_by=='title' %}selected{% endif %}>Title</option>
-            <option value="category" {% if sort_by=='category' %}selected{% endif %}>Category</option>
-            <option value="tool" {% if sort_by=='tool' %}selected{% endif %}>Tool</option>
-            <option value="prompt_type" {% if sort_by=='prompt_type' %}selected{% endif %}>Type</option>
-          </select>
-        </div>
-
-        <div>
-          <label for="sort_dir_ui">Direction</label>
-          <select id="sort_dir_ui">
-            <option value="desc" {% if sort_dir=='desc' %}selected{% endif %}>Desc</option>
-            <option value="asc" {% if sort_dir=='asc' %}selected{% endif %}>Asc</option>
-          </select>
-        </div>
-
-        <div style="display:flex; align-items:flex-end;">
-          <button type="button" class="btn-secondary" id="applySort">Apply sort</button>
-        </div>
-      </div>
-
-      <hr style="margin:1rem 0; border-color:#333;">
-
-      <p class="notes">Tick prompts below, then apply changes.</p>
-
-      <div class="grid"
-           style="display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-                  gap:0.75rem;">
-        <div>
-          <label>Category</label>
-          <select name="bulk_category">
-            <option value="">(no change)</option>
-            {% for c in categories %}
-              <option value="{{ c }}">{{ c }}</option>
-            {% endfor %}
-          </select>
-          <input type="text" name="bulk_category_custom" placeholder="or type new">
-        </div>
-
-        <div>
-          <label>Tool</label>
-          <select name="bulk_tool">
-            <option value="">(no change)</option>
-            {% for t in tools %}
-              <option value="{{ t }}">{{ t }}</option>
-            {% endfor %}
-          </select>
-          <input type="text" name="bulk_tool_custom" placeholder="or type new">
-        </div>
-
-        <div>
-          <label>Type</label>
-          <select name="bulk_prompt_type">
-            <option value="">(no change)</option>
-            {% for pt in prompt_types %}
-              <option value="{{ pt }}">{{ pt }}</option>
-            {% endfor %}
-          </select>
-        </div>
-      </div>
-
-      <div style="display:flex; gap:0.75rem; margin-top:0.75rem; flex-wrap:wrap;">
-        <button type="submit" class="btn-primary">Apply to selected</button>
-        <button type="button" class="btn-secondary" id="selectAll">Select all</button>
-        <button type="button" class="btn-secondary" id="selectNone">Select none</button>
-      </div>
+  <aside class="sidebar">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <h3 style="margin:0;">Views</h3>
     </div>
-  </form>
-
-  <ul class="prompt-list" id="promptList">
-    {% for p in prompts %}
-      <li class="prompt-card">
-        <div class="organise-checkbox" style="display:none;">
-          <input type="checkbox"
-                 class="bulkCheck"
-                 name="prompt_ids"
-                 value="{{ p.id }}"
-                 form="bulkForm">
-        </div>
-
-        {% if p.thumbnail %}
-          <img class="thumb"
-               src="{{ url_for('static', filename=p.thumbnail) }}"
-               alt="Thumbnail">
-        {% endif %}
-
-        <div class="prompt-meta">
-          <h3 style="margin:0 0 0.25rem 0;">{{ p.title }}</h3>
-          <p class="notes" style="margin:0 0 0.5rem 0;">
-            {{ p.category }} · {{ p.tool }} · {{ p.prompt_type }}
-          </p>
-
-          <div class="quick-actions"
-               style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-
-            <button type="button" class="btn-secondary"
-                    onclick="togglePreview({{ p.id }})">Preview</button>
-
-            <button type="button" class="btn-secondary"
-                    onclick="copyPrompt({{ p.id }})">Copy</button>
-
-            <a class="btn-secondary"
-               href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
-
-            <a class="btn-secondary"
-               href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
-
-            <form method="post"
-                  action="{{ url_for('delete_prompt', prompt_id=p.id) }}"
-                  style="display:inline;"
-                  onsubmit="return confirm('Delete this prompt permanently?');">
-              <input type="hidden" name="return_to" value="{{ request.full_path }}">
-              <button type="submit" class="btn-danger">Delete</button>
-            </form>
-          </div>
-
-          <div id="preview-{{ p.id }}" class="prompt-preview" style="display:none;">
-            <pre>{{ p.content }}</pre>
-          </div>
-        </div>
+    
+    <ul class="view-list" style="list-style:none; padding:0; margin: 1rem 0;">
+      <li style="margin-bottom:0.5rem;">
+        <a href="{{ url_for('index') }}" class="btn-secondary" style="display:block; text-align:left; {% if not request.query_string %}font-weight:bold; border-color:#666;{% endif %}">
+          All Prompts
+        </a>
       </li>
-    {% endfor %}
-  </ul>
 
-  {% if total_pages > 1 %}
-    <div style="margin-top:2rem; display:flex; justify-content:center; align-items:center; gap:0.5rem;">
-      {% if page > 1 %}
-        <a class="btn-secondary"
-           href="{{ url_for('index', page=page-1, q=q, category=active_category, tool=active_tool, sort_by=sort_by, sort_dir=sort_dir) }}">
-          &laquo; Prev
-        </a>
-      {% else %}
-        <span class="btn-secondary" style="opacity:0.5; cursor:default;">&laquo; Prev</span>
-      {% endif %}
+      {% for view in saved_views %}
+        <li style="margin-bottom:0.5rem; display:flex; gap:0.25rem;">
+          <a href="/?{{ view.query_params }}" class="btn-secondary" 
+             style="display:block; flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            {{ view.name }}
+          </a>
+          <form method="post" action="{{ url_for('delete_view', view_id=view.id) }}" onsubmit="return confirm('Delete view?');">
+            <button type="submit" style="padding: 0.5rem; font-size: 0.8em;">&times;</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
 
-      <span style="padding:0 0.5rem; font-size:0.9em; color:#888;">
-        Page {{ page }} of {{ total_pages }}
-      </span>
+    <hr style="border-color:#333;">
 
-      {% if page < total_pages %}
-        <a class="btn-secondary"
-           href="{{ url_for('index', page=page+1, q=q, category=active_category, tool=active_tool, sort_by=sort_by, sort_dir=sort_dir) }}">
-          Next &raquo;
-        </a>
-      {% else %}
-        <span class="btn-secondary" style="opacity:0.5; cursor:default;">Next &raquo;</span>
-      {% endif %}
+    <form method="post" action="{{ url_for('save_view') }}" style="margin-top:1rem;">
+      <input type="hidden" name="query_string" value="{{ request.query_string.decode() }}">
+      <label style="font-size:0.85em;">Save current filters as:</label>
+      <div style="display:flex; gap:0.25rem; margin-top:0.25rem;">
+        <input type="text" name="view_name" placeholder="e.g. Portrait Flux" required style="width:100%; font-size:0.9em;">
+        <button type="submit" style="padding:0 0.5rem;">+</button>
+      </div>
+    </form>
+  </aside>
+
+  <section style="min-width:0;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
+      <h2 style="margin:0;">Library</h2>
+      <div style="display:flex; gap:0.5rem;">
+         <a class="btn-secondary" href="{{ url_for('new_prompt') }}">New Prompt</a>
+         <a class="btn-secondary" href="{{ url_for('import_prompt') }}">Import</a>
+         <button type="button" class="btn-secondary" id="toggleOrganise">Organise</button>
+      </div>
     </div>
-  {% endif %}
 
-</section>
+    <form method="get" class="filters" id="filterForm" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1.5rem;">
+      <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
+        <div style="flex:1; min-width:200px;">
+          <input type="text" name="q" value="{{ q|default('') }}" placeholder="Search..." style="width:100%;">
+        </div>
+        
+        <select name="category">
+          <option value="all">All Categories</option>
+          {% for c in categories %}
+            <option value="{{ c }}" {% if active_category == c %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+        
+        <select name="tool">
+          <option value="all">All Tools</option>
+          {% for t in tools %}
+            <option value="{{ t }}" {% if active_tool == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+        
+        <select name="tag">
+          <option value="all">All Tags</option>
+          {% for t in all_tags %}
+            <option value="{{ t }}" {% if active_tag == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+
+        <button type="submit">Filter</button>
+        
+        {% if q or active_category!='all' or active_tool!='all' or active_tag!='all' %}
+          <a href="{{ url_for('index') }}" style="align-self:center; font-size:0.9em; margin-left:0.5rem;">Clear</a>
+        {% endif %}
+      </div>
+      
+      <input type="hidden" name="sort_by" value="{{ sort_by|default('updated_at') }}">
+      <input type="hidden" name="sort_dir" value="{{ sort_dir|default('desc') }}">
+    </form>
+    
+    <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
+      <div id="organisePanel" style="display:none; margin-bottom:1.5rem; padding:1rem; border:1px solid #333; border-radius:10px;">
+        <h3 style="margin-top:0;">Organise</h3>
+        <div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:0.75rem;">
+           <div>
+             <label>Category</label>
+             <input list="cat_list" name="bulk_category" placeholder="(no change)">
+             <datalist id="cat_list">{% for c in categories %}<option value="{{ c }}">{% endfor %}</datalist>
+           </div>
+           
+           <div>
+             <label>Tool</label>
+             <input list="tool_list" name="bulk_tool" placeholder="(no change)">
+             <datalist id="tool_list">{% for t in tools %}<option value="{{ t }}">{% endfor %}</datalist>
+           </div>
+           
+           <div>
+             <label>Add Tags</label>
+             <input type="text" name="bulk_tags" placeholder="e.g. vibrant, 8k (appends)">
+           </div>
+
+           <div style="align-self:end;">
+             <button type="submit" class="btn-primary" style="width:100%;">Apply</button>
+           </div>
+        </div>
+        <div style="margin-top:0.75rem; display:flex; gap:0.5rem;">
+            <button type="button" class="btn-secondary" id="selectAll">Select All</button>
+            <button type="button" class="btn-secondary" id="selectNone">Select None</button>
+        </div>
+      </div>
+    </form>
+
+    <ul class="prompt-list" id="promptList">
+      {% for p in prompts %}
+        <li class="prompt-card drop-zone" data-id="{{ p.id }}">
+          
+          <div class="drop-overlay"></div>
+
+          <div class="organise-checkbox" style="display:none; position:absolute; top:10px; left:10px; z-index:10;">
+            <input type="checkbox" class="bulkCheck" name="prompt_ids" value="{{ p.id }}" form="bulkForm">
+          </div>
+
+          <div class="card-thumb-area">
+             {% if p.thumbnail %}
+               <img class="thumb" src="{{ url_for('static', filename=p.thumbnail) }}" alt="Thumbnail">
+             {% else %}
+               <div class="thumb-placeholder">{{ p.category[:1] }}</div>
+             {% endif %}
+          </div>
+
+          <div class="prompt-meta">
+            <div style="display:flex; justify-content:space-between; align-items:start;">
+                <h3 style="margin:0;">{{ p.title }}</h3>
+                
+                <div style="display:flex; gap:4px;">
+                    {% if p.child_count > 0 %}
+                        <span title="{{ p.child_count }} variants" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">
+                            {{ p.child_count }} ⑂
+                        </span>
+                    {% endif %}
+                    {% if p.parent_id %}
+                        <span title="Is a variant" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">
+                           ↳ Variant
+                        </span>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <p class="notes" style="margin:0.25rem 0 0.5rem 0; font-size:0.85em; opacity:0.7;">
+              {{ p.category }} · {{ p.tool }}
+            </p>
+
+            {% if p.tags %}
+              <div style="display:flex; gap:0.25rem; flex-wrap:wrap; margin-bottom:0.5rem;">
+                {% for t in p.tags %}
+                  <span style="background:#333; color:#ccc; font-size:0.7em; padding:2px 6px; border-radius:10px;">{{ t }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+
+            <div class="quick-actions" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+              <button type="button" class="btn-secondary" onclick="togglePreview({{ p.id }})">Preview</button>
+              <button type="button" class="btn-secondary" onclick="copyPrompt({{ p.id }})">Copy</button>
+              <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
+              <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
+              
+              <form method="post" action="{{ url_for('delete_prompt', prompt_id=p.id) }}" 
+                    style="display:inline;" onsubmit="return confirm('Delete permanently?');">
+                  <button type="submit" class="btn-danger" style="padding:0.4rem 0.6rem;">&times;</button>
+              </form>
+            </div>
+
+            <div id="preview-{{ p.id }}" class="prompt-preview" style="display:none; margin-top:0.5rem; background:#111; padding:0.5rem; border-radius:4px;">
+                <pre style="white-space:pre-wrap; margin:0; font-size:0.9em; max-height:200px; overflow-y:auto;">{{ p.content }}</pre>
+            </div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+
+    {% if total_pages > 1 %}
+      <div style="margin-top:2rem; display:flex; justify-content:center; gap:0.5rem;">
+        {% if page > 1 %}
+          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">&laquo; Prev</a>
+        {% else %}
+          <span class="btn-secondary" style="opacity:0.5; cursor:default;">&laquo; Prev</span>
+        {% endif %}
+        
+        <span style="padding:0.5rem;">Page {{ page }} of {{ total_pages }}</span>
+        
+        {% if page < total_pages %}
+          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">Next &raquo;</a>
+        {% else %}
+          <span class="btn-secondary" style="opacity:0.5; cursor:default;">Next &raquo;</span>
+        {% endif %}
+      </div>
+    {% endif %}
+
+  </section>
+</div>
+
+<style>
+  /* Drag & Drop Visuals */
+  .drop-zone { position: relative; transition: border-color 0.2s; }
+  .drop-zone.drag-over { border: 2px dashed #00bfff; }
+  
+  .drop-overlay {
+      display: none; 
+      position: absolute; top:0; left:0; right:0; bottom:0;
+      background: rgba(0,0,0,0.6); /* Semi-transparent black tint */
+      color: white;
+      justify-content: center; align-items: center; font-weight: bold;
+      z-index: 5; border-radius: 8px; pointer-events: none;
+  }
+  .drop-zone.drag-over .drop-overlay { display: flex; }
+
+  /* Thumbnail Containers */
+  .thumb-placeholder {
+      width: 100%; height: 160px; background: #222; display: flex;
+      align-items: center; justify-content: center; font-size: 3rem; color: #444;
+  }
+  .card-thumb-area { 
+      position: relative; height: 160px; overflow: hidden; background: #000; 
+      display: flex; align-items: center; justify-content: center; 
+  }
+  
+  /* FIXED: Ensure full image is visible (uncropped) */
+  .card-thumb-area img { 
+      width: 100%; height: 100%; object-fit: contain; 
+  }
+</style>
 
 <script>
-(function(){
-  const toggle = document.getElementById('toggleOrganise');
-  const panel = document.getElementById('organisePanel');
-  const checkboxWraps = document.querySelectorAll('.organise-checkbox');
-  const checks = document.querySelectorAll('.bulkCheck');
-  const btnAll = document.getElementById('selectAll');
-  const btnNone = document.getElementById('selectNone');
-  const applySort = document.getElementById('applySort');
-  const sortBy = document.getElementById('sort_by_ui');
-  const sortDir = document.getElementById('sort_dir_ui');
-  const filterForm = document.getElementById('filterForm');
-
-  let organiseOn = false;
-
-  toggle.addEventListener('click', () => {
-    organiseOn = !organiseOn;
-    panel.style.display = organiseOn ? 'block' : 'none';
-    checkboxWraps.forEach(c => c.style.display = organiseOn ? 'block' : 'none');
-    toggle.textContent = organiseOn ? 'Close organise' : 'Organise';
-  });
-
-  btnAll && btnAll.addEventListener('click', () => checks.forEach(c => c.checked = true));
-  btnNone && btnNone.addEventListener('click', () => checks.forEach(c => c.checked = false));
-
-  applySort && applySort.addEventListener('click', () => {
-    // We want to sort AND reset to page 1
-    filterForm.querySelector('input[name="sort_by"]').value = sortBy.value;
-    filterForm.querySelector('input[name="sort_dir"]').value = sortDir.value;
-    // Note: ensure page param is removed or set to 1 before submit if it exists as hidden
-    const pageInput = filterForm.querySelector('input[name="page"]');
-    if(pageInput) pageInput.disabled = false; // enable it so it sends value=1
-    filterForm.submit();
-  });
-})();
-
+// --- Preview Toggle ---
 function togglePreview(id){
   const el = document.getElementById(`preview-${id}`);
   if(el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
+// --- Copy to Clipboard ---
 function copyPrompt(id){
   const el = document.querySelector(`#preview-${id} pre`);
-  if(!el) return;
-  navigator.clipboard.writeText(el.innerText);
+  if(el) {
+      navigator.clipboard.writeText(el.innerText);
+      // Optional: Visual feedback could be added here
+      const btn = event.target;
+      const originalText = btn.textContent;
+      btn.textContent = "Copied!";
+      setTimeout(() => btn.textContent = originalText, 1500);
+  } else {
+      // If the preview isn't in DOM, we can't copy easily without fetching
+      alert("Please open the preview first to copy the text.");
+  }
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    // --- Organise Panel Toggle ---
+    const toggle = document.getElementById('toggleOrganise');
+    const panel = document.getElementById('organisePanel');
+    const checks = document.querySelectorAll('.organise-checkbox');
+    const btnAll = document.getElementById('selectAll');
+    const btnNone = document.getElementById('selectNone');
+    
+    let orgMode = false;
+    
+    if(toggle){
+        toggle.addEventListener('click', () => {
+            orgMode = !orgMode;
+            panel.style.display = orgMode ? 'block' : 'none';
+            checks.forEach(c => c.style.display = orgMode ? 'block' : 'none');
+            toggle.textContent = orgMode ? 'Close Organise' : 'Organise';
+        });
+    }
+    
+    if(btnAll) btnAll.addEventListener('click', () => checks.forEach(c => c.querySelector('input').checked = true));
+    if(btnNone) btnNone.addEventListener('click', () => checks.forEach(c => c.querySelector('input').checked = false));
+
+    // --- Drag & Drop Upload Logic ---
+    const zones = document.querySelectorAll('.drop-zone');
+    zones.forEach(zone => {
+        zone.addEventListener('dragover', (e) => { 
+            e.preventDefault(); 
+            zone.classList.add('drag-over'); 
+        });
+        
+        zone.addEventListener('dragleave', () => { 
+            zone.classList.remove('drag-over'); 
+        });
+        
+        zone.addEventListener('drop', (e) => {
+            e.preventDefault(); 
+            zone.classList.remove('drag-over');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) handleUpload(zone.dataset.id, files[0], zone);
+        });
+    });
+
+    function handleUpload(id, file, zoneElement) {
+        // Validate Image
+        if (!file.type.startsWith('image/')) { 
+            alert("Please drop an image file."); 
+            return; 
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const overlay = zoneElement.querySelector('.drop-overlay');
+        overlay.style.display = 'flex'; 
+        overlay.textContent = 'Uploading...'; 
+
+        fetch(`/api/prompt/${id}/upload_thumb`, { method: 'POST', body: formData })
+        .then(res => res.json())
+        .then(data => {
+            if(data.success) {
+                // Success: Update the image
+                let img = zoneElement.querySelector('img.thumb');
+                
+                // If it was a placeholder div, replace it with an img tag
+                if (!img) {
+                    const container = zoneElement.querySelector('.card-thumb-area');
+                    container.innerHTML = '<img class="thumb" alt="Thumbnail">';
+                    img = container.querySelector('img');
+                }
+                
+                // Set source with timestamp to bust cache
+                img.src = data.thumbnail_url + '?t=' + new Date().getTime();
+            } else {
+                alert('Upload failed: ' + data.error);
+            }
+        })
+        .catch(err => alert('Error: ' + err))
+        .finally(() => { 
+            // Reset overlay to hidden and empty (Blank Box)
+            overlay.style.display = 'none'; 
+            overlay.textContent = ''; 
+        });
+    }
+});
 </script>
 {% endblock %}
