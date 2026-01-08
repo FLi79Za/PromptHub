@@ -21,6 +21,8 @@ app.secret_key = "change-me-to-something-random"
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "prompts.db"
+TEMP_DIR = BASE_DIR / "temp"
+TEMP_DIR.mkdir(exist_ok=True)
 
 PROMPT_TYPES = ["Generation", "Edit", "Instruction"]
 UPLOAD_DIR = BASE_DIR / "static" / "uploads" / "thumbs"
@@ -34,8 +36,8 @@ ITEMS_PER_PAGE = 12
 # -------------------------
 # DB helpers
 # -------------------------
-def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+def get_db(path=DB_PATH) -> sqlite3.Connection:
+    conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -147,7 +149,6 @@ def get_tags_for_prompt(conn, prompt_id):
 # -------------------------
 def ensure_category_tool_exist(category, tool):
     # Only opens a connection if it's called outside a transaction loop
-    # For import_prompt, we use a local helper instead.
     try:
         conn = get_db()
         if category:
@@ -165,6 +166,10 @@ def is_allowed_thumb(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_THUMB_EXTS
 
 def save_thumbnail(file_storage) -> str:
+    """
+    Saves and optimizes thumbnail.
+    Reliably converts GIFs to Animated WebP.
+    """
     original_filename = secure_filename(file_storage.filename)
     ext = Path(original_filename).suffix.lower()
     file_id = uuid.uuid4().hex
@@ -181,8 +186,7 @@ def save_thumbnail(file_storage) -> str:
             durations = []
             
             try:
-                # Limit frames to prevent huge files
-                for i in range(60): 
+                for i in range(60): # Limit to 60 frames
                     img.seek(i)
                     frame_duration = img.info.get('duration', 100)
                     durations.append(frame_duration)
@@ -190,7 +194,7 @@ def save_thumbnail(file_storage) -> str:
                     f.thumbnail((400, 400), Image.Resampling.LANCZOS)
                     frames.append(f)
             except EOFError:
-                pass 
+                pass
 
             if frames:
                 frames[0].save(
@@ -253,7 +257,8 @@ def delete_thumbnail_if_unused(rel_path: str) -> None:
         except: pass
 
 def find_placeholders(text: str) -> list[str]:
-    return sorted(set(re.findall(r"\[\[(.+?)\]\]", text)))
+    matches = re.findall(r"\[\[(.+?)\]\]", text)
+    return list(dict.fromkeys(matches))
 
 def parse_prompt_txt(raw_text: str) -> dict:
     meta = {}
@@ -278,7 +283,199 @@ def parse_prompt_txt(raw_text: str) -> dict:
 
 
 # -------------------------
-# Routes
+# EXPORT / IMPORT LOGIC
+# -------------------------
+@app.route("/export/selected", methods=["POST"])
+def export_selected():
+    ids = request.form.getlist("prompt_ids")
+    if not ids:
+        flash("No prompts selected for export.")
+        return redirect(url_for("index"))
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    export_filename = f"export_{ts}.db"
+    export_db_path = TEMP_DIR / export_filename
+    
+    conn_exp = sqlite3.connect(export_db_path)
+    conn_exp.execute("CREATE TABLE IF NOT EXISTS prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, category TEXT, tool TEXT, prompt_type TEXT, content TEXT, notes TEXT, thumbnail TEXT, parent_id INTEGER, created_at TEXT, updated_at TEXT)")
+    conn_exp.execute("CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
+    conn_exp.execute("CREATE TABLE IF NOT EXISTS prompt_tags (prompt_id INTEGER, tag_id INTEGER)")
+    
+    conn_main = get_db()
+    placeholders = ",".join("?" * len(ids))
+    prompts = conn_main.execute(f"SELECT * FROM prompts WHERE id IN ({placeholders})", ids).fetchall()
+    
+    for p in prompts:
+        p_data = dict(p)
+        cols = ",".join(p_data.keys())
+        qmarks = ",".join("?" * len(p_data))
+        conn_exp.execute(f"INSERT INTO prompts ({cols}) VALUES ({qmarks})", list(p_data.values()))
+        
+        pt_rows = conn_main.execute("SELECT t.name FROM tags t JOIN prompt_tags pt ON t.id = pt.tag_id WHERE pt.prompt_id=?", (p["id"],)).fetchall()
+        
+        for tag_row in pt_rows:
+            t_name = tag_row["name"]
+            try: conn_exp.execute("INSERT INTO tags (name) VALUES (?)", (t_name,))
+            except sqlite3.IntegrityError: pass
+            
+            t_id_exp = conn_exp.execute("SELECT id FROM tags WHERE name=?", (t_name,)).fetchone()[0]
+            conn_exp.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (p["id"], t_id_exp))
+
+    conn_exp.commit()
+    conn_exp.close()
+    conn_main.close()
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(export_db_path, arcname="prompts.export.db")
+        for p in prompts:
+            if p["thumbnail"]:
+                thumb_path = BASE_DIR / "static" / p["thumbnail"]
+                if thumb_path.exists():
+                    zf.write(thumb_path, arcname=p["thumbnail"])
+
+    try: os.remove(export_db_path)
+    except: pass
+
+    zip_buffer.seek(0)
+    return send_file(zip_buffer, mimetype="application/zip", as_attachment=True, download_name=f"prompts_export_{ts}.zip")
+
+
+@app.route("/import/db", methods=["GET", "POST"])
+def import_db_page():
+    if request.method == "GET":
+        return render_template("import_db.html", stage="upload")
+    
+    f = request.files.get("import_file")
+    if not f: return redirect(url_for("import_db_page"))
+    
+    filename = secure_filename(f.filename)
+    temp_path = TEMP_DIR / f"import_{uuid.uuid4().hex}_{filename}"
+    f.save(temp_path)
+    
+    extracted_db_path = temp_path
+    is_zip = filename.endswith(".zip")
+    
+    if is_zip:
+        with zipfile.ZipFile(temp_path, 'r') as zf:
+            db_files = [n for n in zf.namelist() if n.endswith(".db") or n.endswith(".sqlite")]
+            if not db_files:
+                flash("Invalid zip: No database file found.")
+                return redirect(url_for("import_db_page"))
+            
+            extracted_db_path = TEMP_DIR / f"extracted_{uuid.uuid4().hex}.db"
+            with open(extracted_db_path, "wb") as db_out:
+                db_out.write(zf.read(db_files[0]))
+    
+    try:
+        conn_imp = sqlite3.connect(extracted_db_path)
+        conn_imp.row_factory = sqlite3.Row
+        prompts = conn_imp.execute("SELECT * FROM prompts").fetchall()
+        conn_imp.close()
+    except Exception as e:
+        flash(f"Error reading database: {e}")
+        return redirect(url_for("import_db_page"))
+
+    session["import_source_path"] = str(temp_path)
+    session["import_extracted_db"] = str(extracted_db_path) if is_zip else str(temp_path)
+    session["import_is_zip"] = is_zip
+
+    return render_template("import_db.html", stage="preview", prompts=prompts)
+
+
+@app.route("/import/db/commit", methods=["POST"])
+def import_db_commit():
+    selected_ids = request.form.getlist("prompt_ids")
+    if not selected_ids:
+        flash("No prompts selected.")
+        return redirect(url_for("import_db_page"))
+
+    source_zip_path = session.get("import_source_path")
+    extracted_db_path = session.get("import_extracted_db")
+    is_zip = session.get("import_is_zip")
+
+    if not extracted_db_path or not os.path.exists(extracted_db_path):
+        flash("Import session expired. Please start over.")
+        return redirect(url_for("import_db_page"))
+
+    conn_main = get_db()
+    conn_imp = sqlite3.connect(extracted_db_path)
+    conn_imp.row_factory = sqlite3.Row
+
+    zip_ref = None
+    if is_zip and source_zip_path:
+        zip_ref = zipfile.ZipFile(source_zip_path, 'r')
+
+    count = 0
+    placeholders = ",".join("?" * len(selected_ids))
+    prompts_to_import = conn_imp.execute(f"SELECT * FROM prompts WHERE id IN ({placeholders})", selected_ids).fetchall()
+
+    for p in prompts_to_import:
+        # FIXED: Proper try/except syntax (indented blocks)
+        try:
+            conn_main.execute("INSERT INTO categories (name) VALUES (?)", (p["category"],))
+        except sqlite3.IntegrityError:
+            pass
+            
+        try:
+            conn_main.execute("INSERT INTO tools (name) VALUES (?)", (p["tool"],))
+        except sqlite3.IntegrityError:
+            pass
+        
+        final_thumb_path = None
+        if p["thumbnail"] and is_zip and zip_ref:
+            if p["thumbnail"] in zip_ref.namelist():
+                img_data = zip_ref.read(p["thumbnail"])
+                ext = Path(p["thumbnail"]).suffix
+                new_filename = f"{uuid.uuid4().hex}{ext}"
+                dest_path = UPLOAD_DIR / new_filename
+                with open(dest_path, "wb") as f_out:
+                    f_out.write(img_data)
+                final_thumb_path = f"uploads/thumbs/{new_filename}"
+
+        now = datetime.utcnow().isoformat()
+        
+        cur = conn_main.execute(
+            """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (p["title"], p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], final_thumb_path, now, now)
+        )
+        new_prompt_id = cur.lastrowid
+        
+        pt_rows = conn_imp.execute("SELECT t.name FROM tags t JOIN prompt_tags pt ON t.id = pt.tag_id WHERE pt.prompt_id=?", (p["id"],)).fetchall()
+        for t_row in pt_rows:
+            tag_name = t_row["name"]
+            try: 
+                conn_main.execute("INSERT INTO tags (name) VALUES (?)", (tag_name,))
+            except sqlite3.IntegrityError: 
+                pass
+            
+            tag_id_main = conn_main.execute("SELECT id FROM tags WHERE name=?", (tag_name,)).fetchone()[0]
+            try: 
+                conn_main.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (new_prompt_id, tag_id_main))
+            except sqlite3.IntegrityError: 
+                pass
+
+        count += 1
+
+    conn_main.commit()
+    conn_main.close()
+    conn_imp.close()
+    if zip_ref: zip_ref.close()
+
+    try:
+        if source_zip_path: os.remove(source_zip_path)
+        if extracted_db_path and extracted_db_path != source_zip_path: os.remove(extracted_db_path)
+    except: pass
+    
+    session.pop("import_source_path", None)
+    
+    flash(f"Successfully imported {count} prompts.")
+    return redirect(url_for("index"))
+
+
+# -------------------------
+# Routes (Standard)
 # -------------------------
 @app.route("/", methods=["GET"])
 def index():
@@ -298,10 +495,7 @@ def index():
 
     conn = get_db()
     
-    # Base query logic
     base_query = " FROM prompts p"
-    
-    # We only JOIN here for the specific Tag dropdown filter (Single Tag Mode)
     if tag_filter != "all":
         base_query += " JOIN prompt_tags pt ON p.id = pt.prompt_id JOIN tags t ON pt.tag_id = t.id"
     
@@ -312,50 +506,21 @@ def index():
     if tool != "all": base_query += " AND p.tool = ?"; params.append(tool)
     if tag_filter != "all": base_query += " AND t.name = ?"; params.append(tag_filter)
     
-    # --- UPDATED SEARCH LOGIC (Comma Separated + Tags) ---
-    
-    # 1. POSITIVE SEARCH (AND logic for multiple terms)
     if q:
         terms = [t.strip() for t in q.split(',') if t.strip()]
         for term in terms:
-            # Check Title, Content, Notes OR Tags
-            # Using EXISTS for tags prevents duplicates and logic errors
-            sub_query = """
-                (LOWER(p.title) LIKE ? OR 
-                 LOWER(p.content) LIKE ? OR 
-                 LOWER(COALESCE(p.notes, '')) LIKE ? OR
-                 EXISTS (
-                    SELECT 1 FROM prompt_tags pt_s 
-                    JOIN tags t_s ON pt_s.tag_id = t_s.id 
-                    WHERE pt_s.prompt_id = p.id AND LOWER(t_s.name) LIKE ?
-                 )
-                )
-            """
-            base_query += f" AND {sub_query}"
-            like_term = f"%{term.lower()}%"
-            params.extend([like_term, like_term, like_term, like_term])
+            sub = "(LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(COALESCE(p.notes, '')) LIKE ? OR EXISTS (SELECT 1 FROM prompt_tags pt JOIN tags t2 ON pt.tag_id=t2.id WHERE pt.prompt_id=p.id AND LOWER(t2.name) LIKE ?))"
+            base_query += f" AND {sub}"
+            lt = f"%{term.lower()}%"
+            params.extend([lt, lt, lt, lt])
 
-    # 2. NEGATIVE SEARCH (AND NOT logic for multiple terms)
     if q_not:
         terms = [t.strip() for t in q_not.split(',') if t.strip()]
         for term in terms:
-            # Exclude if Title, Content, Notes OR Tags match
-            sub_query = """
-                NOT (LOWER(p.title) LIKE ? OR 
-                     LOWER(p.content) LIKE ? OR 
-                     LOWER(COALESCE(p.notes, '')) LIKE ? OR
-                     EXISTS (
-                        SELECT 1 FROM prompt_tags pt_s 
-                        JOIN tags t_s ON pt_s.tag_id = t_s.id 
-                        WHERE pt_s.prompt_id = p.id AND LOWER(t_s.name) LIKE ?
-                     )
-                )
-            """
-            base_query += f" AND {sub_query}"
-            like_term = f"%{term.lower()}%"
-            params.extend([like_term, like_term, like_term, like_term])
-
-    # --- END UPDATED LOGIC ---
+            sub = "NOT (LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(COALESCE(p.notes, '')) LIKE ? OR EXISTS (SELECT 1 FROM prompt_tags pt JOIN tags t2 ON pt.tag_id=t2.id WHERE pt.prompt_id=p.id AND LOWER(t2.name) LIKE ?))"
+            base_query += f" AND {sub}"
+            lt = f"%{term.lower()}%"
+            params.extend([lt, lt, lt, lt])
 
     count_query = f"SELECT COUNT(DISTINCT p.id) {base_query}"
     total_items = conn.execute(count_query, params).fetchone()[0]
@@ -932,19 +1097,14 @@ def ollama_list_models():
         return []
 
 def ollama_generate(prompt: str, model: str | None = None, system: str | None = None, images: list[str] | None = None) -> str:
-    """
-    Unified generic generator. 
-    Supports vision if 'images' (list of base64 strings) is provided.
-    """
     payload = {
         "model": model or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL,
         "prompt": prompt,
         "stream": False,
     }
     if system: payload["system"] = system
-    if images: payload["images"] = images  # Ollama expects list of base64 strings
+    if images: payload["images"] = images
 
-    # Increased timeout to 120s to account for slower vision models
     r = requests.post(OLLAMA_URL, json=payload, timeout=120)
     r.raise_for_status()
     data = r.json()
@@ -1016,18 +1176,14 @@ def refine_prompt(prompt_id: int):
     else:
         # 3. Preview Mode (No DB Save)
         flash("Refinement generated (Unsaved). Check a box to save.")
-        
-        # Create a temporary dict to show the result in the UI
         p_preview = dict(prompt)
         p_preview['content'] = refined
-        
         return render_template("refine_prompt.html", prompt=p_preview, models=models, ollama_available=ollama_available)
 
 @app.route("/refine_draft", methods=["POST"])
 def refine_draft():
     init_db()
     models = ollama_list_models()
-    
     categories = get_categories()
     tools = get_tools()
     base = request.form.get("content") or ""
@@ -1065,62 +1221,31 @@ def generate_draft_from_image():
     if not f or not vision_model or not text_model:
         return jsonify({"error": "Missing image or model selection."}), 400
 
-    # 2. Process Image (Save & Encode)
     try:
-        # A) Save file to disk immediately (so it can be used as a thumbnail)
         thumbnail_path = save_thumbnail(f)
-        
-        # B) Read file back to encode for Ollama (since file pointer moved)
-        # We read from the saved file on disk
         saved_file_path = BASE_DIR / "static" / thumbnail_path
         with open(saved_file_path, "rb") as image_file:
             img_b64 = base64.b64encode(image_file.read()).decode('utf-8')
-            
     except Exception as e:
         return jsonify({"error": f"Image processing failed: {str(e)}"}), 400
 
-    # 3. Vision Step
-    vision_sys = """You are a visual analysis model.
-Carefully describe the contents of the provided image.
-Focus only on what is directly visible.
-Structure your response clearly using short sections or bullet points where appropriate.
-Include: Subject, Appearance, Environment, Composition, Lighting, Mood, Visual Style.
-Output should be factual and observational."""
-
+    vision_sys = "You are a visual analysis model. Describe the contents of the provided image clearly and factually. Focus on Subject, Appearance, Environment, Composition, Lighting, Mood."
     vision_prompt = "Describe this image."
     if custom_vision_instruction:
         vision_prompt += f" {custom_vision_instruction}"
 
     try:
-        vision_response = ollama_generate(
-            prompt=vision_prompt, 
-            model=vision_model, 
-            system=vision_sys, 
-            images=[img_b64]
-        )
+        vision_response = ollama_generate(prompt=vision_prompt, model=vision_model, system=vision_sys, images=[img_b64])
     except Exception as e:
         return jsonify({"error": f"Vision model failed: {str(e)}"}), 500
 
-    # 4. Drafting Step
-    draft_sys = """You are assisting with AI prompt creation.
-Based on the following visual description, generate a draft AI image prompt suitable for use with modern image generation models (e.g. Flux, Stable Diffusion).
-Rules:
-Do not invent details not present in the description.
-Use neutral, reusable phrasing.
-Prefer descriptive language.
-The result should be a starting point, not a finished prompt.
-Output a single paragraph prompt."""
-
+    draft_sys = "You are assisting with AI prompt creation. Based on the visual description, generate a draft AI image prompt suitable for models like Flux or Stable Diffusion. Output a single paragraph."
     draft_user_prompt = f"Visual description:\n{vision_response}"
     if custom_draft_instruction:
         draft_user_prompt += f"\n\nAdditional Instructions:\n{custom_draft_instruction}"
 
     try:
-        draft_response = ollama_generate(
-            prompt=draft_user_prompt,
-            model=text_model,
-            system=draft_sys
-        )
+        draft_response = ollama_generate(prompt=draft_user_prompt, model=text_model, system=draft_sys)
     except Exception as e:
         return jsonify({"error": f"Text model failed: {str(e)}"}), 500
 
@@ -1128,11 +1253,9 @@ Output a single paragraph prompt."""
         "success": True, 
         "description": vision_response, 
         "draft_prompt": draft_response,
-        "thumbnail_path": thumbnail_path  # Return the path so frontend can use it
+        "thumbnail_path": thumbnail_path
     })
 
-
-# Raw API
 @app.route("/prompt/<int:prompt_id>/raw", methods=["GET"])
 def prompt_raw(prompt_id: int):
     p = get_prompt(prompt_id)
@@ -1146,7 +1269,6 @@ def prompt_raw(prompt_id: int):
         "tool": p["tool"],
         "prompt_type": p["prompt_type"],
     })
-
 
 if __name__ == "__main__":
     init_db()

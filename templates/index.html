@@ -46,17 +46,16 @@
       <div style="display:flex; gap:0.5rem;">
          <a class="btn-secondary" href="{{ url_for('new_prompt') }}">New Prompt</a>
          <a class="btn-secondary" href="{{ url_for('import_prompt') }}">Import</a>
-         <button type="button" class="btn-secondary" id="toggleOrganise">Organise</button>
+         <a class="btn-secondary" href="{{ url_for('import_db_page') }}">Merge DB</a>
+         <button type="button" class="btn-secondary" id="toggleOrganise">Select / Export</button>
       </div>
     </div>
 
     <form method="get" class="filters" id="filterForm" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1.5rem;">
       <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
-        
         <div style="flex:1; min-width:180px;">
           <input type="text" name="q" value="{{ q|default('') }}" placeholder="Search..." style="width:100%;">
         </div>
-
         <div style="flex:1; min-width:180px;">
           <input type="text" name="q_not" value="{{ q_not|default('') }}" placeholder="Exclude..." style="width:100%; border-color:#d32f2f;">
         </div>
@@ -83,56 +82,58 @@
         </select>
 
         <button type="submit">Filter</button>
-        
         {% if q or q_not or active_category!='all' or active_tool!='all' or active_tag!='all' %}
           <a href="{{ url_for('index') }}" style="align-self:center; font-size:0.9em; margin-left:0.5rem;">Clear</a>
         {% endif %}
       </div>
-      
       <input type="hidden" name="sort_by" value="{{ sort_by|default('updated_at') }}">
       <input type="hidden" name="sort_dir" value="{{ sort_dir|default('desc') }}">
     </form>
     
-    <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
-      <div id="organisePanel" style="display:none; margin-bottom:1.5rem; padding:1rem; border:1px solid #333; border-radius:10px;">
-        <h3 style="margin-top:0;">Organise</h3>
-        <div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:0.75rem;">
-           <div>
-             <label>Category</label>
-             <input list="cat_list" name="bulk_category" placeholder="(no change)">
-             <datalist id="cat_list">{% for c in categories %}<option value="{{ c }}">{% endfor %}</datalist>
-           </div>
-           
-           <div>
-             <label>Tool</label>
-             <input list="tool_list" name="bulk_tool" placeholder="(no change)">
-             <datalist id="tool_list">{% for t in tools %}<option value="{{ t }}">{% endfor %}</datalist>
-           </div>
-           
-           <div>
-             <label>Add Tags</label>
-             <input type="text" name="bulk_tags" placeholder="e.g. vibrant, 8k (appends)">
-           </div>
-
-           <div style="align-self:end;">
-             <button type="submit" class="btn-primary" style="width:100%;">Apply</button>
-           </div>
-        </div>
-        <div style="margin-top:0.75rem; display:flex; gap:0.5rem;">
-            <button type="button" class="btn-secondary" id="selectAll">Select All</button>
-            <button type="button" class="btn-secondary" id="selectNone">Select None</button>
-        </div>
-      </div>
-    </form>
+    <div id="organisePanel" style="display:none; margin-bottom:1.5rem; padding:1rem; border:1px solid #333; border-radius:10px;">
+        <h3 style="margin-top:0;">Organise & Export</h3>
+        
+        <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
+            <div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:0.75rem;">
+               <div>
+                 <label>Category</label>
+                 <input list="cat_list" name="bulk_category" placeholder="(no change)">
+                 <datalist id="cat_list">{% for c in categories %}<option value="{{ c }}">{% endfor %}</datalist>
+               </div>
+               
+               <div>
+                 <label>Tool</label>
+                 <input list="tool_list" name="bulk_tool" placeholder="(no change)">
+                 <datalist id="tool_list">{% for t in tools %}<option value="{{ t }}">{% endfor %}</datalist>
+               </div>
+               
+               <div>
+                 <label>Add Tags</label>
+                 <input type="text" name="bulk_tags" placeholder="e.g. vibrant, 8k (appends)">
+               </div>
+            </div>
+            
+            <div style="margin-top:1rem; display:flex; justify-content:space-between; align-items:center;">
+                <div style="display:flex; gap:0.5rem;">
+                    <button type="button" class="btn-secondary" id="selectAll">Select All</button>
+                    <button type="button" class="btn-secondary" id="selectNone">Select None</button>
+                </div>
+                
+                <div style="display:flex; gap:0.5rem;">
+                    <button type="submit" class="btn-primary" style="background:#51cf66; border-color:#51cf66;">Apply Changes</button>
+                    <button type="submit" formaction="{{ url_for('export_selected') }}" class="btn-primary" style="background:#00bfff; border-color:#00bfff;">Export Selected</button>
+                </div>
+            </div>
+        </form>
+    </div>
 
     <ul class="prompt-list" id="promptList">
       {% for p in prompts %}
         <li class="prompt-card drop-zone" data-id="{{ p.id }}">
-          
           <div class="drop-overlay"></div>
-
+          
           <div class="organise-checkbox" style="display:none; position:absolute; top:10px; left:10px; z-index:10;">
-            <input type="checkbox" class="bulkCheck" name="prompt_ids" value="{{ p.id }}" form="bulkForm">
+            <input type="checkbox" class="bulkCheck" name="prompt_ids" value="{{ p.id }}" form="bulkForm" style="transform:scale(1.5);">
           </div>
 
           <div class="card-thumb-area">
@@ -147,22 +148,12 @@
             <div style="display:flex; justify-content:space-between; align-items:start;">
                 <h3 style="margin:0;">{{ p.title }}</h3>
                 <div style="display:flex; gap:4px;">
-                    {% if p.child_count > 0 %}
-                        <span title="{{ p.child_count }} variants" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">
-                            {{ p.child_count }} ⑂
-                        </span>
-                    {% endif %}
-                    {% if p.parent_id %}
-                        <span title="Is a variant" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">
-                           ↳ Variant
-                        </span>
-                    {% endif %}
+                    {% if p.child_count > 0 %}<span title="{{ p.child_count }} variants" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">{{ p.child_count }} ⑂</span>{% endif %}
+                    {% if p.parent_id %}<span title="Is a variant" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">↳ Variant</span>{% endif %}
                 </div>
             </div>
             
-            <p class="notes" style="margin:0.25rem 0 0.5rem 0; font-size:0.85em; opacity:0.7;">
-              {{ p.category }} · {{ p.tool }}
-            </p>
+            <p class="notes" style="margin:0.25rem 0 0.5rem 0; font-size:0.85em; opacity:0.7;">{{ p.category }} · {{ p.tool }}</p>
 
             {% if p.tags %}
               <div style="display:flex; gap:0.25rem; flex-wrap:wrap; margin-bottom:0.5rem;">
@@ -177,8 +168,7 @@
               <button type="button" class="btn-secondary" onclick="copyPrompt({{ p.id }})">Copy</button>
               <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
               <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
-              <form method="post" action="{{ url_for('delete_prompt', prompt_id=p.id) }}" 
-                    style="display:inline;" onsubmit="return confirm('Delete permanently?');">
+              <form method="post" action="{{ url_for('delete_prompt', prompt_id=p.id) }}" style="display:inline;" onsubmit="return confirm('Delete permanently?');">
                   <button type="submit" class="btn-danger" style="padding:0.4rem 0.6rem;">&times;</button>
               </form>
             </div>
@@ -198,9 +188,7 @@
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">&laquo; Prev</span>
         {% endif %}
-        
         <span style="padding:0.5rem;">Page {{ page }} of {{ total_pages }}</span>
-        
         {% if page < total_pages %}
           <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">Next &raquo;</a>
         {% else %}
@@ -213,34 +201,13 @@
 </div>
 
 <style>
-  /* Drag & Drop Visuals */
   .drop-zone { position: relative; transition: border-color 0.2s; }
   .drop-zone.drag-over { border: 2px dashed #00bfff; }
-  
-  .drop-overlay {
-      display: none; 
-      position: absolute; top:0; left:0; right:0; bottom:0;
-      background: rgba(0,0,0,0.6); 
-      color: white;
-      justify-content: center; align-items: center; font-weight: bold;
-      z-index: 5; border-radius: 8px; pointer-events: none;
-  }
+  .drop-overlay { display: none; position: absolute; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.6); color: white; justify-content: center; align-items: center; font-weight: bold; z-index: 5; border-radius: 8px; pointer-events: none; }
   .drop-zone.drag-over .drop-overlay { display: flex; }
-
-  /* Thumbnail Containers */
-  .thumb-placeholder {
-      width: 100%; height: 160px; background: #222; display: flex;
-      align-items: center; justify-content: center; font-size: 3rem; color: #444;
-  }
-  .card-thumb-area { 
-      position: relative; height: 160px; overflow: hidden; background: #000; 
-      display: flex; align-items: center; justify-content: center; 
-  }
-  
-  /* Full image visible (uncropped) */
-  .card-thumb-area img { 
-      width: 100%; height: 100%; object-fit: contain; 
-  }
+  .thumb-placeholder { width: 100%; height: 160px; background: #222; display: flex; align-items: center; justify-content: center; font-size: 3rem; color: #444; }
+  .card-thumb-area { position: relative; height: 160px; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; }
+  .card-thumb-area img { width: 100%; height: 100%; object-fit: contain; }
 </style>
 
 <script>
@@ -283,38 +250,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if(btnAll) btnAll.addEventListener('click', () => checks.forEach(c => c.querySelector('input').checked = true));
     if(btnNone) btnNone.addEventListener('click', () => checks.forEach(c => c.querySelector('input').checked = false));
 
-    // --- Drag & Drop Upload Logic ---
     const zones = document.querySelectorAll('.drop-zone');
     zones.forEach(zone => {
-        zone.addEventListener('dragover', (e) => { 
-            e.preventDefault(); 
-            zone.classList.add('drag-over'); 
-        });
-        
-        zone.addEventListener('dragleave', () => { 
-            zone.classList.remove('drag-over'); 
-        });
-        
+        zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+        zone.addEventListener('dragleave', () => { zone.classList.remove('drag-over'); });
         zone.addEventListener('drop', (e) => {
-            e.preventDefault(); 
-            zone.classList.remove('drag-over');
+            e.preventDefault(); zone.classList.remove('drag-over');
             const files = e.dataTransfer.files;
             if (files.length > 0) handleUpload(zone.dataset.id, files[0], zone);
         });
     });
 
     function handleUpload(id, file, zoneElement) {
-        if (!file.type.startsWith('image/')) { 
-            alert("Please drop an image file."); 
-            return; 
-        }
-
+        if (!file.type.startsWith('image/')) { alert("Please drop an image file."); return; }
         const formData = new FormData();
         formData.append('file', file);
         
         const overlay = zoneElement.querySelector('.drop-overlay');
-        overlay.style.display = 'flex'; 
-        overlay.textContent = 'Uploading...'; 
+        overlay.style.display = 'flex'; overlay.textContent = 'Uploading...'; 
 
         fetch(`/api/prompt/${id}/upload_thumb`, { method: 'POST', body: formData })
         .then(res => res.json())
@@ -332,10 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         })
         .catch(err => alert('Error: ' + err))
-        .finally(() => { 
-            overlay.style.display = 'none'; 
-            overlay.textContent = ''; 
-        });
+        .finally(() => { overlay.style.display = 'none'; overlay.textContent = ''; });
     }
 });
 </script>

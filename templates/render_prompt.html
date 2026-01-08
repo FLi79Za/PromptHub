@@ -3,13 +3,22 @@
 {% block content %}
 <section class="page" style="max-width: 800px; margin: 0 auto;">
   
-  <div class="page-header" style="margin-bottom: 2rem;">
+  <div class="page-header" style="margin-bottom: 1.5rem;">
     <div>
         <h2 style="margin:0;">Use Prompt</h2>
         <h3 style="margin:0; opacity: 0.6; font-weight: normal;">{{ prompt.title }}</h3>
     </div>
     <a class="btn-secondary" href="{{ url_for('index') }}">Back to Library</a>
   </div>
+
+  {% if prompt.notes %}
+  <details style="background: #252525; border-left: 4px solid #00bfff; border-radius: 4px; margin-bottom: 2rem;">
+      <summary style="padding: 0.75rem 1rem; cursor: pointer; color: #fff; font-weight: bold; font-size: 0.95em; user-select: none;">
+          📝 Notes & Instructions (Click to toggle)
+      </summary>
+      <div style="padding: 0 1rem 1rem 1rem; color: #ddd; font-size: 0.95em; white-space: pre-wrap; line-height: 1.5; border-top: 1px solid #333; margin-top: 0.25rem; padding-top: 0.75rem;">{{ prompt.notes }}</div>
+  </details>
+  {% endif %}
 
   {% if placeholders %}
   <div style="background:#1a1a1a; padding:1.5rem; border-radius:8px; margin-bottom:2rem; border:1px solid #333;">
@@ -61,7 +70,6 @@ function updateFinal() {
         const val = input.value;
         
         // Replace all instances of [[key]] with the value (or keep [[key]] if empty)
-        // We use a RegExp with 'g' (global) flag to replace multiple occurrences
         if(val) {
             const regex = new RegExp(`\\[\\[${key}\\]\\]`, 'g');
             text = text.replace(regex, val);

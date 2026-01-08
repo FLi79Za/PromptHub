@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page" style="max-width: 800px; margin: 0 auto;">
+  
+  <div class="page-header" style="margin-bottom: 2rem;">
+    <h2>Merge Database Import</h2>
+    <a class="btn-secondary" href="{{ url_for('index') }}">Back to Library</a>
+  </div>
+
+  {% if stage == 'upload' %}
+    <div style="background:#1a1a1a; padding:2rem; border-radius:8px; border:1px solid #333; text-align:center;">
+        <p style="margin-bottom:1.5rem; color:#ccc;">
+            Upload a <strong>.zip export</strong> or a raw <strong>.db file</strong> to merge it into your current library.<br>
+            You will be able to select which prompts to import in the next step.
+        </p>
+        
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('import_db_page') }}">
+            <input type="file" name="import_file" accept=".zip,.db,.sqlite" required 
+                   style="margin-bottom:1.5rem; padding:1rem; border:2px dashed #444; border-radius:4px; width:100%; box-sizing:border-box;">
+            <button type="submit" class="btn-primary" style="font-size:1.1em; padding:0.8rem 2rem;">Next: Preview & Select</button>
+        </form>
+    </div>
+
+  {% elif stage == 'preview' %}
+    <form method="post" action="{{ url_for('import_db_commit') }}">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+            <h3 style="margin:0;">Select Prompts to Import</h3>
+            <div style="display:flex; gap:0.5rem;">
+                <button type="button" class="btn-secondary" onclick="selectAll(true)">All</button>
+                <button type="button" class="btn-secondary" onclick="selectAll(false)">None</button>
+            </div>
+        </div>
+
+        <div style="background:#1a1a1a; border-radius:8px; border:1px solid #333; overflow:hidden;">
+            <table style="width:100%; border-collapse:collapse; text-align:left;">
+                <thead style="background:#222; border-bottom:1px solid #333;">
+                    <tr>
+                        <th style="padding:1rem; width:40px;"></th>
+                        <th style="padding:1rem;">Title</th>
+                        <th style="padding:1rem;">Category</th>
+                        <th style="padding:1rem;">Tool</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in prompts %}
+                    <tr style="border-bottom:1px solid #222;">
+                        <td style="padding:1rem; text-align:center;">
+                            <input type="checkbox" name="prompt_ids" value="{{ p.id }}" checked class="imp-check">
+                        </td>
+                        <td style="padding:1rem; font-weight:bold;">{{ p.title }}</td>
+                        <td style="padding:1rem; opacity:0.8;">{{ p.category }}</td>
+                        <td style="padding:1rem; opacity:0.8;">{{ p.tool }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div style="margin-top:2rem; text-align:right;">
+            <button type="submit" class="btn-primary" style="background:#51cf66; border-color:#51cf66;">Import Selected</button>
+        </div>
+    </form>
+
+    <script>
+    function selectAll(state) {
+        document.querySelectorAll('.imp-check').forEach(c => c.checked = state);
+    }
+    </script>
+  {% endif %}
+
+</section>
+{% endblock %}
