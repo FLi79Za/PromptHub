@@ -11,7 +11,7 @@ import json
 import base64
 from datetime import datetime
 from pathlib import Path
-from PIL import Image  # pip install Pillow
+from PIL import Image, ImageSequence
 
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session, jsonify
 from werkzeug.utils import secure_filename
@@ -46,11 +46,9 @@ def column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
 def init_db() -> None:
     conn = get_db()
     
-    # Core Tables
     conn.execute("CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
     conn.execute("CREATE TABLE IF NOT EXISTS tools (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
     
-    # Prompts Table
     conn.execute("""
         CREATE TABLE IF NOT EXISTS prompts (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +65,6 @@ def init_db() -> None:
         )
     """)
 
-    # Saved Views Table
     conn.execute("""
         CREATE TABLE IF NOT EXISTS saved_views (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +74,6 @@ def init_db() -> None:
         )
     """)
     
-    # Tagging Tables
     conn.execute("CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS prompt_tags (
@@ -89,13 +85,11 @@ def init_db() -> None:
         )
     """)
 
-    # Migrations
     if not column_exists(conn, "prompts", "thumbnail"):
         conn.execute("ALTER TABLE prompts ADD COLUMN thumbnail TEXT")
     if not column_exists(conn, "prompts", "parent_id"):
         conn.execute("ALTER TABLE prompts ADD COLUMN parent_id INTEGER")
 
-    # Seed Defaults
     if conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0:
         for c in ["Image", "Video", "Music", "Other"]: conn.execute("INSERT INTO categories (name) VALUES (?)", (c,))
     if conn.execute("SELECT COUNT(*) FROM tools").fetchone()[0] == 0:
@@ -152,14 +146,20 @@ def get_tags_for_prompt(conn, prompt_id):
 # Logic Helpers
 # -------------------------
 def ensure_category_tool_exist(category, tool):
-    conn = get_db()
-    if category:
-        try: conn.execute("INSERT INTO categories (name) VALUES (?)", (category,))
-        except: pass
-    if tool:
-        try: conn.execute("INSERT INTO tools (name) VALUES (?)", (tool,))
-        except: pass
-    conn.commit(); conn.close()
+    # Only opens a connection if it's called outside a transaction loop
+    # For import_prompt, we use a local helper instead.
+    try:
+        conn = get_db()
+        if category:
+            try: conn.execute("INSERT INTO categories (name) VALUES (?)", (category,))
+            except: pass
+        if tool:
+            try: conn.execute("INSERT INTO tools (name) VALUES (?)", (tool,))
+            except: pass
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 def is_allowed_thumb(filename: str) -> bool:
     return Path(filename).suffix.lower() in ALLOWED_THUMB_EXTS
@@ -167,30 +167,68 @@ def is_allowed_thumb(filename: str) -> bool:
 def save_thumbnail(file_storage) -> str:
     original_filename = secure_filename(file_storage.filename)
     ext = Path(original_filename).suffix.lower()
-    new_name = f"{uuid.uuid4().hex}{ext}"
-    dest = UPLOAD_DIR / new_name
-
+    file_id = uuid.uuid4().hex
+    
     try:
         img = Image.open(file_storage)
-        if ext == '.gif':
-            file_storage.seek(0); file_storage.save(dest)
+        
+        # --- GIF ANIMATION HANDLING ---
+        if ext == '.gif' and getattr(img, "is_animated", False):
+            new_name = f"{file_id}.webp"
+            dest = UPLOAD_DIR / new_name
+            
+            frames = []
+            durations = []
+            
+            try:
+                # Limit frames to prevent huge files
+                for i in range(60): 
+                    img.seek(i)
+                    frame_duration = img.info.get('duration', 100)
+                    durations.append(frame_duration)
+                    f = img.convert("RGBA")
+                    f.thumbnail((400, 400), Image.Resampling.LANCZOS)
+                    frames.append(f)
+            except EOFError:
+                pass 
+
+            if frames:
+                frames[0].save(
+                    dest,
+                    format="WEBP",
+                    save_all=True,
+                    append_images=frames[1:],
+                    optimize=True,
+                    duration=durations,
+                    loop=0,
+                    quality=85
+                )
+                return f"uploads/thumbs/{new_name}"
+        
+        # --- STATIC IMAGE ---
+        new_name = f"{file_id}{ext}"
+        dest = UPLOAD_DIR / new_name
+        
+        img.thumbnail((600, 600))
+        
+        if ext in ['.jpg', '.jpeg']:
+            if img.mode != 'RGB': img = img.convert('RGB')
+            img.save(dest, optimize=True, quality=85)
+        elif ext == '.png':
+            img.save(dest, optimize=True)
+        elif ext == '.webp':
+            img.save(dest, optimize=True, quality=85)
         else:
-            img.thumbnail((600, 600))
-            if ext in ['.jpg', '.jpeg']:
-                if img.mode != 'RGB': img = img.convert('RGB')
-                img.save(dest, optimize=True, quality=85)
-            elif ext == '.png':
-                img.save(dest, optimize=True)
-            elif ext == '.webp':
-                img.save(dest, optimize=True, quality=85)
-            else:
-                img.save(dest)
+            img.save(dest)
+            
         return f"uploads/thumbs/{new_name}"
+
     except Exception as e:
         print(f"Image processing failed: {e}")
         file_storage.seek(0)
-        file_storage.save(dest)
-        return f"uploads/thumbs/{new_name}"
+        fallback_name = f"{uuid.uuid4().hex}{ext}"
+        file_storage.save(UPLOAD_DIR / fallback_name)
+        return f"uploads/thumbs/{fallback_name}"
 
 def copy_thumbnail(existing_rel_path: str) -> str | None:
     if not existing_rel_path: return None
@@ -248,7 +286,7 @@ def index():
     tool = request.args.get("tool", "all")
     tag_filter = request.args.get("tag", "all")
     q = (request.args.get("q") or "").strip()
-    q_not = (request.args.get("q_not") or "").strip()  # NEW: Exclude filter
+    q_not = (request.args.get("q_not") or "").strip()
     sort_by = request.args.get("sort_by", "updated_at")
     sort_dir = request.args.get("sort_dir", "desc")
     try: page = max(1, int(request.args.get("page", 1)))
@@ -260,7 +298,10 @@ def index():
 
     conn = get_db()
     
+    # Base query logic
     base_query = " FROM prompts p"
+    
+    # We only JOIN here for the specific Tag dropdown filter (Single Tag Mode)
     if tag_filter != "all":
         base_query += " JOIN prompt_tags pt ON p.id = pt.prompt_id JOIN tags t ON pt.tag_id = t.id"
     
@@ -271,15 +312,50 @@ def index():
     if tool != "all": base_query += " AND p.tool = ?"; params.append(tool)
     if tag_filter != "all": base_query += " AND t.name = ?"; params.append(tag_filter)
     
-    # Positive Search
+    # --- UPDATED SEARCH LOGIC (Comma Separated + Tags) ---
+    
+    # 1. POSITIVE SEARCH (AND logic for multiple terms)
     if q:
-        base_query += " AND (LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(COALESCE(p.notes, '')) LIKE ?)"
-        like = f"%{q.lower()}%"; params.extend([like, like, like])
+        terms = [t.strip() for t in q.split(',') if t.strip()]
+        for term in terms:
+            # Check Title, Content, Notes OR Tags
+            # Using EXISTS for tags prevents duplicates and logic errors
+            sub_query = """
+                (LOWER(p.title) LIKE ? OR 
+                 LOWER(p.content) LIKE ? OR 
+                 LOWER(COALESCE(p.notes, '')) LIKE ? OR
+                 EXISTS (
+                    SELECT 1 FROM prompt_tags pt_s 
+                    JOIN tags t_s ON pt_s.tag_id = t_s.id 
+                    WHERE pt_s.prompt_id = p.id AND LOWER(t_s.name) LIKE ?
+                 )
+                )
+            """
+            base_query += f" AND {sub_query}"
+            like_term = f"%{term.lower()}%"
+            params.extend([like_term, like_term, like_term, like_term])
 
-    # Negative Search (Exclude)
+    # 2. NEGATIVE SEARCH (AND NOT logic for multiple terms)
     if q_not:
-        base_query += " AND NOT (LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(COALESCE(p.notes, '')) LIKE ?)"
-        not_like = f"%{q_not.lower()}%"; params.extend([not_like, not_like, not_like])
+        terms = [t.strip() for t in q_not.split(',') if t.strip()]
+        for term in terms:
+            # Exclude if Title, Content, Notes OR Tags match
+            sub_query = """
+                NOT (LOWER(p.title) LIKE ? OR 
+                     LOWER(p.content) LIKE ? OR 
+                     LOWER(COALESCE(p.notes, '')) LIKE ? OR
+                     EXISTS (
+                        SELECT 1 FROM prompt_tags pt_s 
+                        JOIN tags t_s ON pt_s.tag_id = t_s.id 
+                        WHERE pt_s.prompt_id = p.id AND LOWER(t_s.name) LIKE ?
+                     )
+                )
+            """
+            base_query += f" AND {sub_query}"
+            like_term = f"%{term.lower()}%"
+            params.extend([like_term, like_term, like_term, like_term])
+
+    # --- END UPDATED LOGIC ---
 
     count_query = f"SELECT COUNT(DISTINCT p.id) {base_query}"
     total_items = conn.execute(count_query, params).fetchone()[0]
@@ -596,8 +672,17 @@ def import_prompt():
 
         batch_cat = request.form.get("batch_category", "").strip()
         batch_tool = request.form.get("batch_tool", "").strip()
-        ensure_category_tool_exist(batch_cat, batch_tool)
         
+        # Helper to safely add cat/tool using CURRENT connection
+        # (Fixes the "Database is locked" error by avoiding recursive connections)
+        def safe_add_meta(c, t, active_conn):
+            if c:
+                try: active_conn.execute("INSERT INTO categories (name) VALUES (?)", (c,))
+                except sqlite3.IntegrityError: pass
+            if t:
+                try: active_conn.execute("INSERT INTO tools (name) VALUES (?)", (t,))
+                except sqlite3.IntegrityError: pass
+
         batch_type = request.form.get("batch_prompt_type", "Instruction").strip()
         batch_notes = request.form.get("batch_notes", "").strip()
         single_mode = request.form.get("single_prompt_per_file") == "on"
@@ -605,6 +690,9 @@ def import_prompt():
         prefer_metadata = request.form.get("prefer_file_metadata") == "on"
 
         conn = get_db()
+        # Initialize defaults safely
+        safe_add_meta(batch_cat, batch_tool, conn)
+        
         now = datetime.utcnow().isoformat()
 
         for f in files:
@@ -638,7 +726,8 @@ def import_prompt():
                 elif batch_tool: tool = batch_tool
                 elif p["tool"]: tool = p["tool"]
 
-                ensure_category_tool_exist(cat, tool)
+                # Add potential new metadata (safely)
+                safe_add_meta(cat, tool, conn)
 
                 ptype = batch_type
                 if p["prompt_type"] and (prefer_metadata or not batch_type):
@@ -964,9 +1053,6 @@ def refine_draft():
     except Exception as e:
         return render_template("edit_prompt.html", prompt=prompt_like, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, refine_error=str(e), ollama_available=True, tags_str="")
 
-# ---------------------------
-# NEW: Image-to-Prompt Logic
-# ---------------------------
 @app.route("/api/generate_draft_from_image", methods=["POST"])
 def generate_draft_from_image():
     # 1. Inputs
