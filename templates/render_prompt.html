@@ -3,13 +3,31 @@
 {% block content %}
 <section class="page" style="max-width: 800px; margin: 0 auto;">
   
-  <div class="page-header" style="margin-bottom: 1.5rem;">
+  <div class="page-header" style="margin-bottom: 1rem;">
     <div>
         <h2 style="margin:0;">Use Prompt</h2>
         <h3 style="margin:0; opacity: 0.6; font-weight: normal;">{{ prompt.title }}</h3>
     </div>
     <a class="btn-secondary" href="{{ url_for('index') }}">Back to Library</a>
   </div>
+
+  {% if variants and variants|length > 1 %}
+  <div style="margin-bottom: 2rem; background: #111; padding: 0.75rem; border-radius: 8px; border: 1px solid #333; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+      <span style="font-size:0.85em; text-transform:uppercase; color:#666; font-weight:bold; margin-right:0.5rem;">Variants:</span>
+      
+      {% for v in variants %}
+        <a href="{{ url_for('render_prompt', prompt_id=v.id) }}" 
+           style="text-decoration:none; padding: 0.3rem 0.8rem; border-radius: 4px; font-size: 0.9em; transition: all 0.2s; 
+                  {% if v.id == prompt.id %}
+                    background: #00bfff; color: #000; font-weight: bold; cursor: default;
+                  {% else %}
+                    background: #333; color: #ccc;
+                  {% endif %}">
+           {{ v.title }}
+        </a>
+      {% endfor %}
+  </div>
+  {% endif %}
 
   {% if prompt.notes %}
   <details style="background: #252525; border-left: 4px solid #00bfff; border-radius: 4px; margin-bottom: 2rem;">
@@ -42,44 +60,31 @@
       </div>
 
       <textarea id="templateSource" style="display:none;">{{ prompt.content }}</textarea>
-
       <textarea name="content" id="finalOutput" rows="12" style="font-family:monospace; line-height:1.5; font-size:1.1em; padding:1rem;">{{ prompt.content }}</textarea>
 
       <div class="action-bar" style="margin-top:1rem; display:flex; gap:1rem; flex-wrap:wrap;">
-          <button type="button" class="btn-primary" onclick="copyToClipboard()" style="flex:2;">
-              Copy to Clipboard
-          </button>
-
-          <button type="submit" class="btn-secondary" style="flex:1;" title="Send this text to Ollama for refinement">
-              ✨ Refine with Ollama
-          </button>
+          <button type="button" class="btn-primary" onclick="copyToClipboard()" style="flex:2;">Copy to Clipboard</button>
+          <button type="submit" class="btn-secondary" style="flex:1;" title="Send this text to Ollama for refinement">✨ Refine with Ollama</button>
       </div>
   </form>
 
 </section>
 
 <script>
-// 1. LIVE UPDATE FUNCTION
 function updateFinal() {
     let text = document.getElementById('templateSource').value;
     const inputs = document.querySelectorAll('.placeholder-input');
-    
-    // Loop through all placeholder inputs
     inputs.forEach(input => {
         const key = input.getAttribute('data-target');
         const val = input.value;
-        
-        // Replace all instances of [[key]] with the value (or keep [[key]] if empty)
         if(val) {
             const regex = new RegExp(`\\[\\[${key}\\]\\]`, 'g');
             text = text.replace(regex, val);
         }
     });
-
     document.getElementById('finalOutput').value = text;
 }
 
-// 2. COPY FUNCTION
 function copyToClipboard() {
     const text = document.getElementById('finalOutput').value;
     navigator.clipboard.writeText(text).then(() => {

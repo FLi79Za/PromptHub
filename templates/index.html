@@ -7,29 +7,22 @@
     <div style="display:flex; justify-content:space-between; align-items:center;">
       <h3 style="margin:0;">Views</h3>
     </div>
-    
     <ul class="view-list" style="list-style:none; padding:0; margin: 1rem 0;">
       <li style="margin-bottom:0.5rem;">
         <a href="{{ url_for('index') }}" class="btn-secondary" style="display:block; text-align:left; {% if not request.query_string %}font-weight:bold; border-color:#666;{% endif %}">
           All Prompts
         </a>
       </li>
-
       {% for view in saved_views %}
         <li style="margin-bottom:0.5rem; display:flex; gap:0.25rem;">
-          <a href="/?{{ view.query_params }}" class="btn-secondary" 
-             style="display:block; flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
-            {{ view.name }}
-          </a>
+          <a href="/?{{ view.query_params }}" class="btn-secondary" style="display:block; flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ view.name }}</a>
           <form method="post" action="{{ url_for('delete_view', view_id=view.id) }}" onsubmit="return confirm('Delete view?');">
             <button type="submit" style="padding: 0.5rem; font-size: 0.8em;">&times;</button>
           </form>
         </li>
       {% endfor %}
     </ul>
-
     <hr style="border-color:#333;">
-
     <form method="post" action="{{ url_for('save_view') }}" style="margin-top:1rem;">
       <input type="hidden" name="query_string" value="{{ request.query_string.decode() }}">
       <label style="font-size:0.85em;">Save current filters as:</label>
@@ -41,6 +34,14 @@
   </aside>
 
   <section style="min-width:0;">
+    
+    {% if view_family %}
+    <div style="background:#222; padding:1rem; border-radius:8px; margin-bottom:1.5rem; display:flex; justify-content:space-between; align-items:center; border-left:4px solid #00bfff;">
+        <h3 style="margin:0;">📂 Viewing Prompt Family</h3>
+        <a href="{{ url_for('index') }}" class="btn-secondary">Back to Full Library</a>
+    </div>
+    {% endif %}
+
     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
       <h2 style="margin:0;">Library</h2>
       <div style="display:flex; gap:0.5rem;">
@@ -92,7 +93,6 @@
     
     <div id="organisePanel" style="display:none; margin-bottom:1.5rem; padding:1rem; border:1px solid #333; border-radius:10px;">
         <h3 style="margin-top:0;">Organise & Export</h3>
-        
         <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
             <div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:0.75rem;">
                <div>
@@ -100,25 +100,21 @@
                  <input list="cat_list" name="bulk_category" placeholder="(no change)">
                  <datalist id="cat_list">{% for c in categories %}<option value="{{ c }}">{% endfor %}</datalist>
                </div>
-               
                <div>
                  <label>Tool</label>
                  <input list="tool_list" name="bulk_tool" placeholder="(no change)">
                  <datalist id="tool_list">{% for t in tools %}<option value="{{ t }}">{% endfor %}</datalist>
                </div>
-               
                <div>
                  <label>Add Tags</label>
                  <input type="text" name="bulk_tags" placeholder="e.g. vibrant, 8k (appends)">
                </div>
             </div>
-            
             <div style="margin-top:1rem; display:flex; justify-content:space-between; align-items:center;">
                 <div style="display:flex; gap:0.5rem;">
                     <button type="button" class="btn-secondary" id="selectAll">Select All</button>
                     <button type="button" class="btn-secondary" id="selectNone">Select None</button>
                 </div>
-                
                 <div style="display:flex; gap:0.5rem;">
                     <button type="submit" class="btn-primary" style="background:#51cf66; border-color:#51cf66;">Apply Changes</button>
                     <button type="submit" formaction="{{ url_for('export_selected') }}" class="btn-primary" style="background:#00bfff; border-color:#00bfff;">Export Selected</button>
@@ -131,7 +127,6 @@
       {% for p in prompts %}
         <li class="prompt-card drop-zone" data-id="{{ p.id }}">
           <div class="drop-overlay"></div>
-          
           <div class="organise-checkbox" style="display:none; position:absolute; top:10px; left:10px; z-index:10;">
             <input type="checkbox" class="bulkCheck" name="prompt_ids" value="{{ p.id }}" form="bulkForm" style="transform:scale(1.5);">
           </div>
@@ -148,8 +143,19 @@
             <div style="display:flex; justify-content:space-between; align-items:start;">
                 <h3 style="margin:0;">{{ p.title }}</h3>
                 <div style="display:flex; gap:4px;">
-                    {% if p.child_count > 0 %}<span title="{{ p.child_count }} variants" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">{{ p.child_count }} ⑂</span>{% endif %}
-                    {% if p.parent_id %}<span title="Is a variant" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">↳ Variant</span>{% endif %}
+                    {% if p.child_count > 0 %}
+                        <a href="{{ url_for('index', view_family=p.id) }}" 
+                           title="View variants" 
+                           style="background:#00bfff; color:#fff; text-decoration:none; padding:2px 8px; border-radius:4px; font-size:0.75em; font-weight:bold;">
+                            📂 {{ p.child_count }} Variants
+                        </a>
+                    {% endif %}
+                    
+                    {% if p.parent_id %}
+                        <span title="Is a variant" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">
+                           ↳ Variant
+                        </span>
+                    {% endif %}
                 </div>
             </div>
             
@@ -184,13 +190,13 @@
     {% if total_pages > 1 %}
       <div style="margin-top:2rem; display:flex; justify-content:center; gap:0.5rem;">
         {% if page > 1 %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, q_not=q_not, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">&laquo; Prev</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">&laquo; Prev</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">&laquo; Prev</span>
         {% endif %}
         <span style="padding:0.5rem;">Page {{ page }} of {{ total_pages }}</span>
         {% if page < total_pages %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">Next &raquo;</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">Next &raquo;</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">Next &raquo;</span>
         {% endif %}

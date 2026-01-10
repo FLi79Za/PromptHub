@@ -30,7 +30,7 @@
           </div>
           <div>
               <label>Instruction (Optional)</label>
-              <textarea name="instruction" rows="2" placeholder="e.g. Make it more descriptive, remove negative words..."></textarea>
+              <textarea name="instruction" rows="2" placeholder="e.g. Make it more descriptive..."></textarea>
           </div>
       </div>
 
@@ -39,34 +39,56 @@
           <textarea name="content" rows="12" style="font-family:monospace; line-height:1.4;">{{ prompt.content }}</textarea>
       </div>
 
-      <div style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-top:1.5rem; border:1px solid #333;">
-          <div style="display:flex; gap:1rem; align-items:center; flex-wrap:wrap; margin-bottom:1rem;">
-              <button type="submit" class="btn-primary">Refine</button>
-              <span style="opacity:0.5; font-size:0.9em;">(Generates preview if no save option selected)</span>
+      <div style="background:#1a1a1a; padding:1.5rem; border-radius:8px; margin-top:2rem; border:1px solid #333;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem;">
+              <h3 style="margin:0; font-size:1.1em;">Save Options</h3>
+              <button type="submit" class="btn-primary" style="padding:0.6rem 1.5rem;">Generate / Save</button>
           </div>
 
-          <hr style="border-color:#333; margin: 1rem 0;">
-
           <div style="display:grid; gap:1rem;">
-              <div style="display:flex; align-items:center;">
-                  <input type="checkbox" name="overwrite" id="overwrite" style="margin-right:0.5rem;">
-                  <label for="overwrite" style="cursor:pointer; color:#ff6b6b;">Overwrite this prompt's content</label>
+              
+              <label style="display:flex; align-items:center; padding:0.5rem; background:#222; border-radius:4px; cursor:pointer;">
+                  <input type="radio" name="save_action" value="" checked style="margin-right:1rem;">
+                  <span><strong>Preview Only</strong> <span style="opacity:0.6; font-size:0.9em;">— Just show me the result, don't save yet.</span></span>
+              </label>
+
+              <label style="display:flex; align-items:center; padding:0.5rem; background:#222; border-radius:4px; cursor:pointer;">
+                  <input type="radio" name="save_action" value="overwrite" style="margin-right:1rem;">
+                  <span style="color:#ff6b6b;"><strong>Overwrite</strong> <span style="opacity:0.6; font-size:0.9em;">— Replace the current prompt content.</span></span>
+              </label>
+
+              <label style="display:flex; align-items:center; padding:0.5rem; background:#222; border-radius:4px; cursor:pointer;">
+                  <input type="radio" name="save_action" value="variant" style="margin-right:1rem;" onclick="document.getElementById('newTitleBox').style.display='block'">
+                  <span style="color:#51cf66;"><strong>Save as Variant</strong> <span style="opacity:0.6; font-size:0.9em;">— Save as a child of this prompt family.</span></span>
+              </label>
+
+              <label style="display:flex; align-items:center; padding:0.5rem; background:#222; border-radius:4px; cursor:pointer;">
+                  <input type="radio" name="save_action" value="new" style="margin-right:1rem;" onclick="document.getElementById('newTitleBox').style.display='block'">
+                  <span><strong>Save as New Prompt</strong> <span style="opacity:0.6; font-size:0.9em;">— Create a separate, independent prompt.</span></span>
+              </label>
+
+              <div id="newTitleBox" style="display:none; margin-top:0.5rem; margin-left:2.5rem;">
+                  <input type="text" name="new_title" placeholder="Title for new variant/prompt..." value="{{ prompt.title }} (Refined)" style="width:100%; padding:0.5rem;">
               </div>
 
-              <div style="display:flex; align-items:center; flex-wrap:wrap; gap:1rem;">
-                  <div style="display:flex; align-items:center;">
-                      <input type="checkbox" name="save_as_new" id="save_as_new" style="margin-right:0.5rem;" onclick="document.getElementById('newTitleBox').style.display = this.checked ? 'block' : 'none'">
-                      <label for="save_as_new" style="cursor:pointer; color:#51cf66;">Save as new prompt</label>
-                  </div>
-                  
-                  <div id="newTitleBox" style="display:none; flex:1; min-width:200px;">
-                      <input type="text" name="new_title" placeholder="New Title (Optional)" value="{{ prompt.title }} (Refined)" style="width:100%; padding:0.4rem;">
-                  </div>
-              </div>
           </div>
       </div>
 
     </form>
   {% endif %}
 </section>
+
+<script>
+    // Simple logic to hide/show title box based on radio selection
+    document.querySelectorAll('input[name="save_action"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const box = document.getElementById('newTitleBox');
+            if (e.target.value === 'variant' || e.target.value === 'new') {
+                box.style.display = 'block';
+            } else {
+                box.style.display = 'none';
+            }
+        });
+    });
+</script>
 {% endblock %}

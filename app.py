@@ -484,6 +484,8 @@ def index():
     tag_filter = request.args.get("tag", "all")
     q = (request.args.get("q") or "").strip()
     q_not = (request.args.get("q_not") or "").strip()
+    view_family = request.args.get("view_family")  # NEW: ID to drill down into
+    
     sort_by = request.args.get("sort_by", "updated_at")
     sort_dir = request.args.get("sort_dir", "desc")
     try: page = max(1, int(request.args.get("page", 1)))
@@ -501,6 +503,20 @@ def index():
     
     base_query += " WHERE 1=1"
     params = []
+
+    # --- NEW: VISIBILITY LOGIC ---
+    if view_family:
+        # "Folder View": Show only this parent and its children
+        base_query += " AND (p.id = ? OR p.parent_id = ?)"
+        params.extend([view_family, view_family])
+    elif not q and not q_not and tag_filter == "all":
+        # Default Browse: Hide variants (clean view)
+        # We assume browsing by Category/Tool is still "browsing", so we hide variants there too.
+        # Only strict SEARCH reveals them.
+        base_query += " AND p.parent_id IS NULL"
+    # Else (Search Mode): Show everything matching the search terms
+    
+    # -----------------------------
 
     if category != "all": base_query += " AND p.category = ?"; params.append(category)
     if tool != "all": base_query += " AND p.tool = ?"; params.append(tool)
@@ -546,6 +562,7 @@ def index():
     all_tags = get_all_tags()
     conn.close()
 
+    # Pass 'view_family' to template so we can show a "Back" button
     return render_template(
         "index.html",
         prompts=prompts,
@@ -556,6 +573,7 @@ def index():
         active_tag=tag_filter,
         q=q,
         q_not=q_not,
+        view_family=view_family, # NEW
         sort_by=sort_by,
         sort_dir=sort_dir,
         page=page,
@@ -564,7 +582,6 @@ def index():
         saved_views=saved_views,
         all_tags=all_tags
     )
-
 
 @app.route("/api/prompt/<int:prompt_id>/upload_thumb", methods=["POST"])
 def upload_thumb_api(prompt_id):
@@ -797,11 +814,26 @@ def delete_prompt(prompt_id: int):
 def render_prompt(prompt_id: int):
     conn = get_db()
     prompt = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
-    conn.close()
-
+    
     if not prompt:
+        conn.close()
         flash("Prompt not found.")
         return redirect(url_for("index"))
+
+    # --- NEW: Fetch Variants (Family) ---
+    # If this prompt has a parent, the parent is the root.
+    # If this prompt IS the parent, it is the root.
+    root_id = prompt["parent_id"] if prompt["parent_id"] else prompt["id"]
+    
+    # Get all prompts in this family (The root + any children of the root)
+    variants = conn.execute("""
+        SELECT id, title, prompt_type 
+        FROM prompts 
+        WHERE id = ? OR parent_id = ? 
+        ORDER BY id ASC
+    """, (root_id, root_id)).fetchall()
+    
+    conn.close()
 
     content = prompt["content"]
     placeholders = find_placeholders(content)
@@ -818,10 +850,10 @@ def render_prompt(prompt_id: int):
     return render_template(
         "render_prompt.html",
         prompt=prompt,
+        variants=variants, # Pass variants to template
         placeholders=placeholders,
         final_text=final_text,
     )
-
 
 # -------------------------
 # Import / Export / Manage
@@ -1133,53 +1165,61 @@ def refine_prompt(prompt_id: int):
     session["ollama_model"] = model
     instruction = (request.form.get("instruction") or "").strip()
     mode = request.form.get("mode") or "refine"
-
-    # Grab content from FORM (allows editing source before refining)
+    
+    # Grab content (allow editing source before refine)
     base = request.form.get("content") or prompt["content"]
 
+    # 1. Generate via Ollama
     try:
         refined = ollama_generate(f"MODE: {mode}\nINSTRUCTION: {instruction}\n\nPROMPT:\n{base}", model=model, system="Output only refined prompt.")
     except Exception as e:
         flash(f"Ollama error: {e}")
         return redirect(url_for("render_prompt", prompt_id=prompt_id))
 
-    # --- SAVE LOGIC ---
-    if request.form.get("save_as_new") == "on":
-        # 1. Save as New Variant
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    request.form.get("new_title") or f"{prompt['title']} (Refined)",
-                    prompt["category"],
-                    prompt["tool"],
-                    prompt["prompt_type"],
-                    refined,
-                    prompt["notes"],
-                    datetime.utcnow().isoformat(),
-                    datetime.utcnow().isoformat(),
-                ),
-            )
-            conn.commit()
-        flash("Refined prompt saved as new.")
-        return redirect(url_for("index"))
+    # 2. Handle Save Action
+    save_action = request.form.get("save_action")
 
-    elif request.form.get("overwrite") == "on":
-        # 2. Explicit Overwrite
+    if save_action == "overwrite":
         with sqlite3.connect(DB_PATH) as conn:
             conn.execute("UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?", (refined, datetime.utcnow().isoformat(), prompt_id))
             conn.commit()
         flash("Prompt updated.")
         return redirect(url_for("render_prompt", prompt_id=prompt_id))
 
+    elif save_action == "variant":
+        # Logic: If I am a child, my new sibling shares my parent. If I am a parent, I become the parent.
+        parent_id = prompt["parent_id"] if prompt["parent_id"] else prompt["id"]
+        new_title = request.form.get("new_title") or f"{prompt['title']} (Refined)"
+        
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], refined, prompt["notes"], prompt["thumbnail"], parent_id, datetime.utcnow().isoformat(), datetime.utcnow().isoformat())
+            )
+            conn.commit()
+        flash("Saved as new variant.")
+        return redirect(url_for("index", view_family=parent_id)) # Return to folder view
+
+    elif save_action == "new":
+        new_title = request.form.get("new_title") or f"{prompt['title']} (Refined)"
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], refined, prompt["notes"], prompt["thumbnail"], None, datetime.utcnow().isoformat(), datetime.utcnow().isoformat())
+            )
+            conn.commit()
+        flash("Saved as new independent prompt.")
+        return redirect(url_for("index"))
+
     else:
-        # 3. Preview Mode (No DB Save)
-        flash("Refinement generated (Unsaved). Check a box to save.")
+        # Preview Mode (No save selected)
+        flash("Refinement generated (Unsaved). Select an action to save.")
         p_preview = dict(prompt)
         p_preview['content'] = refined
         return render_template("refine_prompt.html", prompt=p_preview, models=models, ollama_available=ollama_available)
-
+    
 @app.route("/refine_draft", methods=["POST"])
 def refine_draft():
     init_db()
