@@ -34,7 +34,7 @@
   </aside>
 
   <section style="min-width:0;">
-    
+
     {% if view_family %}
     <div style="background:#222; padding:1rem; border-radius:8px; margin-bottom:1.5rem; display:flex; justify-content:space-between; align-items:center; border-left:4px solid #00bfff;">
         <h3 style="margin:0;">📂 Viewing Prompt Family</h3>
@@ -60,21 +60,21 @@
         <div style="flex:1; min-width:180px;">
           <input type="text" name="q_not" value="{{ q_not|default('') }}" placeholder="Exclude..." style="width:100%; border-color:#d32f2f;">
         </div>
-        
+
         <select name="category">
           <option value="all">All Categories</option>
           {% for c in categories %}
             <option value="{{ c }}" {% if active_category == c %}selected{% endif %}>{{ c }}</option>
           {% endfor %}
         </select>
-        
+
         <select name="tool">
           <option value="all">All Tools</option>
           {% for t in tools %}
             <option value="{{ t }}" {% if active_tool == t %}selected{% endif %}>{{ t }}</option>
           {% endfor %}
         </select>
-        
+
         <select name="tag">
           <option value="all">All Tags</option>
           {% for t in all_tags %}
@@ -90,7 +90,7 @@
       <input type="hidden" name="sort_by" value="{{ sort_by|default('updated_at') }}">
       <input type="hidden" name="sort_dir" value="{{ sort_dir|default('desc') }}">
     </form>
-    
+
     <div id="organisePanel" style="display:none; margin-bottom:1.5rem; padding:1rem; border:1px solid #333; border-radius:10px;">
         <h3 style="margin-top:0;">Organise & Export</h3>
         <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
@@ -124,83 +124,33 @@
     </div>
 
     <ul class="prompt-list" id="promptList">
-      {% for p in prompts %}
-        <li class="prompt-card drop-zone" data-id="{{ p.id }}">
-          <div class="drop-overlay"></div>
-          <div class="organise-checkbox" style="display:none; position:absolute; top:10px; left:10px; z-index:10;">
-            <input type="checkbox" class="bulkCheck" name="prompt_ids" value="{{ p.id }}" form="bulkForm" style="transform:scale(1.5);">
-          </div>
-
-          <div class="card-thumb-area">
-             {% if p.thumbnail %}
-               <img class="thumb" src="{{ url_for('static', filename=p.thumbnail) }}" alt="Thumbnail">
-             {% else %}
-               <div class="thumb-placeholder">{{ p.category[:1] }}</div>
-             {% endif %}
-          </div>
-
-          <div class="prompt-meta">
-            <div style="display:flex; justify-content:space-between; align-items:start;">
-                <h3 style="margin:0;">{{ p.title }}</h3>
-                <div style="display:flex; gap:4px;">
-                    {% if p.child_count > 0 %}
-                        <a href="{{ url_for('index', view_family=p.id) }}" 
-                           title="View variants" 
-                           style="background:#00bfff; color:#fff; text-decoration:none; padding:2px 8px; border-radius:4px; font-size:0.75em; font-weight:bold;">
-                            📂 {{ p.child_count }} Variants
-                        </a>
-                    {% endif %}
-                    
-                    {% if p.parent_id %}
-                        <span title="Is a variant" style="background:#333; padding:2px 6px; border-radius:4px; font-size:0.7em;">
-                           ↳ Variant
-                        </span>
-                    {% endif %}
-                </div>
-            </div>
-            
-            <p class="notes" style="margin:0.25rem 0 0.5rem 0; font-size:0.85em; opacity:0.7;">{{ p.category }} · {{ p.tool }}</p>
-
-            {% if p.tags %}
-              <div style="display:flex; gap:0.25rem; flex-wrap:wrap; margin-bottom:0.5rem;">
-                {% for t in p.tags %}
-                  <span style="background:#333; color:#ccc; font-size:0.7em; padding:2px 6px; border-radius:10px;">{{ t }}</span>
-                {% endfor %}
-              </div>
-            {% endif %}
-
-            <div class="quick-actions" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-              <button type="button" class="btn-secondary" onclick="togglePreview({{ p.id }})">Preview</button>
-              <button type="button" class="btn-secondary" onclick="copyPrompt({{ p.id }})">Copy</button>
-              <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
-              <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
-              <form method="post" action="{{ url_for('delete_prompt', prompt_id=p.id) }}" style="display:inline;" onsubmit="return confirm('Delete permanently?');">
-                  <button type="submit" class="btn-danger" style="padding:0.4rem 0.6rem;">&times;</button>
-              </form>
-            </div>
-
-            <div id="preview-{{ p.id }}" class="prompt-preview" style="display:none; margin-top:0.5rem; background:#111; padding:0.5rem; border-radius:4px;">
-                <pre style="white-space:pre-wrap; margin:0; font-size:0.9em; max-height:200px; overflow-y:auto;">{{ p.content }}</pre>
-            </div>
-          </div>
-        </li>
-      {% endfor %}
+      {% include "_prompt_cards.html" %}
     </ul>
 
+    <div id="infiniteScrollControls" style="display:none; text-align:center; margin-top:1rem;">
+      <div id="scrollLoading" style="display:none; opacity:0.7;">Loading…</div>
+      <div id="scrollEnd" style="display:none; opacity:0.7;">No more results.</div>
+    </div>
+    <div id="scrollSentinel" style="height:1px;"></div>
+
     {% if total_pages > 1 %}
+    <div id="paginationControls">
       <div style="margin-top:2rem; display:flex; justify-content:center; gap:0.5rem;">
         {% if page > 1 %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">&laquo; Prev</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir) }}">&laquo; Prev</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">&laquo; Prev</span>
         {% endif %}
+
         <span style="padding:0.5rem;">Page {{ page }} of {{ total_pages }}</span>
+
         {% if page < total_pages %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by) }}">Next &raquo;</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir) }}">Next &raquo;</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">Next &raquo;</span>
         {% endif %}
       </div>
+    </div>
     {% endif %}
 
   </section>
@@ -241,9 +191,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const checks = document.querySelectorAll('.organise-checkbox');
     const btnAll = document.getElementById('selectAll');
     const btnNone = document.getElementById('selectNone');
-    
+
     let orgMode = false;
-    
+
     if(toggle){
         toggle.addEventListener('click', () => {
             orgMode = !orgMode;
@@ -252,7 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
             toggle.textContent = orgMode ? 'Close Organise' : 'Organise';
         });
     }
-    
+
     if(btnAll) btnAll.addEventListener('click', () => checks.forEach(c => c.querySelector('input').checked = true));
     if(btnNone) btnNone.addEventListener('click', () => checks.forEach(c => c.querySelector('input').checked = false));
 
@@ -271,9 +221,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!file.type.startsWith('image/')) { alert("Please drop an image file."); return; }
         const formData = new FormData();
         formData.append('file', file);
-        
+
         const overlay = zoneElement.querySelector('.drop-overlay');
-        overlay.style.display = 'flex'; overlay.textContent = 'Uploading...'; 
+        overlay.style.display = 'flex'; overlay.textContent = 'Uploading...';
 
         fetch(`/api/prompt/${id}/upload_thumb`, { method: 'POST', body: formData })
         .then(res => res.json())
@@ -293,6 +243,98 @@ document.addEventListener('DOMContentLoaded', () => {
         .catch(err => alert('Error: ' + err))
         .finally(() => { overlay.style.display = 'none'; overlay.textContent = ''; });
     }
+
+    // -------------------------
+    // Infinite Scroll (HTML partial append)
+    // -------------------------
+    const promptList = document.getElementById('promptList');
+    const sentinel = document.getElementById('scrollSentinel');
+    const controls = document.getElementById('infiniteScrollControls');
+    const loadingEl = document.getElementById('scrollLoading');
+    const endEl = document.getElementById('scrollEnd');
+    const paginationControls = document.getElementById('paginationControls');
+
+    if (promptList && sentinel && ('IntersectionObserver' in window)) {
+      if (paginationControls) paginationControls.style.display = 'none';
+      if (controls) controls.style.display = 'block';
+
+      let nextPage = Number({{ page|int }}) + 1;
+      let isLoading = false;
+      let hasMore = true;
+
+      function setLoading(on) {
+        if (!loadingEl) return;
+        loadingEl.style.display = on ? 'block' : 'none';
+      }
+
+      function showEnd() {
+        if (endEl) endEl.style.display = 'block';
+      }
+
+      function bindDropZones(root=document) {
+        const zones2 = root.querySelectorAll('.drop-zone');
+        zones2.forEach(zone => {
+          if (zone.dataset.dndBound === "1") return;
+          zone.dataset.dndBound = "1";
+
+          zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
+          zone.addEventListener('dragleave', () => { zone.classList.remove('drag-over'); });
+          zone.addEventListener('drop', (e) => {
+            e.preventDefault(); zone.classList.remove('drag-over');
+            const files = e.dataTransfer.files;
+            if (files && files.length > 0) handleUpload(zone.dataset.id, files[0], zone);
+          });
+        });
+      }
+
+      bindDropZones(document);
+
+      async function loadNextPage() {
+        if (!hasMore || isLoading) return;
+        isLoading = true;
+        setLoading(true);
+
+        try {
+          const params = new URLSearchParams(window.location.search);
+          params.set('page', String(nextPage));
+
+          const res = await fetch(`/api/prompts?${params.toString()}`, {
+            headers: { 'Accept': 'application/json' }
+          });
+
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+          const data = await res.json();
+          const html = (data.html || "").trim();
+
+          if (html) {
+            promptList.insertAdjacentHTML('beforeend', html);
+            bindDropZones(promptList);
+          }
+
+          hasMore = !!data.has_more;
+          if (hasMore && data.next_page) {
+            nextPage = data.next_page;
+          } else {
+            showEnd();
+          }
+        } catch (err) {
+          console.error(err);
+          hasMore = false;
+        } finally {
+          isLoading = false;
+          setLoading(false);
+        }
+      }
+
+      const io = new IntersectionObserver((entries) => {
+        const hit = entries.some(e => e.isIntersecting);
+        if (hit) loadNextPage();
+      }, { rootMargin: '800px 0px' });
+
+      io.observe(sentinel);
+    }
 });
 </script>
+
 {% endblock %}

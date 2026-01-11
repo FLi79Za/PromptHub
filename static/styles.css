@@ -1,17 +1,238 @@
+/* =========================
+   Theme tokens (defaults)
+   ========================= */
+:root {
+  /* Core surfaces */
+  --bg: #111;
+  --surface: #181818;
+  --surface-2: #1a1a1a;
+  --header: #222;
+
+  /* Text */
+  --text: #eee;
+  --muted: #aaa;
+
+  /* Borders */
+  --border: #333;
+  --border-strong: #444;
+
+  /* Accents */
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+
+  /* Status */
+  --danger: #8b2e2e;
+  --danger-border: #aa3a3a;
+  --danger-hover: #a33b3b;
+
+  --flash-bg: #451a1a;
+  --flash-text: #fca5a5;
+
+  --success-text: #a7f3d0;
+
+  /* Misc */
+  --shadow: rgba(0,0,0,0.35);
+  --radius: 6px;
+  --radius-lg: 8px;
+}
+
+/* =========================
+   Themes (toggle via <body data-theme="...">)
+   ========================= */
+
+/* Light */
+body[data-theme="light"] {
+  --bg: #f5f7fb;
+  --surface: #ffffff;
+  --surface-2: #f0f3f8;
+  --header: #ffffff;
+
+  --text: #0b1220;
+  --muted: #5f6f86;
+
+  --border: #d6dbea;
+  --border-strong: #c9d2e4;
+
+  --accent: #4a5bff;
+  --accent-hover: #3646ff;
+
+  --danger: #b42318;
+  --danger-border: #d92d20;
+  --danger-hover: #d92d20;
+
+  --flash-bg: #fdecec;
+  --flash-text: #b42318;
+
+  --success-text: #067647;
+
+  --shadow: rgba(15, 23, 42, 0.12);
+}
+
+/* Minimal Slate */
+body[data-theme="slate"] {
+  --bg: #0f172a;
+  --surface: #111827;
+  --surface-2: #1e293b;
+  --header: #111827;
+
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+
+  --border: #334155;
+  --border-strong: #475569;
+
+  --accent: #64748b;
+  --accent-hover: #475569;
+
+  --flash-bg: #1f2937;
+  --flash-text: #e5e7eb;
+
+  --success-text: #86efac;
+  --shadow: rgba(0,0,0,0.35);
+}
+
+/* Violet Scorpio */
+body[data-theme="scorpio"] {
+  --bg: #0b0612;
+  --surface: #140a24;
+  --surface-2: #1b0f31;
+  --header: #140a24;
+
+  --text: #f1eaff;
+  --muted: #b8a6d9;
+
+  --border: #2d1a4a;
+  --border-strong: #3a235f;
+
+  --accent: #8b5cf6;
+  --accent-hover: #7c3aed;
+
+  --danger: #b42318;
+  --danger-border: #d92d20;
+  --danger-hover: #d92d20;
+
+  --flash-bg: #2a1020;
+  --flash-text: #ffb4c0;
+
+  --success-text: #86efac;
+  --shadow: rgba(0,0,0,0.45);
+}
+
+/* Retro Terminal */
+body[data-theme="terminal"] {
+  --bg: #020a05;
+  --surface: #04140a;
+  --surface-2: #052014;
+  --header: #04140a;
+
+  --text: #9ae6b4;
+  --muted: #4ade80;
+
+  --border: #14532d;
+  --border-strong: #166534;
+
+  --accent: #22c55e;
+  --accent-hover: #16a34a;
+
+  --flash-bg: #052e16;
+  --flash-text: #bbf7d0;
+
+  --success-text: #86efac;
+  --shadow: rgba(0,0,0,0.6);
+}
+
+/* Warm Paper */
+body[data-theme="paper"] {
+  --bg: #f7f4ef;
+  --surface: #ffffff;
+  --surface-2: #f1ede6;
+  --header: #ffffff;
+
+  --text: #1f2937;
+  --muted: #6b7280;
+
+  --border: #e5e1d8;
+  --border-strong: #d6d1c4;
+
+  --accent: #b45309;
+  --accent-hover: #92400e;
+
+  --danger: #b42318;
+  --danger-border: #d92d20;
+  --danger-hover: #d92d20;
+
+  --flash-bg: #fef3c7;
+  --flash-text: #92400e;
+
+  --success-text: #065f46;
+  --shadow: rgba(15, 23, 42, 0.12);
+}
+
+/* Cyber Cyan */
+body[data-theme="cyber"] {
+  --bg: #020617;
+  --surface: #020b1c;
+  --surface-2: #06122e;
+  --header: #020b1c;
+
+  --text: #e0f2fe;
+  --muted: #7dd3fc;
+
+  --border: #1e3a8a;
+  --border-strong: #1d4ed8;
+
+  --accent: #22d3ee;
+  --accent-hover: #06b6d4;
+
+  --flash-bg: #083344;
+  --flash-text: #67e8f9;
+
+  --success-text: #99f6e4;
+  --shadow: rgba(0,0,0,0.5);
+}
+
+/* Nord Frost */
+body[data-theme="nord"] {
+  --bg: #2e3440;
+  --surface: #3b4252;
+  --surface-2: #434c5e;
+  --header: #3b4252;
+
+  --text: #eceff4;
+  --muted: #d8dee9;
+
+  --border: #4c566a;
+  --border-strong: #5e81ac;
+
+  --accent: #88c0d0;
+  --accent-hover: #81a1c1;
+
+  --flash-bg: #4c566a;
+  --flash-text: #eceff4;
+
+  --success-text: #a3be8c;
+  --shadow: rgba(0,0,0,0.35);
+}
+
+/* =========================
+   Base styles
+   ========================= */
 body {
   font-family: system-ui, sans-serif;
   margin: 0;
   padding: 0;
-  background: #111;
-  color: #eee;
+  background: var(--bg);
+  color: var(--text);
 }
 
+/* Header */
 header {
-  background: #222;
+  background: var(--header);
   padding: 1rem 2rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  border-bottom: 1px solid var(--border);
 }
 
 header h1 {
@@ -20,7 +241,7 @@ header h1 {
 }
 
 header nav a {
-  color: #eee;
+  color: var(--text);
   margin-left: 1rem;
   text-decoration: none;
 }
@@ -47,22 +268,22 @@ textarea {
   padding: 0.5rem;
   margin-top: 0.25rem;
   border-radius: 4px;
-  border: 1px solid #444;
-  background: #181818;
-  color: #eee;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
 }
 
 button {
   padding: 0.5rem 1rem;
   border-radius: 4px;
   border: none;
-  background: #3b82f6;
+  background: var(--accent);
   color: white;
   cursor: pointer;
 }
 
 button:hover {
-  background: #2563eb;
+  background: var(--accent-hover);
 }
 
 .prompt-list {
@@ -71,16 +292,16 @@ button:hover {
 }
 
 .prompt-card {
-  border: 1px solid #333;
-  border-radius: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 1rem;
   margin-bottom: 1rem;
-  background: #1a1a1a;
+  background: var(--surface-2);
 }
 
 .prompt-card .meta {
   font-size: 0.8rem;
-  color: #aaa;
+  color: var(--muted);
 }
 
 .prompt-card .actions {
@@ -90,7 +311,7 @@ button:hover {
 }
 
 .prompt-card .actions a {
-  color: #3b82f6;
+  color: var(--accent);
   text-decoration: none;
 }
 
@@ -102,16 +323,18 @@ button:hover {
   list-style: none;
   padding: 0.5rem 2rem;
   margin: 0;
-  background: #451a1a;
-  color: #fca5a5;
+  background: var(--flash-bg);
+  color: var(--flash-text);
 }
 
 pre.code {
-  background: #181818;
+  background: var(--surface);
   padding: 0.75rem;
   border-radius: 4px;
   overflow-x: auto;
+  border: 1px solid var(--border);
 }
+
 .manage-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -128,10 +351,10 @@ pre.code {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border: 1px solid #333;
-  background: #1a1a1a;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
   padding: 0.5rem 0.75rem;
-  border-radius: 6px;
+  border-radius: var(--radius);
   margin-bottom: 0.5rem;
 }
 
@@ -143,9 +366,10 @@ pre.code {
 }
 
 .copy-status {
-  color: #a7f3d0;
+  color: var(--success-text);
   font-size: 0.9rem;
 }
+
 .filters {
   display: flex;
   flex-wrap: wrap;
@@ -157,12 +381,13 @@ pre.code {
 .filters input[type="text"] {
   max-width: 360px;
 }
+
 .thumb {
   width: 40%;
   aspect-ratio: 1 / 1;
   object-fit: cover;
-  border-radius: 8px;
-  border: 1px solid #333;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
   margin-bottom: 0.75rem;
   display: block;
 }
@@ -170,31 +395,62 @@ pre.code {
 .prompt-preview {
   margin-top: 0.75rem;
   padding: 0.75rem;
-  background: #0f0f0f;
-  border: 1px solid #333;
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 70%, #000 30%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   max-height: 220px;
   overflow-y: auto;
 }
 
 .prompt-preview pre {
   margin: 0;
-  white-space: pre-wrap;      /* THIS is the key */
-  word-break: break-word;     /* prevents overflow */
+  white-space: pre-wrap;
+  word-break: break-word;
   overflow-wrap: anywhere;
   font-size: 0.9rem;
   line-height: 1.4;
-  color: #ddd;
+  color: color-mix(in srgb, var(--text) 92%, var(--muted) 8%);
 }
+
 .btn-danger {
-  background: #8b2e2e;
-  border: 1px solid #aa3a3a;
+  background: var(--danger);
+  border: 1px solid var(--danger-border);
   color: #fff;
 }
 
 .btn-danger:hover {
-  background: #a33b3b;
+  background: var(--danger-hover);
 }
 
+/* Sticky header ribbon */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
 
+  background: var(--header);
+  border-bottom: 1px solid var(--border);
 
+  box-shadow: 0 2px 10px var(--shadow);
+}
+
+/* Optional helper if you used .nav-inner in base.html */
+.nav-inner {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Basic secondary button styling (so the theme toggle looks consistent) */
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  padding: 0.45rem 0.75rem;
+  border-radius: 6px;
+}
+
+.btn-secondary:hover {
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+}

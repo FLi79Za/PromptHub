@@ -144,6 +144,26 @@ def get_tags_for_prompt(conn, prompt_id):
     return [r["name"] for r in rows]
 
 
+def get_tags_for_prompts(conn, prompt_ids):
+    """Fetch tags for many prompts in one query. Returns {prompt_id: [tag, ...]}"""
+    if not prompt_ids:
+        return {}
+
+    placeholders = ",".join(["?"] * len(prompt_ids))
+    rows = conn.execute(f"""
+        SELECT pt.prompt_id, t.name
+        FROM prompt_tags pt
+        JOIN tags t ON t.id = pt.tag_id
+        WHERE pt.prompt_id IN ({placeholders})
+        ORDER BY t.name ASC
+    """, prompt_ids).fetchall()
+
+    out = {}
+    for r in rows:
+        out.setdefault(r["prompt_id"], []).append(r["name"])
+    return out
+
+
 # -------------------------
 # Logic Helpers
 # -------------------------
@@ -474,6 +494,78 @@ def import_db_commit():
     return redirect(url_for("index"))
 
 
+
+def build_library_base_query(args):
+    """Builds FROM/JOIN/WHERE + params for the library query, matching index() filters."""
+    category = args.get("category", "all")
+    tool = args.get("tool", "all")
+    tag_filter = args.get("tag", "all")
+    q = (args.get("q") or "").strip()
+    q_not = (args.get("q_not") or "").strip()
+    view_family = args.get("view_family")
+
+    sort_by = args.get("sort_by", "updated_at")
+    sort_dir = args.get("sort_dir", "desc")
+
+    allowed_sorts = {"updated_at", "created_at", "title", "category", "tool", "prompt_type"}
+    if sort_by not in allowed_sorts:
+        sort_by = "updated_at"
+    if sort_dir not in {"asc", "desc"}:
+        sort_dir = "desc"
+
+    base_query = " FROM prompts p"
+    params = []
+
+    if tag_filter != "all":
+        base_query += " JOIN prompt_tags pt ON p.id = pt.prompt_id JOIN tags t ON pt.tag_id = t.id"
+
+    base_query += " WHERE 1=1"
+
+    if view_family:
+        base_query += " AND (p.id = ? OR p.parent_id = ?)"
+        params.extend([view_family, view_family])
+    elif not q and not q_not:
+        base_query += " AND p.parent_id IS NULL"
+
+    if category != "all":
+        base_query += " AND p.category = ?"
+        params.append(category)
+    if tool != "all":
+        base_query += " AND p.tool = ?"
+        params.append(tool)
+    if tag_filter != "all":
+        base_query += " AND t.name = ?"
+        params.append(tag_filter)
+
+    if q:
+        terms = [t.strip() for t in q.split(",") if t.strip()]
+        for term in terms:
+            sub = "(LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(p.notes) LIKE ? OR EXISTS (SELECT 1 FROM prompt_tags pt2 JOIN tags t2 ON t2.id = pt2.tag_id WHERE pt2.prompt_id=p.id AND LOWER(t2.name) LIKE ?))"
+            base_query += f" AND {sub}"
+            lt = f"%{term.lower()}%"
+            params.extend([lt, lt, lt, lt])
+
+    if q_not:
+        terms = [t.strip() for t in q_not.split(",") if t.strip()]
+        for term in terms:
+            sub = "(LOWER(p.title) NOT LIKE ? AND LOWER(p.content) NOT LIKE ? AND LOWER(p.notes) NOT LIKE ? AND NOT EXISTS (SELECT 1 FROM prompt_tags pt2 JOIN tags t2 ON t2.id = pt2.tag_id WHERE pt2.prompt_id=p.id AND LOWER(t2.name) LIKE ?))"
+            base_query += f" AND {sub}"
+            lt = f"%{term.lower()}%"
+            params.extend([lt, lt, lt, lt])
+
+    return {
+        "base_query": base_query,
+        "params": params,
+        "sort_by": sort_by,
+        "sort_dir": sort_dir,
+        "category": category,
+        "tool": tool,
+        "tag_filter": tag_filter,
+        "q": q,
+        "q_not": q_not,
+        "view_family": view_family,
+    }
+
 # -------------------------
 # Routes (Standard)
 # -------------------------
@@ -551,13 +643,13 @@ def index():
         LIMIT ? OFFSET ?
     """
     rows = conn.execute(data_query, params + [ITEMS_PER_PAGE, offset]).fetchall()
-    
-    prompts = []
-    for r in rows:
-        p_dict = dict(r)
-        p_dict["tags"] = get_tags_for_prompt(conn, p_dict["id"])
-        prompts.append(p_dict)
-    
+
+    prompts = [dict(r) for r in rows]
+    ids = [p["id"] for p in prompts]
+    tag_map = get_tags_for_prompts(conn, ids)
+    for p in prompts:
+        p["tags"] = tag_map.get(p["id"], [])
+
     saved_views = get_saved_views()
     all_tags = get_all_tags()
     conn.close()
@@ -573,7 +665,7 @@ def index():
         active_tag=tag_filter,
         q=q,
         q_not=q_not,
-        view_family=view_family, # NEW
+        view_family=view_family,  # NEW
         sort_by=sort_by,
         sort_dir=sort_dir,
         page=page,
@@ -582,6 +674,58 @@ def index():
         saved_views=saved_views,
         all_tags=all_tags
     )
+
+
+@app.route("/api/prompts", methods=["GET"])
+def api_prompts():
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except Exception:
+        page = 1
+
+    try:
+        per_page = max(1, min(60, int(request.args.get("per_page", ITEMS_PER_PAGE))))
+    except Exception:
+        per_page = ITEMS_PER_PAGE
+
+    conn = get_db()
+    qinfo = build_library_base_query(request.args)
+    base_query = qinfo["base_query"]
+    params = qinfo["params"]
+    sort_by = qinfo["sort_by"]
+    sort_dir = qinfo["sort_dir"]
+
+    offset = (page - 1) * per_page
+
+    data_query = f"""
+        SELECT DISTINCT p.*,
+        (SELECT COUNT(*) FROM prompts AS p2 WHERE p2.parent_id = p.id) as child_count
+        {base_query}
+        ORDER BY p.{sort_by} {sort_dir.upper()}
+        LIMIT ? OFFSET ?
+    """
+
+    rows = conn.execute(data_query, params + [per_page + 1, offset]).fetchall()
+
+    has_more = len(rows) > per_page
+    rows = rows[:per_page]
+
+    prompts = [dict(r) for r in rows]
+
+    ids = [p["id"] for p in prompts]
+    tag_map = get_tags_for_prompts(conn, ids)
+    for p in prompts:
+        p["tags"] = tag_map.get(p["id"], [])
+
+    conn.close()
+
+    html = render_template("_prompt_cards.html", prompts=prompts)
+
+    return jsonify({
+        "html": html,
+        "has_more": has_more,
+        "next_page": (page + 1) if has_more else None
+    })
 
 @app.route("/api/prompt/<int:prompt_id>/upload_thumb", methods=["POST"])
 def upload_thumb_api(prompt_id):

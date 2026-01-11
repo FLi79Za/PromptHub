@@ -1,20 +1,33 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Prompt Hub</title>
-    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-    </head>
+  <meta charset="UTF-8">
+  <title>Prompt Hub</title>
+  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
 <body>
-  <header>
-    <h1>Prompt Hub</h1>
-    <nav>
-      <a href="{{ url_for('index') }}">All Prompts</a>
-      <a href="{{ url_for('new_prompt') }}">New Prompt</a>
-      <a href="{{ url_for('import_prompt') }}">Import</a>
-      <a href="{{ url_for('manage') }}">Manage</a>
-    </nav>
+
+  <header class="app-header">
+    <div class="nav-inner">
+      <h1>Prompt Hub</h1>
+      <nav>
+        <a href="{{ url_for('index') }}">All Prompts</a>
+        <a href="{{ url_for('new_prompt') }}">New Prompt</a>
+        <a href="{{ url_for('import_prompt') }}">Import</a>
+        <a href="{{ url_for('manage') }}">Manage</a>
+
+        <button
+          id="themeToggle"
+          class="btn-secondary"
+          type="button"
+          title="Change theme"
+          style="margin-left:1rem;"
+        >
+          🎨 Theme
+        </button>
+      </nav>
+    </div>
   </header>
 
   {% with messages = get_flashed_messages() %}
@@ -30,5 +43,66 @@
   <main>
     {% block content %}{% endblock %}
   </main>
+
+  <script>
+  (function () {
+    const themes = [
+      "dark",
+      "slate",
+      "scorpio",
+      "terminal",
+      "paper",
+      "cyber",
+      "nord"
+    ];
+
+    const labels = {
+      dark: "🌙 Dark",
+      slate: "🪨 Slate",
+      scorpio: "🟣 Scorpio",
+      terminal: "🟢 Terminal",
+      paper: "📜 Paper",
+      cyber: "🔷 Cyber",
+      nord: "❄️ Nord"
+    };
+
+    const storageKey = "prompthub-theme";
+
+    function applyTheme(theme) {
+      if (theme === "dark") {
+        document.body.removeAttribute("data-theme");
+      } else {
+        document.body.setAttribute("data-theme", theme);
+      }
+
+      localStorage.setItem(storageKey, theme);
+
+      const btn = document.getElementById("themeToggle");
+      if (btn) {
+        btn.textContent = labels[theme] || "🎨 Theme";
+      }
+    }
+
+    function nextTheme(current) {
+      const idx = themes.indexOf(current);
+      return themes[(idx + 1) % themes.length];
+    }
+
+    // Initialise on load
+    const saved = localStorage.getItem(storageKey) || "dark";
+    applyTheme(saved);
+
+    // Toggle handler
+    const btn = document.getElementById("themeToggle");
+    if (btn) {
+      btn.addEventListener("click", () => {
+        const current = document.body.getAttribute("data-theme") || "dark";
+        const next = nextTheme(current);
+        applyTheme(next);
+      });
+    }
+  })();
+  </script>
+
 </body>
 </html>
