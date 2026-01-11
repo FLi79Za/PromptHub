@@ -19,13 +19,16 @@
     <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
       {% if prompt and prompt.id %}
         <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}">Use</a>
+        
         <form method="post" action="{{ url_for('duplicate_prompt', prompt_id=prompt.id) }}" style="display:inline;">
           <button class="btn-secondary" type="submit">Copy</button>
         </form>
-        <form method="post" action="{{ url_for('duplicate_prompt', prompt_id=prompt.id) }}" style="display:inline;">
-          <input type="hidden" name="as_variant" value="true">
-          <button class="btn-secondary" type="submit" title="Create a child version linked to this prompt">Make Variant</button>
-        </form>
+
+        <button class="btn-secondary" type="submit" 
+                form="mainPromptForm" 
+                formaction="{{ url_for('duplicate_prompt', prompt_id=prompt.id) }}" 
+                name="as_variant" value="true"
+                title="Create a child version linked to this prompt using your current edits">Make Variant</button>
       {% endif %}
       <a class="btn-secondary" href="{{ url_for('index') }}">Back</a>
     </div>
@@ -89,6 +92,7 @@
   {% endif %}
 
   <form method="post"
+        id="mainPromptForm"
         {% if prompt and prompt.id %} action="{{ url_for('edit_prompt', prompt_id=prompt.id) }}"
         {% else %} action="{{ url_for('new_prompt') }}" {% endif %}
         enctype="multipart/form-data" class="form">
@@ -137,8 +141,45 @@
     </div>
 
     <div>
-      <label>Prompt Content</label>
-      <textarea name="content" id="content" rows="10" required>{{ prompt.content if prompt else '' }}</textarea>
+      <div style="display:flex; justify-content:space-between; align-items:end; margin-bottom:0.5rem;">
+          <label style="margin-bottom:0;">Prompt Content</label>
+          
+          {% if ollama_models %}
+          <div style="font-size:0.85rem; display:flex; gap:0.5rem; align-items:center;">
+              <select id="quickRefineModel" style="padding:0.2rem; max-width:150px;">
+                  {% for m in ollama_models %}
+                    <option value="{{ m }}" {% if session.get('ollama_model') == m %}selected{% endif %}>{{ m }}</option>
+                  {% endfor %}
+              </select>
+              <button type="button" id="btnToggleRefine" class="btn-secondary" style="padding:0.2rem 0.6rem; font-size:0.85rem;">✨ Enhance...</button>
+          </div>
+          {% endif %}
+      </div>
+
+      <div id="refineTools" style="display:none; background:#222; padding:0.75rem; border-radius:4px; margin-bottom:0.5rem; border:1px solid #444;">
+          <div style="display:flex; flex-direction:column; gap:0.5rem;">
+              
+              <div>
+                  <label style="font-size:0.75em; color:#888; display:block; margin-bottom:0.2rem;">System Role (Persona)</label>
+                  <input type="text" id="quickRefineSystem" value="You are an expert prompt engineer. Output ONLY the refined prompt text." style="font-size:0.85rem; width:100%; color:#aaa; background:#111; border:1px solid #333;">
+              </div>
+
+              <div>
+                   <label style="font-size:0.75em; color:#888; display:block; margin-bottom:0.2rem;">Instruction</label>
+                   <div style="display:grid; grid-template-columns: 1fr auto; gap:0.5rem;">
+                      <input type="text" id="quickRefineInstruction" placeholder="e.g. 'Add cinematic lighting' or 'Make it spooky'" style="font-size:0.9rem;">
+                      <button type="button" id="btnRunRefine" class="btn-primary" style="padding:0.4rem 1rem; font-size:0.9rem;">Run</button>
+                   </div>
+              </div>
+          </div>
+
+          <div style="margin-top:0.5rem; font-size:0.8em; color:#888; display:flex; justify-content:space-between;">
+             <span>Updates text below.</span>
+             <span id="refineStatus" style="color:#00bfff;"></span>
+          </div>
+      </div>
+
+      <textarea name="content" id="content" rows="10" required style="width:100%;">{{ prompt.content if prompt else '' }}</textarea>
     </div>
 
     <div>
@@ -185,124 +226,143 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', () => {
-    // Only run this logic if the Vision elements exist (New Prompt mode)
+    
+    // ==========================================
+    // 1. VISION / IMAGE UPLOAD LOGIC (Independent)
+    // ==========================================
     const dropZone = document.getElementById('visionDropZone');
-    if (!dropZone) return;
+    if (dropZone) {
+        const fileInput = document.getElementById('visionFile');
+        const preview = document.getElementById('visionPreview');
+        const dropText = document.getElementById('visionDropText');
+        const btn = document.getElementById('btnGenerateDraft');
+        const statusDiv = document.getElementById('visionStatus');
+        const contentBox = document.getElementById('content');
 
-    const fileInput = document.getElementById('visionFile');
-    const preview = document.getElementById('visionPreview');
-    const dropText = document.getElementById('visionDropText');
-    const btn = document.getElementById('btnGenerateDraft');
-    const statusDiv = document.getElementById('visionStatus');
-    const contentBox = document.getElementById('content');
-    
-    // --- Drag & Drop Handling ---
-    dropZone.addEventListener('click', () => fileInput.click());
-    
-    fileInput.addEventListener('change', (e) => {
-        if(fileInput.files.length) showPreview(fileInput.files[0]);
-    });
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => {
+            if(fileInput.files.length) showPreview(fileInput.files[0]);
+        });
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault(); dropZone.style.borderColor = '#00bfff';
+        });
+        dropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault(); dropZone.style.borderColor = '#444';
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault(); dropZone.style.borderColor = '#444';
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files; 
+                showPreview(e.dataTransfer.files[0]);
+            }
+        });
 
-    dropZone.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = '#00bfff';
-    });
-
-    dropZone.addEventListener('dragleave', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = '#444';
-    });
-
-    dropZone.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropZone.style.borderColor = '#444';
-        if (e.dataTransfer.files.length) {
-            fileInput.files = e.dataTransfer.files; // Assign to input
-            showPreview(e.dataTransfer.files[0]);
+        function showPreview(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                preview.src = e.target.result;
+                preview.style.display = 'block';
+                dropText.style.display = 'none';
+            };
+            reader.readAsDataURL(file);
         }
-    });
 
-    function showPreview(file) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            preview.src = e.target.result;
-            preview.style.display = 'block';
-            dropText.style.display = 'none';
-        };
-        reader.readAsDataURL(file);
+        btn.addEventListener('click', async () => {
+            if (!fileInput.files.length) { alert("Select an image first."); return; }
+            btn.disabled = true; btn.textContent = "Processing...";
+            statusDiv.textContent = "Analyzing Image...";
+            
+            const formData = new FormData();
+            formData.append('image', fileInput.files[0]);
+            formData.append('vision_model', document.getElementById('visionModel').value);
+            formData.append('text_model', document.getElementById('textModel').value);
+            formData.append('custom_vision_instruction', document.getElementById('customVisionInstruction').value);
+            formData.append('custom_draft_instruction', document.getElementById('customDraftInstruction').value);
+
+            try {
+                const response = await fetch('/api/generate_draft_from_image', { method: 'POST', body: formData });
+                const data = await response.json();
+                if (data.error) {
+                    statusDiv.textContent = "Error: " + data.error;
+                } else {
+                    statusDiv.textContent = "Success!";
+                    if (contentBox) contentBox.value = data.draft_prompt;
+                    
+                    if(data.thumbnail_path) {
+                        const hiddenInput = document.getElementById('hiddenThumb');
+                        if(hiddenInput) hiddenInput.value = data.thumbnail_path;
+                        const mainThumbPreview = document.getElementById('mainThumbPreview');
+                        if(mainThumbPreview) {
+                            mainThumbPreview.src = "{{ url_for('static', filename='') }}" + data.thumbnail_path;
+                            mainThumbPreview.style.display = 'block';
+                        }
+                    }
+                }
+            } catch (e) { alert("Error: " + e); } 
+            finally { btn.disabled = false; btn.textContent = "Generate Draft"; }
+        });
     }
 
-    // --- Generation Logic ---
-    btn.addEventListener('click', async () => {
-        if (!fileInput.files.length) {
-            alert("Please select an image first.");
-            return;
-        }
+    // ==========================================
+    // 2. QUICK ENHANCE LOGIC (Independent)
+    // ==========================================
+    const btnToggle = document.getElementById('btnToggleRefine');
+    
+    if (btnToggle) {
+        const refineTools = document.getElementById('refineTools');
+        const btnRun = document.getElementById('btnRunRefine');
+        const contentArea = document.getElementById('content');
+        const refineStatus = document.getElementById('refineStatus');
 
-        // Lock UI
-        btn.disabled = true;
-        btn.textContent = "Processing... (This may take a moment)";
-        statusDiv.textContent = "Step 1: Uploading & Analyzing Image...";
-
-        const formData = new FormData();
-        formData.append('image', fileInput.files[0]);
-        formData.append('vision_model', document.getElementById('visionModel').value);
-        formData.append('text_model', document.getElementById('textModel').value);
-        // Added: Both instructions
-        formData.append('custom_vision_instruction', document.getElementById('customVisionInstruction').value);
-        formData.append('custom_draft_instruction', document.getElementById('customDraftInstruction').value);
-
-        try {
-            const response = await fetch('/api/generate_draft_from_image', {
-                method: 'POST',
-                body: formData
-            });
-            
-            const data = await response.json();
-            
-            if (data.error) {
-                statusDiv.textContent = "Error: " + data.error;
-                alert("Generation failed: " + data.error);
+        btnToggle.addEventListener('click', () => {
+            // Toggle visibility
+            if (refineTools.style.display === 'none') {
+                refineTools.style.display = 'block';
             } else {
-                statusDiv.textContent = "Success! Draft generated & Thumbnail set.";
-                
-                // 1. Populate Text
-                if (contentBox && contentBox.value.trim().length > 0) {
-                    if (confirm("Draft generated. Overwrite current prompt text?")) {
-                        contentBox.value = data.draft_prompt;
-                    }
-                } else if (contentBox) {
-                    contentBox.value = data.draft_prompt;
-                }
-
-                // 2. Set Thumbnail (Hidden Input & Visual)
-                const thumbPath = data.thumbnail_path;
-                if(thumbPath) {
-                    // Set hidden input value for form submission
-                    const hiddenInput = document.getElementById('hiddenThumb');
-                    if(hiddenInput) hiddenInput.value = thumbPath;
-                    
-                    // Update visual preview in the main form section
-                    const mainThumbPreview = document.getElementById('mainThumbPreview');
-                    const mainThumbLabel = document.getElementById('mainThumbLabel');
-                    
-                    if(mainThumbPreview) {
-                        mainThumbPreview.src = "{{ url_for('static', filename='') }}" + thumbPath;
-                        mainThumbPreview.style.display = 'block';
-                    }
-                    if(mainThumbLabel) {
-                        mainThumbLabel.textContent = "Thumbnail set from Vision (Save to confirm)";
-                    }
-                }
+                refineTools.style.display = 'none';
             }
-        } catch (e) {
-            statusDiv.textContent = "Network error.";
-            alert("Error: " + e);
-        } finally {
-            btn.disabled = false;
-            btn.textContent = "Generate Draft & Set Thumbnail";
-        }
-    });
+        });
+
+        btnRun.addEventListener('click', async () => {
+            const originalText = contentArea.value.trim();
+            if (!originalText) {
+                alert("Please enter some text to refine first.");
+                return;
+            }
+
+            btnRun.disabled = true;
+            btnRun.textContent = "Running...";
+            refineStatus.textContent = "Sending to Ollama...";
+
+            try {
+                const response = await fetch('/api/generate_refinement', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: originalText,
+                        model: document.getElementById('quickRefineModel').value,
+                        instruction: document.getElementById('quickRefineInstruction').value,
+                        system_role: document.getElementById('quickRefineSystem').value // <--- Sends the system role
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    refineStatus.textContent = "Error: " + data.error;
+                } else {
+                    refineStatus.textContent = "Success!";
+                    contentArea.value = data.content; 
+                }
+            } catch (e) {
+                refineStatus.textContent = "Network Error.";
+                console.error(e);
+            } finally {
+                btnRun.disabled = false;
+                btnRun.textContent = "Run";
+            }
+        });
+    }
 });
 </script>
 {% endblock %}

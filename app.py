@@ -585,27 +585,23 @@ def index():
 
 @app.route("/api/prompt/<int:prompt_id>/upload_thumb", methods=["POST"])
 def upload_thumb_api(prompt_id):
+    # 1. Validate File presence
     f = request.files.get("file")
     if not f or not is_allowed_thumb(f.filename):
         return jsonify({"error": "Invalid file type"}), 400
     
-    conn = get_db()
-    row = conn.execute("SELECT thumbnail FROM prompts WHERE id=?", (prompt_id,)).fetchone()
-    if not row:
-        conn.close()
-        return jsonify({"error": "Prompt not found"}), 404
+    # 2. Save to Disk ONLY (No DB Connection)
+    try:
+        # save_thumbnail returns the relative string path (e.g. "uploads/thumbs/xyz.webp")
+        new_path = save_thumbnail(f)
         
-    old_thumb = row["thumbnail"]
-    new_path = save_thumbnail(f)
-    
-    if old_thumb: delete_thumbnail_if_unused(old_thumb)
-    
-    conn.execute("UPDATE prompts SET thumbnail=?, updated_at=? WHERE id=?", 
-                 (new_path, datetime.utcnow().isoformat(), prompt_id))
-    conn.commit()
-    conn.close()
-    
-    return jsonify({"success": True, "thumbnail_url": url_for('static', filename=new_path)})
+        return jsonify({
+            "success": True, 
+            "thumbnail_url": url_for('static', filename=new_path), # For display (src)
+            "thumbnail_path": new_path # For the hidden input value (value)
+        })
+    except Exception as e:
+         return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
 
 @app.route("/view/save", methods=["POST"])
@@ -688,26 +684,13 @@ def new_prompt():
 
 @app.route("/prompt/<int:prompt_id>/edit", methods=["GET", "POST"])
 def edit_prompt(prompt_id: int):
-    categories = get_categories()
-    tools = get_tools()
-    ollama_models = ollama_list_models()
-
-    conn = get_db()
-    prompt = conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+    # 1. Fetch the existing prompt
+    prompt = get_prompt(prompt_id)
     if not prompt:
-        conn.close()
         flash("Prompt not found.")
         return redirect(url_for("index"))
 
-    variants = conn.execute("SELECT id, title FROM prompts WHERE parent_id=?", (prompt_id,)).fetchall()
-    parent = None
-    if prompt["parent_id"]:
-        parent = conn.execute("SELECT id, title FROM prompts WHERE id=?", (prompt["parent_id"],)).fetchone()
-    
-    current_tags = get_tags_for_prompt(conn, prompt_id)
-    tags_str = ", ".join(current_tags)
-    conn.close()
-
+    # 2. Handle POST (Save Changes)
     if request.method == "POST":
         title = request.form.get("title", "").strip()
         category = request.form.get("category", "Other").strip()
@@ -715,41 +698,66 @@ def edit_prompt(prompt_id: int):
         ensure_category_tool_exist(category, tool)
 
         prompt_type = request.form.get("prompt_type", "Instruction").strip()
-        content, notes = request.form.get("content", "").strip(), request.form.get("notes", "").strip()
-        tags_input = request.form.get("tags", "").strip()
+        content = request.form.get("content", "").strip()
+        notes = request.form.get("notes", "").strip()
+        tags_str = request.form.get("tags", "").strip()
 
+        # === REVISED THUMBNAIL LOGIC ===
         new_thumb = prompt["thumbnail"]
+        
+        # A. Check for Explicit Removal
         if request.form.get("remove_thumbnail") == "on":
             delete_thumbnail_if_unused(new_thumb)
             new_thumb = None
+
+        # B. Check for Hidden Path (From Vision API or Drag & Drop API)
+        hidden_thumb = request.form.get("hidden_thumbnail_path")
+        if hidden_thumb:
+            if hidden_thumb != prompt["thumbnail"]:
+                 if new_thumb: delete_thumbnail_if_unused(new_thumb)
+                 new_thumb = hidden_thumb
+        
+        # C. Check for Standard File Input (Takes precedence)
         f = request.files.get("thumbnail")
         if f and f.filename and is_allowed_thumb(f.filename):
             if new_thumb: delete_thumbnail_if_unused(new_thumb)
             new_thumb = save_thumbnail(f)
 
         now = datetime.utcnow().isoformat()
-        with get_db() as conn:
-            conn.execute(
-                """
-                UPDATE prompts
-                SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, updated_at=?
-                WHERE id=?
-                """,
-                (title, category, tool, prompt_type, content, notes, new_thumb, now, prompt_id),
-            )
-            save_tags(conn, prompt_id, tags_input)
-            conn.commit()
+        
+        # Database Update
+        conn = get_db()
+        conn.execute(
+            """
+            UPDATE prompts
+            SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, updated_at=?
+            WHERE id=?
+            """,
+            (title, category, tool, prompt_type, content, notes, new_thumb, now, prompt_id),
+        )
+        save_tags(conn, prompt_id, tags_str)
+        conn.commit()
+        conn.close()
+            
         return redirect(url_for("index"))
 
+    # 3. Handle GET (Render Page)
+    categories = get_categories()
+    tools = get_tools()
+    ollama_models = ollama_list_models()
+    
+    # Fetch tags for this prompt to display in the input
+    conn = get_db()
+    current_tags = get_tags_for_prompt(conn, prompt_id)
+    conn.close()
+    
     return render_template(
         "edit_prompt.html",
         prompt=prompt,
         categories=categories,
         tools=tools,
         prompt_types=PROMPT_TYPES,
-        variants=variants,
-        parent=parent,
-        tags_str=tags_str,
+        tags_str=", ".join(current_tags),
         ollama_models=ollama_models
     )
 
@@ -765,12 +773,28 @@ def duplicate_prompt(prompt_id: int):
         return redirect(url_for("index"))
 
     as_variant = request.form.get("as_variant") == "true"
-    new_title = f"{p['title']} (Variant)" if as_variant else f"Copy of {p['title']}"
+    
+    # 1. Determine Title
+    # Try to get a user-submitted title first (e.g. from the Edit screen), 
+    # otherwise generate a default "Variant" or "Copy" title.
+    submitted_title = request.form.get("new_title") or request.form.get("title")
+    if submitted_title and as_variant:
+         new_title = submitted_title
+    else:
+         new_title = f"{p['title']} (Variant)" if as_variant else f"Copy of {p['title']}"
+
     parent_id = p["parent_id"] if (as_variant and p["parent_id"]) else (p["id"] if as_variant else None)
 
     new_thumb = None
     if p["thumbnail"]:
         new_thumb = copy_thumbnail(p["thumbnail"])
+
+    # 2. Determine Content (THE FIX)
+    # If the form contains content (saving a variant with edits), use it.
+    # Otherwise (standard duplicate button), fall back to the original DB content.
+    new_content = request.form.get("content")
+    if new_content is None:
+        new_content = p["content"]
 
     now = datetime.utcnow().isoformat()
     conn.execute(
@@ -778,7 +802,7 @@ def duplicate_prompt(prompt_id: int):
         INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (new_title, p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], new_thumb, parent_id, now, now),
+        (new_title, p["category"], p["tool"], p["prompt_type"], new_content, p["notes"], new_thumb, parent_id, now, now),
     )
     new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     
@@ -1157,69 +1181,82 @@ def refine_prompt(prompt_id: int):
         return render_template("refine_prompt.html", prompt=prompt, models=models, ollama_available=ollama_available)
 
     # --- POST Handling ---
-    if not ollama_available:
-        flash("Ollama not available.")
-        return redirect(url_for("render_prompt", prompt_id=prompt_id))
-
-    model = request.form.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL
-    session["ollama_model"] = model
-    instruction = (request.form.get("instruction") or "").strip()
-    mode = request.form.get("mode") or "refine"
     
-    # Grab content (allow editing source before refine)
-    base = request.form.get("content") or prompt["content"]
-
-    # 1. Generate via Ollama
-    try:
-        refined = ollama_generate(f"MODE: {mode}\nINSTRUCTION: {instruction}\n\nPROMPT:\n{base}", model=model, system="Output only refined prompt.")
-    except Exception as e:
-        flash(f"Ollama error: {e}")
-        return redirect(url_for("render_prompt", prompt_id=prompt_id))
-
-    # 2. Handle Save Action
+    # 1. Capture the User's Choice
+    # Based on your HTML: value="" is Preview, value="overwrite"/"variant"/"new" is Save.
     save_action = request.form.get("save_action")
+    
+    # 2. Capture the Content
+    # We grab what is currently in the text box. 
+    # If the user just generated a preview, this contains the AI text.
+    # If the user edited it manually, this contains their edits.
+    current_content = request.form.get("content") or prompt["content"]
 
-    if save_action == "overwrite":
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?", (refined, datetime.utcnow().isoformat(), prompt_id))
-            conn.commit()
-        flash("Prompt updated.")
-        return redirect(url_for("render_prompt", prompt_id=prompt_id))
+    # 3. LOGIC BRANCHING
+    
+    if not save_action: 
+        # === PREVIEW MODE (Generate) ===
+        # Only run Ollama here!
+        if not ollama_available:
+            flash("Ollama not available.")
+            return redirect(url_for("render_prompt", prompt_id=prompt_id))
 
-    elif save_action == "variant":
-        # Logic: If I am a child, my new sibling shares my parent. If I am a parent, I become the parent.
-        parent_id = prompt["parent_id"] if prompt["parent_id"] else prompt["id"]
-        new_title = request.form.get("new_title") or f"{prompt['title']} (Refined)"
-        
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], refined, prompt["notes"], prompt["thumbnail"], parent_id, datetime.utcnow().isoformat(), datetime.utcnow().isoformat())
-            )
-            conn.commit()
-        flash("Saved as new variant.")
-        return redirect(url_for("index", view_family=parent_id)) # Return to folder view
+        model = request.form.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL
+        session["ollama_model"] = model
+        instruction = (request.form.get("instruction") or "").strip()
+        mode = request.form.get("mode") or "refine" # You might need to add a hidden input for 'mode' in your HTML if it's missing, or default to 'refine'
 
-    elif save_action == "new":
-        new_title = request.form.get("new_title") or f"{prompt['title']} (Refined)"
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], refined, prompt["notes"], prompt["thumbnail"], None, datetime.utcnow().isoformat(), datetime.utcnow().isoformat())
-            )
-            conn.commit()
-        flash("Saved as new independent prompt.")
-        return redirect(url_for("index"))
-
-    else:
-        # Preview Mode (No save selected)
-        flash("Refinement generated (Unsaved). Select an action to save.")
+        try:
+            # Generate NEW text
+            refined = ollama_generate(f"MODE: {mode}\nINSTRUCTION: {instruction}\n\nPROMPT:\n{current_content}", model=model, system="Output only refined prompt.")
+            flash("Refinement generated. Review below.")
+        except Exception as e:
+            flash(f"Ollama error: {e}")
+            refined = current_content # Fallback
+            
+        # Render the page again with the NEW text in the textarea
         p_preview = dict(prompt)
         p_preview['content'] = refined
         return render_template("refine_prompt.html", prompt=p_preview, models=models, ollama_available=ollama_available)
-    
+
+    else:
+        # === SAVE MODE (Commit) ===
+        # CRITICAL FIX: Do NOT call Ollama here. 
+        # We save 'current_content', which is exactly what was in the textarea when the user clicked the button.
+        
+        if save_action == "overwrite":
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute("UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?", (current_content, datetime.utcnow().isoformat(), prompt_id))
+                conn.commit()
+            flash("Prompt updated.")
+            return redirect(url_for("render_prompt", prompt_id=prompt_id))
+
+        elif save_action == "variant":
+            parent_id = prompt["parent_id"] if prompt["parent_id"] else prompt["id"]
+            new_title = request.form.get("new_title") or f"{prompt['title']} (Refined)"
+            
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], current_content, prompt["notes"], prompt["thumbnail"], parent_id, datetime.utcnow().isoformat(), datetime.utcnow().isoformat())
+                )
+                conn.commit()
+            flash("Saved as new variant.")
+            return redirect(url_for("index", view_family=parent_id))
+
+        elif save_action == "new":
+            new_title = request.form.get("new_title") or f"{prompt['title']} (Refined)"
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], current_content, prompt["notes"], prompt["thumbnail"], None, datetime.utcnow().isoformat(), datetime.utcnow().isoformat())
+                )
+                conn.commit()
+            flash("Saved as new independent prompt.")
+            return redirect(url_for("index"))
+            
 @app.route("/refine_draft", methods=["POST"])
 def refine_draft():
     init_db()
@@ -1309,7 +1346,31 @@ def prompt_raw(prompt_id: int):
         "tool": p["tool"],
         "prompt_type": p["prompt_type"],
     })
+    
+@app.route("/api/generate_refinement", methods=["POST"])
+def api_generate_refinement():
+    data = request.get_json()
+    base_content = data.get("content", "")
+    model = data.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL
+    instruction = data.get("instruction", "")
+    system_role = data.get("system_role", "").strip() # <--- NEW
+    
+    if not base_content:
+        return jsonify({"error": "Content field is empty."}), 400
 
+    # Default system prompt if user leaves it blank
+    if not system_role:
+        system_role = "You are an expert prompt engineer. Refine the following prompt to be more descriptive and effective. Output ONLY the refined prompt text, no preamble."
+    
+    full_prompt = f"INSTRUCTION: {instruction}\n\nORIGINAL PROMPT:\n{base_content}"
+    
+    try:
+        refined = ollama_generate(prompt=full_prompt, model=model, system=system_role)
+        return jsonify({"success": True, "content": refined})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# --- MAIN BLOCK MUST BE LAST ---
 if __name__ == "__main__":
     init_db()
     app.run(debug=True)
