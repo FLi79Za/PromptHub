@@ -188,14 +188,18 @@
     </div>
 
     <div>
-        <label id="mainThumbLabel">Thumbnail (optional)</label>
-        <input type="file" name="thumbnail" accept="image/*">
+        <label id="mainThumbLabel">Thumbnail (drag & drop allowed)</label>
+        <input type="file" name="thumbnail" accept="image/*" id="mainThumbInput">
         
-        <div style="margin-top:0.75rem; padding: 0.5rem; border: 1px solid #333; border-radius: 4px; display: inline-block;">
+        <div id="mainThumbDropZone" style="margin-top:0.75rem; padding: 0.5rem; border: 2px dashed #444; border-radius: 4px; display: inline-block; min-width: 150px; text-align: center; transition: border-color 0.2s;">
              <img id="mainThumbPreview" 
                   src="{{ url_for('static', filename=prompt.thumbnail) if prompt and prompt.thumbnail else '' }}" 
                   style="max-height: 120px; border-radius: 4px; display: {% if prompt and prompt.thumbnail %}block{% else %}none{% endif %};">
              
+             <div id="mainThumbPlaceholder" style="color:#666; font-size:0.8em; padding:1rem; {% if prompt and prompt.thumbnail %}display:none;{% endif %}">
+                Drop Image Here
+             </div>
+
              {% if prompt and prompt.thumbnail %}
                  <label style="font-weight: normal; font-size: 0.9em; display:flex; align-items:center; margin-top: 0.5rem;">
                    <input type="checkbox" name="remove_thumbnail" style="margin-right: 0.5rem;"> Remove
@@ -295,6 +299,9 @@ document.addEventListener('DOMContentLoaded', () => {
                         if(mainThumbPreview) {
                             mainThumbPreview.src = "{{ url_for('static', filename='') }}" + data.thumbnail_path;
                             mainThumbPreview.style.display = 'block';
+                            // Also hide the placeholder if we generated one via vision
+                            const mainPlaceholder = document.getElementById('mainThumbPlaceholder');
+                            if(mainPlaceholder) mainPlaceholder.style.display = 'none';
                         }
                     }
                 }
@@ -342,7 +349,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         content: originalText,
                         model: document.getElementById('quickRefineModel').value,
                         instruction: document.getElementById('quickRefineInstruction').value,
-                        system_role: document.getElementById('quickRefineSystem').value // <--- Sends the system role
+                        system_role: document.getElementById('quickRefineSystem').value
                     })
                 });
 
@@ -360,6 +367,67 @@ document.addEventListener('DOMContentLoaded', () => {
             } finally {
                 btnRun.disabled = false;
                 btnRun.textContent = "Run";
+            }
+        });
+    }
+
+    // ==========================================
+    // 3. MAIN THUMBNAIL DRAG & DROP
+    // ==========================================
+    const mainDropZone = document.getElementById('mainThumbDropZone');
+    const mainInput = document.getElementById('mainThumbInput');
+    const mainPreview = document.getElementById('mainThumbPreview');
+    const mainPlaceholder = document.getElementById('mainThumbPlaceholder');
+    const hiddenThumbPath = document.getElementById('hiddenThumb');
+    // Jinja2 variable passed safely to JS
+    const currentPromptId = {{ prompt.id if prompt and prompt.id else 'null' }};
+
+    if (mainDropZone) {
+        mainDropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            mainDropZone.style.borderColor = '#00bfff';
+        });
+
+        mainDropZone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            mainDropZone.style.borderColor = '#444';
+        });
+
+        mainDropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            mainDropZone.style.borderColor = '#444';
+            
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                const file = e.dataTransfer.files[0];
+                if (!file.type.startsWith('image/')) { alert("Not an image file"); return; }
+
+                // LOGIC BRANCH: Existing Prompt vs New Prompt
+                if (currentPromptId) {
+                    // A. Existing Prompt: Upload immediately via API
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    fetch(`/api/prompt/${currentPromptId}/upload_thumb`, { method: 'POST', body: formData })
+                        .then(r => r.json())
+                        .then(data => {
+                            if(data.success) {
+                                mainPreview.src = data.thumbnail_url;
+                                mainPreview.style.display = 'block';
+                                if(mainPlaceholder) mainPlaceholder.style.display = 'none';
+                                if(hiddenThumbPath) hiddenThumbPath.value = data.thumbnail_path;
+                            } else { alert(data.error); }
+                        }).catch(e => console.error(e));
+                } else {
+                    // B. New Prompt: Attach to file input for form submission
+                    mainInput.files = e.dataTransfer.files;
+                    // Local Preview
+                    const reader = new FileReader();
+                    reader.onload = (ev) => {
+                        mainPreview.src = ev.target.result;
+                        mainPreview.style.display = 'block';
+                        if(mainPlaceholder) mainPlaceholder.style.display = 'none';
+                    };
+                    reader.readAsDataURL(file);
+                }
             }
         });
     }

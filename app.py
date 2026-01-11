@@ -590,19 +590,28 @@ def upload_thumb_api(prompt_id):
     if not f or not is_allowed_thumb(f.filename):
         return jsonify({"error": "Invalid file type"}), 400
     
-    # 2. Save to Disk ONLY (No DB Connection)
+    # 2. Save to Disk & Update DB
     try:
         # save_thumbnail returns the relative string path (e.g. "uploads/thumbs/xyz.webp")
         new_path = save_thumbnail(f)
+        
+        # FIX: Immediately persist to Database so it survives refresh
+        now = datetime.utcnow().isoformat()
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE prompts SET thumbnail = ?, updated_at = ? WHERE id = ?", 
+                (new_path, now, prompt_id)
+            )
+            conn.commit()
         
         return jsonify({
             "success": True, 
             "thumbnail_url": url_for('static', filename=new_path), # For display (src)
             "thumbnail_path": new_path # For the hidden input value (value)
         })
-    except Exception as e:
-         return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
+    except Exception as e:
+        return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
 @app.route("/view/save", methods=["POST"])
 def save_view():
