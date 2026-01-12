@@ -17,12 +17,37 @@
         <a href="{{ url_for('import_prompt') }}">Import</a>
         <a href="{{ url_for('manage') }}">Manage</a>
 
+        {# Subtle content visibility toggle #}
+        {% if nsfw_unlocked %}
+          <form action="{{ url_for('nsfw_lock') }}" method="post" style="display:inline;">
+            <button
+              class="btn-secondary"
+              type="submit"
+              title="Content filter is disabled. Click to enable filtering."
+              style="margin-left:1rem; opacity:0.85;"
+            >
+              Unfiltered
+            </button>
+          </form>
+        {% else %}
+          <form action="{{ url_for('nsfw_unlock') }}" method="post" style="display:inline;">
+            <button
+              class="btn-secondary"
+              type="submit"
+              title="Content filter is enabled. Click to show all content."
+              style="margin-left:1rem; opacity:0.65;"
+            >
+              Filtered
+            </button>
+          </form>
+        {% endif %}
+
         <button
           id="themeToggle"
           class="btn-secondary"
           type="button"
           title="Change theme"
-          style="margin-left:1rem;"
+          style="margin-left:0.5rem;"
         >
           🎨 Theme
         </button>
@@ -88,11 +113,9 @@
       return themes[(idx + 1) % themes.length];
     }
 
-    // Initialise on load
     const saved = localStorage.getItem(storageKey) || "dark";
     applyTheme(saved);
 
-    // Toggle handler
     const btn = document.getElementById("themeToggle");
     if (btn) {
       btn.addEventListener("click", () => {
