@@ -64,7 +64,16 @@
 
       <div class="action-bar" style="margin-top:1rem; display:flex; gap:1rem; flex-wrap:wrap;">
           <button type="button" class="btn-primary" onclick="copyToClipboard()" style="flex:2;">Copy to Clipboard</button>
+
           <button type="submit" class="btn-secondary" style="flex:1;" title="Send this text to Ollama for refinement">✨ Refine with Ollama</button>
+
+          <button type="submit" class="btn-secondary" style="flex:1;" name="save_mode" value="overwrite"
+                  formaction="{{ url_for('save_from_use', prompt_id=prompt.id) }}"
+                  title="Overwrite the saved prompt content with the text above">💾 Save</button>
+
+          <button type="submit" class="btn-secondary" style="flex:1;" name="save_mode" value="variant"
+                  formaction="{{ url_for('save_from_use', prompt_id=prompt.id) }}"
+                  title="Save this as a new child variant linked to this prompt">📎 Save as Variant</button>
       </div>
   </form>
 

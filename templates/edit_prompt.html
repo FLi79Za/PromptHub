@@ -140,6 +140,22 @@
       <input type="text" name="tags" value="{{ tags_str }}" placeholder="e.g. Portrait, Realistic, Sci-Fi, Dark">
     </div>
 
+    <div class="grid-2">
+      <div>
+        <label>Group (optional)</label>
+        <select name="group_id" style="width:100%;">
+          <option value="">No group</option>
+          {% for g in groups %}
+            <option value="{{ g.id }}" {% if prompt and prompt.group_id|string == g.id|string %}selected{% endif %}>{{ g.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Or create new group</label>
+        <input type="text" name="new_group_name" placeholder="Eg. My Project">
+      </div>
+    </div>
+
     <div>
       <div style="display:flex; justify-content:space-between; align-items:end; margin-bottom:0.5rem;">
           <label style="margin-bottom:0;">Prompt Content</label>

@@ -45,6 +45,9 @@
 
     <p class="notes" style="margin:0.25rem 0 0.5rem 0; font-size:0.85em; opacity:0.7;">
       {{ p.category }} · {{ p.tool }}
+      {% if p.group_name %}
+        · <a href="{{ url_for('index', group=p.group_id) }}" style="color:#00bfff; text-decoration:none;" title="View this group">📌 {{ p.group_name }}</a>
+      {% endif %}
     </p>
 
     {% if p.tags %}

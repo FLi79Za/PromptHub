@@ -124,6 +124,7 @@ def init_db() -> None:
             notes TEXT,
             thumbnail TEXT,
             parent_id INTEGER,
+            group_id INTEGER,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -148,6 +149,21 @@ def init_db() -> None:
             FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE
         )
     """)
+
+    # -------------------------
+    # Prompt Groups (theme / concept grouping)
+    # -------------------------
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS prompt_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    if not column_exists(conn, "prompts", "group_id"):
+        conn.execute("ALTER TABLE prompts ADD COLUMN group_id INTEGER")
 
     if not column_exists(conn, "prompts", "thumbnail"):
         conn.execute("ALTER TABLE prompts ADD COLUMN thumbnail TEXT")
@@ -175,6 +191,31 @@ def get_tools() -> list[str]:
 def get_all_tags() -> list[str]:
     with get_db() as conn:
         return [r["name"] for r in conn.execute("SELECT name FROM tags ORDER BY name ASC")]
+
+def get_groups():
+    with get_db() as conn:
+        return conn.execute("SELECT * FROM prompt_groups ORDER BY name COLLATE NOCASE").fetchall()
+
+def get_group(group_id: int):
+    with get_db() as conn:
+        return conn.execute("SELECT * FROM prompt_groups WHERE id = ?", (group_id,)).fetchone()
+
+def ensure_group_exists(name: str, description: str | None = None) -> int | None:
+    name = (name or "").strip()
+    if not name:
+        return None
+    now = datetime.utcnow().isoformat()
+    with get_db() as conn:
+        try:
+            conn.execute(
+                "INSERT INTO prompt_groups (name, description, created_at) VALUES (?, ?, ?)",
+                (name, (description or None), now),
+            )
+            conn.commit()
+        except sqlite3.IntegrityError:
+            pass
+        row = conn.execute("SELECT id FROM prompt_groups WHERE name = ?", (name,)).fetchone()
+        return int(row["id"]) if row else None
 
 def get_saved_views():
     with get_db() as conn:
@@ -234,6 +275,18 @@ def get_tags_for_prompts(conn, prompt_ids):
     for r in rows:
         out.setdefault(r["prompt_id"], []).append(r["name"])
     return out
+
+def get_group_name_map(conn: sqlite3.Connection, group_ids: list[int]):
+    """Returns {group_id: group_name} for given ids."""
+    group_ids = [int(g) for g in group_ids if g is not None]
+    if not group_ids:
+        return {}
+    placeholders = ",".join(["?"] * len(group_ids))
+    rows = conn.execute(
+        f"SELECT id, name FROM prompt_groups WHERE id IN ({placeholders})",
+        group_ids,
+    ).fetchall()
+    return {int(r["id"]): r["name"] for r in rows}
 
 
 # -------------------------
@@ -405,7 +458,7 @@ def export_selected():
     export_db_path = TEMP_DIR / export_filename
 
     conn_exp = sqlite3.connect(export_db_path)
-    conn_exp.execute("CREATE TABLE IF NOT EXISTS prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, category TEXT, tool TEXT, prompt_type TEXT, content TEXT, notes TEXT, thumbnail TEXT, parent_id INTEGER, created_at TEXT, updated_at TEXT)")
+    conn_exp.execute("CREATE TABLE IF NOT EXISTS prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, category TEXT, tool TEXT, prompt_type TEXT, content TEXT, notes TEXT, thumbnail TEXT, parent_id INTEGER, group_id INTEGER, created_at TEXT, updated_at TEXT)")
     conn_exp.execute("CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
     conn_exp.execute("CREATE TABLE IF NOT EXISTS prompt_tags (prompt_id INTEGER, tag_id INTEGER)")
 
@@ -547,10 +600,20 @@ def import_db_commit():
 
         now = datetime.utcnow().isoformat()
 
+        # Group mapping (optional)
+        group_id_main = None
+        try:
+            if "group_id" in p.keys() and p["group_id"]:
+                grp = conn_imp.execute("SELECT name, description FROM prompt_groups WHERE id=?", (p["group_id"],)).fetchone()
+                if grp:
+                    group_id_main = ensure_group_exists(grp["name"], grp["description"])
+        except Exception:
+            group_id_main = None
+
         cur = conn_main.execute(
-            """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (p["title"], p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], final_thumb_path, now, now)
+            """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (p["title"], p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], final_thumb_path, group_id_main, now, now)
         )
         new_prompt_id = cur.lastrowid
 
@@ -594,6 +657,7 @@ def build_library_base_query(args):
     """Builds FROM/JOIN/WHERE + params for the library query, matching index() filters."""
     category = args.get("category", "all")
     tool = args.get("tool", "all")
+    group_id = args.get("group", "all")
     tag_filter = args.get("tag", "all")
     q = (args.get("q") or "").strip()
     q_not = (args.get("q_not") or "").strip()
@@ -628,6 +692,9 @@ def build_library_base_query(args):
     if tool != "all":
         base_query += " AND p.tool = ?"
         params.append(tool)
+    if group_id != "all":
+        base_query += " AND p.group_id = ?"
+        params.append(group_id)
     if tag_filter != "all":
         base_query += " AND t.name = ?"
         params.append(tag_filter)
@@ -658,6 +725,7 @@ def build_library_base_query(args):
         "sort_dir": sort_dir,
         "category": category,
         "tool": tool,
+        "group_id": group_id,
         "tag_filter": tag_filter,
         "q": q,
         "q_not": q_not,
@@ -686,6 +754,7 @@ def nsfw_lock():
 def index():
     category = request.args.get("category", "all")
     tool = request.args.get("tool", "all")
+    group_id = request.args.get("group", "all")
     tag_filter = request.args.get("tag", "all")
     q = (request.args.get("q") or "").strip()
     q_not = (request.args.get("q_not") or "").strip()
@@ -727,6 +796,9 @@ def index():
     if tool != "all":
         base_query += " AND p.tool = ?"
         params.append(tool)
+    if group_id != "all":
+        base_query += " AND p.group_id = ?"
+        params.append(group_id)
     if tag_filter != "all":
         base_query += " AND t.name = ?"
         params.append(tag_filter)
@@ -767,11 +839,14 @@ def index():
     prompts = [dict(r) for r in rows]
     ids = [p["id"] for p in prompts]
     tag_map = get_tags_for_prompts(conn, ids)
+    group_name_map = get_group_name_map(conn, [p.get("group_id") for p in prompts])
     for p in prompts:
         p["tags"] = tag_map.get(p["id"], [])
+        p["group_name"] = group_name_map.get(p.get("group_id"))
 
     saved_views = get_saved_views()
     all_tags = get_all_tags()
+    groups = get_groups()
     conn.close()
 
     return render_template(
@@ -779,8 +854,10 @@ def index():
         prompts=prompts,
         categories=get_categories(),
         tools=get_tools(),
+        groups=groups,
         active_category=category,
         active_tool=tool,
+        active_group=group_id,
         active_tag=tag_filter,
         q=q,
         q_not=q_not,
@@ -833,8 +910,10 @@ def api_prompts():
 
     ids = [p["id"] for p in prompts]
     tag_map = get_tags_for_prompts(conn, ids)
+    group_name_map = get_group_name_map(conn, [p.get("group_id") for p in prompts])
     for p in prompts:
         p["tags"] = tag_map.get(p["id"], [])
+        p["group_name"] = group_name_map.get(p.get("group_id"))
 
     conn.close()
 
@@ -914,6 +993,13 @@ def new_prompt():
         content, notes = request.form.get("content", "").strip(), request.form.get("notes", "").strip()
         tags_str = request.form.get("tags", "").strip()
 
+        # Optional theme group
+        group_id = request.form.get("group_id", "")
+        new_group_name = request.form.get("new_group_name", "").strip()
+        if new_group_name:
+            group_id = ensure_group_exists(new_group_name)
+        group_id = int(group_id) if str(group_id).isdigit() else None
+
         if not title or not content:
             flash("Title and content are required.")
             return redirect(url_for("new_prompt"))
@@ -931,10 +1017,10 @@ def new_prompt():
         conn = get_db()
         conn.execute(
             """
-            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (title, category, tool, prompt_type, content, notes, thumb_path, now, now),
+            (title, category, tool, prompt_type, content, notes, thumb_path, group_id, now, now),
         )
         new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         save_tags(conn, new_id, tags_str)
@@ -947,6 +1033,7 @@ def new_prompt():
         prompt=None,
         categories=categories,
         tools=tools,
+        groups=get_groups(),
         prompt_types=PROMPT_TYPES,
         tags_str="",
         ollama_models=ollama_models
@@ -970,6 +1057,12 @@ def edit_prompt(prompt_id: int):
         content = request.form.get("content", "").strip()
         notes = request.form.get("notes", "").strip()
         tags_str = request.form.get("tags", "").strip()
+
+        group_id = request.form.get("group_id", "")
+        new_group_name = request.form.get("new_group_name", "").strip()
+        if new_group_name:
+            group_id = ensure_group_exists(new_group_name)
+        group_id = int(group_id) if str(group_id).isdigit() else None
 
         new_thumb = prompt["thumbnail"]
 
@@ -996,10 +1089,10 @@ def edit_prompt(prompt_id: int):
         conn.execute(
             """
             UPDATE prompts
-            SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, updated_at=?
+            SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, group_id=?, updated_at=?
             WHERE id=?
             """,
-            (title, category, tool, prompt_type, content, notes, new_thumb, now, prompt_id),
+            (title, category, tool, prompt_type, content, notes, new_thumb, group_id, now, prompt_id),
         )
         save_tags(conn, prompt_id, tags_str)
         conn.commit()
@@ -1020,6 +1113,7 @@ def edit_prompt(prompt_id: int):
         prompt=prompt,
         categories=categories,
         tools=tools,
+        groups=get_groups(),
         prompt_types=PROMPT_TYPES,
         tags_str=", ".join(current_tags),
         ollama_models=ollama_models
@@ -1057,10 +1151,10 @@ def duplicate_prompt(prompt_id: int):
     now = datetime.utcnow().isoformat()
     conn.execute(
         """
-        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (new_title, p["category"], p["tool"], p["prompt_type"], new_content, p["notes"], new_thumb, parent_id, now, now),
+        (new_title, p["category"], p["tool"], p["prompt_type"], new_content, p["notes"], new_thumb, parent_id, p["group_id"], now, now),
     )
     new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
@@ -1284,7 +1378,30 @@ def import_prompt_preview():
 
 @app.route("/manage", methods=["GET"])
 def manage():
-    return render_template("manage.html", categories=get_categories(), tools=get_tools())
+    return render_template(
+        "manage.html",
+        categories=get_categories(),
+        tools=get_tools(),
+        groups=get_groups(),
+    )
+
+@app.route("/manage/group/add", methods=["POST"])
+def add_group():
+    name = request.form.get("name", "").strip()
+    description = request.form.get("description", "").strip() or None
+    if name:
+        ensure_group_exists(name, description)
+    return redirect(url_for("manage"))
+
+@app.route("/manage/group/delete", methods=["POST"])
+def delete_group():
+    gid = request.form.get("id", "").strip()
+    if gid.isdigit():
+        with get_db() as conn:
+            conn.execute("UPDATE prompts SET group_id = NULL WHERE group_id = ?", (int(gid),))
+            conn.execute("DELETE FROM prompt_groups WHERE id = ?", (int(gid),))
+            conn.commit()
+    return redirect(url_for("manage"))
 
 @app.route("/manage/category/add", methods=["POST"])
 def add_category():
@@ -1324,6 +1441,7 @@ def bulk_update():
     cat = request.form.get("bulk_category")
     tool = request.form.get("bulk_tool")
     ptype = request.form.get("bulk_prompt_type")
+    bulk_group = request.form.get("bulk_group")
     tags_str = request.form.get("bulk_tags", "").strip()
 
     ensure_category_tool_exist(cat, tool)
@@ -1338,6 +1456,17 @@ def bulk_update():
                     conn.execute("UPDATE prompts SET tool=?, updated_at=? WHERE id=?", (tool, now_str, pid))
                 if ptype:
                     conn.execute("UPDATE prompts SET prompt_type=?, updated_at=? WHERE id=?", (ptype, now_str, pid))
+                if bulk_group is not None and str(bulk_group).strip() != "":
+                    bg = str(bulk_group).strip()
+                    if bg.lower() == "none":
+                        conn.execute("UPDATE prompts SET group_id=NULL, updated_at=? WHERE id=?", (now_str, pid))
+                    else:
+                        try:
+                            gid = int(bg)
+                        except ValueError:
+                            gid = None
+                        if gid is not None:
+                            conn.execute("UPDATE prompts SET group_id=?, updated_at=? WHERE id=?", (gid, now_str, pid))
                 if tags_str:
                     raw_tags = [t.strip() for t in tags_str.split(',') if t.strip()]
                     for tag_name in raw_tags:
@@ -1518,9 +1647,21 @@ def refine_prompt(prompt_id: int):
 
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], current_content, prompt["notes"], prompt["thumbnail"], parent_id, datetime.utcnow().isoformat(), datetime.utcnow().isoformat())
+                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        new_title,
+                        prompt["category"],
+                        prompt["tool"],
+                        prompt["prompt_type"],
+                        current_content,
+                        prompt["notes"],
+                        prompt["thumbnail"],
+                        parent_id,
+                        prompt.get("group_id"),
+                        datetime.utcnow().isoformat(),
+                        datetime.utcnow().isoformat(),
+                    )
                 )
                 conn.commit()
             flash("Saved as new variant.")
@@ -1530,13 +1671,71 @@ def refine_prompt(prompt_id: int):
             new_title = request.form.get("new_title") or f"{prompt['title']} (Refined)"
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], current_content, prompt["notes"], prompt["thumbnail"], None, datetime.utcnow().isoformat(), datetime.utcnow().isoformat())
+                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        new_title,
+                        prompt["category"],
+                        prompt["tool"],
+                        prompt["prompt_type"],
+                        current_content,
+                        prompt["notes"],
+                        prompt["thumbnail"],
+                        None,
+                        prompt.get("group_id"),
+                        datetime.utcnow().isoformat(),
+                        datetime.utcnow().isoformat(),
+                    ),
                 )
                 conn.commit()
             flash("Saved as new independent prompt.")
             return redirect(url_for("index"))
+
+
+@app.route("/prompt/<int:prompt_id>/save_from_use", methods=["POST"])
+def save_from_use(prompt_id: int):
+    """Save edited prompt text directly from the Use screen."""
+    init_db()
+    prompt = get_prompt(prompt_id)
+    if not prompt:
+        flash("Prompt not found.")
+        return redirect(url_for("index"))
+
+    mode = request.form.get("save_mode", "overwrite")
+    content = (request.form.get("content") or "").strip()
+    if not content:
+        flash("Nothing to save.")
+        return redirect(url_for("render_prompt", prompt_id=prompt_id))
+
+    now = datetime.utcnow().isoformat()
+    with get_db() as conn:
+        if mode == "variant":
+            parent_id = prompt["parent_id"] if prompt["parent_id"] else prompt["id"]
+            new_title = f"{prompt['title']} (Variant)"
+            conn.execute(
+                """
+                INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], content, prompt["notes"], prompt["thumbnail"], parent_id, prompt.get("group_id"), now, now),
+            )
+            new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            # Copy tags to the variant
+            tags = get_tags_for_prompt(conn, prompt_id)
+            save_tags(conn, new_id, ", ".join(tags))
+            conn.commit()
+            flash("Saved as variant.")
+            return redirect(url_for("index", view_family=parent_id))
+
+        # overwrite
+        conn.execute(
+            "UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?",
+            (content, now, prompt_id),
+        )
+        conn.commit()
+
+    flash("Prompt updated.")
+    return redirect(url_for("render_prompt", prompt_id=prompt_id))
 
 @app.route("/refine_draft", methods=["POST"])
 def refine_draft():

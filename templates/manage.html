@@ -16,6 +16,31 @@
 
   <hr style="margin: 1.25rem 0; border: 0; border-top: 1px solid #333;" />
 
+  <h3>Prompt Groups</h3>
+  <p class="notes">Use groups to bundle prompts that belong together.</p>
+  <form method="post" action="{{ url_for('add_group') }}" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+    <input type="text" name="name" placeholder="New group name" required>
+    <input type="text" name="description" placeholder="(optional description)" style="flex:1; min-width:220px;">
+    <button type="submit">Add</button>
+  </form>
+
+  <div style="margin-top:0.75rem;">
+    {% for g in groups %}
+      <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.35rem;">
+        <span style="flex:1;">
+          <strong>{{ g.name }}</strong>
+          {% if g.description %}<span style="opacity:0.7; font-size:0.9em;"> · {{ g.description }}</span>{% endif %}
+        </span>
+        <form method="post" action="{{ url_for('delete_group') }}" onsubmit="return confirm('Delete group? Prompts will be ungrouped.');">
+          <input type="hidden" name="id" value="{{ g.id }}">
+          <button type="submit" class="danger">Delete</button>
+        </form>
+      </div>
+    {% endfor %}
+  </div>
+
+  <hr style="margin: 1.25rem 0; border: 0; border-top: 1px solid #333;" />
+
   <h3>Categories</h3>
   <form method="post" action="{{ url_for('add_category') }}" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
     <input type="text" name="name" placeholder="New category" required>

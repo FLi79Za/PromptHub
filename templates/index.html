@@ -75,6 +75,13 @@
           {% endfor %}
         </select>
 
+        <select name="group">
+          <option value="all">All Groups</option>
+          {% for g in groups %}
+            <option value="{{ g.id }}" {% if active_group|string == g.id|string %}selected{% endif %}>{{ g.name }}</option>
+          {% endfor %}
+        </select>
+
         <select name="tag">
           <option value="all">All Tags</option>
           {% for t in all_tags %}
@@ -83,7 +90,7 @@
         </select>
 
         <button type="submit">Filter</button>
-        {% if q or q_not or active_category!='all' or active_tool!='all' or active_tag!='all' %}
+        {% if q or q_not or active_category!='all' or active_tool!='all' or active_group!='all' or active_tag!='all' %}
           <a href="{{ url_for('index') }}" style="align-self:center; font-size:0.9em; margin-left:0.5rem;">Clear</a>
         {% endif %}
       </div>
@@ -104,6 +111,16 @@
                  <label>Tool</label>
                  <input list="tool_list" name="bulk_tool" placeholder="(no change)">
                  <datalist id="tool_list">{% for t in tools %}<option value="{{ t }}">{% endfor %}</datalist>
+               </div>
+               <div>
+                 <label>Group</label>
+                 <select name="bulk_group">
+                   <option value="">(no change)</option>
+                   <option value="none">(remove from group)</option>
+                   {% for g in groups %}
+                     <option value="{{ g.id }}">{{ g.name }}</option>
+                   {% endfor %}
+                 </select>
                </div>
                <div>
                  <label>Add Tags</label>
@@ -137,7 +154,7 @@
     <div id="paginationControls">
       <div style="margin-top:2rem; display:flex; justify-content:center; gap:0.5rem;">
         {% if page > 1 %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir) }}">&laquo; Prev</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, group=active_group, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir) }}">&laquo; Prev</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">&laquo; Prev</span>
         {% endif %}
@@ -145,7 +162,7 @@
         <span style="padding:0.5rem;">Page {{ page }} of {{ total_pages }}</span>
 
         {% if page < total_pages %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir) }}">Next &raquo;</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, group=active_group, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir) }}">Next &raquo;</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">Next &raquo;</span>
         {% endif %}
@@ -188,24 +205,43 @@ function copyPrompt(id){
 document.addEventListener('DOMContentLoaded', () => {
     const toggle = document.getElementById('toggleOrganise');
     const panel = document.getElementById('organisePanel');
-    const checks = document.querySelectorAll('.organise-checkbox');
     const btnAll = document.getElementById('selectAll');
     const btnNone = document.getElementById('selectNone');
 
     let orgMode = false;
 
-    if(toggle){
-        toggle.addEventListener('click', () => {
-            orgMode = !orgMode;
-            panel.style.display = orgMode ? 'block' : 'none';
-            checks.forEach(c => c.style.display = orgMode ? 'block' : 'none');
-            toggle.textContent = orgMode ? 'Close Organise' : 'Organise';
-        });
+    function getCheckWrappers() {
+      return document.querySelectorAll('.organise-checkbox');
     }
 
-    if(btnAll) btnAll.addEventListener('click', () => checks.forEach(c => c.querySelector('input').checked = true));
-    if(btnNone) btnNone.addEventListener('click', () => checks.forEach(c => c.querySelector('input').checked = false));
+    function applyOrganiseMode() {
+      if (panel) panel.style.display = orgMode ? 'block' : 'none';
+      getCheckWrappers().forEach(c => c.style.display = orgMode ? 'block' : 'none');
+      if (toggle) toggle.textContent = orgMode ? 'Close Organise' : 'Organise';
+    }
 
+    if (toggle) {
+      toggle.addEventListener('click', () => {
+        orgMode = !orgMode;
+        applyOrganiseMode();
+      });
+    }
+
+    if (btnAll) btnAll.addEventListener('click', () => {
+      getCheckWrappers().forEach(c => {
+        const i = c.querySelector('input');
+        if (i) i.checked = true;
+      });
+    });
+
+    if (btnNone) btnNone.addEventListener('click', () => {
+      getCheckWrappers().forEach(c => {
+        const i = c.querySelector('input');
+        if (i) i.checked = false;
+      });
+    });
+
+    // ---- Drag & Drop Thumb Upload ----
     const zones = document.querySelectorAll('.drop-zone');
     zones.forEach(zone => {
         zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
@@ -310,6 +346,9 @@ document.addEventListener('DOMContentLoaded', () => {
           if (html) {
             promptList.insertAdjacentHTML('beforeend', html);
             bindDropZones(promptList);
+
+            // KEY FIX: when new cards are appended, ensure organise mode applies to them too
+            applyOrganiseMode();
           }
 
           hasMore = !!data.has_more;
@@ -334,6 +373,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       io.observe(sentinel);
     }
+
+    // Ensure initial state is consistent (especially if server rendered organise panel visible/hidden)
+    applyOrganiseMode();
 });
 </script>
 
