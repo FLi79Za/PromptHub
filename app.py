@@ -7,6 +7,7 @@ import zipfile
 import io
 import os
 import math
+import time
 import json
 import base64
 from datetime import datetime
@@ -16,15 +17,57 @@ from PIL import Image, ImageSequence
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session, jsonify
 from werkzeug.utils import secure_filename
 
+
+# -------------------------
+# Descriptor token injection
+# -------------------------
+DESCRIPTOR_TOKEN_RE = re.compile(r"\{\{\s*descriptor\s*:\s*(\d+)\s*\}\}")
+
+def inject_descriptors(text_value: str) -> str:
+    """Replace {{descriptor:ID}} tokens with the descriptor's rendered_text.
+    Safe: if missing, leaves a visible placeholder.
+    """
+    if not text_value:
+        return text_value
+
+    ids = [m.group(1) for m in DESCRIPTOR_TOKEN_RE.finditer(text_value)]
+    if not ids:
+        return text_value
+
+    # De-duplicate while keeping order
+    seen = set()
+    unique_ids = []
+    for i in ids:
+        if i not in seen:
+            seen.add(i)
+            unique_ids.append(i)
+
+    db = get_db()
+    qmarks = ",".join(["?"] * len(unique_ids))
+    rows = db.execute(
+        f"SELECT id, rendered_text FROM descriptors WHERE id IN ({qmarks})",
+        [int(x) for x in unique_ids],
+    ).fetchall()
+    mapping = {str(r["id"]): (r["rendered_text"] or "") for r in rows}
+
+    def repl(m):
+        did = m.group(1)
+        return mapping.get(did, f"[Missing descriptor:{did}]")
+
+    return DESCRIPTOR_TOKEN_RE.sub(repl, text_value)
+
 app = Flask(__name__)
 app.secret_key = "change-me-to-something-random"
 
 @app.context_processor
 def inject_global_flags():
+    # Keep nav/visibility logic out of templates as much as possible.
+    # ollama_ready is a hard gate for Remix.
     return {
-        "nsfw_unlocked": nsfw_is_unlocked()
+        "nsfw_unlocked": nsfw_is_unlocked(),
+        "ollama_ready": ollama_is_ready_cached(),
+        "ollama_models": ollama_models_cached(),
     }
-
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "prompts.db"
 TEMP_DIR = BASE_DIR / "temp"
@@ -101,6 +144,11 @@ def prompt_is_nsfw(conn: sqlite3.Connection, prompt_id: int) -> bool:
 def get_db(path=DB_PATH) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
+    # ensure FK constraints (for ON DELETE CASCADE etc.)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+    except Exception:
+        pass
     return conn
 
 def column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
@@ -136,6 +184,35 @@ def init_db() -> None:
             name TEXT NOT NULL,
             query_params TEXT NOT NULL,
             created_at TEXT NOT NULL
+        )
+    """)
+
+    
+    # Descriptor Packs (generic: characters, creatures, environments, props, etc.)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS descriptor_packs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            pack_type TEXT NOT NULL DEFAULT 'generic',
+            pack_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    # Saved descriptor instances generated from a pack
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS descriptors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            pack_id INTEGER NOT NULL,
+            pack_type TEXT NOT NULL DEFAULT 'generic',
+            values_json TEXT NOT NULL,
+            rendered_text TEXT NOT NULL,
+            notes TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(pack_id) REFERENCES descriptor_packs(id) ON DELETE CASCADE
         )
     """)
 
@@ -446,6 +523,169 @@ def parse_prompt_txt(raw_text: str) -> dict:
 # -------------------------
 # EXPORT / IMPORT LOGIC
 # -------------------------
+
+# ----------------------------
+# Descriptors (generic entities)
+# ----------------------------
+
+def _parse_json_maybe(value: str, default):
+    try:
+        return json.loads(value) if value else default
+    except Exception:
+        return default
+
+def get_descriptor_packs(pack_type: str | None = None):
+    with get_db() as conn:
+        if pack_type:
+            return conn.execute(
+                "SELECT * FROM descriptor_packs WHERE pack_type = ? ORDER BY name COLLATE NOCASE",
+                (pack_type,),
+            ).fetchall()
+        return conn.execute("SELECT * FROM descriptor_packs ORDER BY pack_type, name COLLATE NOCASE").fetchall()
+
+def get_descriptor_pack(pack_id: int):
+    with get_db() as conn:
+        return conn.execute("SELECT * FROM descriptor_packs WHERE id = ?", (pack_id,)).fetchone()
+
+def get_descriptors(pack_type: str | None = None, q: str | None = None):
+    q_like = f"%{q.strip()}%" if q else None
+    with get_db() as conn:
+        if pack_type and q_like:
+            return conn.execute(
+                """
+                SELECT d.*, p.name AS pack_name
+                FROM descriptors d
+                JOIN descriptor_packs p ON p.id = d.pack_id
+                WHERE d.pack_type = ?
+                  AND (d.title LIKE ? OR d.rendered_text LIKE ? OR IFNULL(d.notes,'') LIKE ?)
+                ORDER BY d.updated_at DESC
+                """,
+                (pack_type, q_like, q_like, q_like),
+            ).fetchall()
+        if pack_type:
+            return conn.execute(
+                """
+                SELECT d.*, p.name AS pack_name
+                FROM descriptors d
+                JOIN descriptor_packs p ON p.id = d.pack_id
+                WHERE d.pack_type = ?
+                ORDER BY d.updated_at DESC
+                """,
+                (pack_type,),
+            ).fetchall()
+        if q_like:
+            return conn.execute(
+                """
+                SELECT d.*, p.name AS pack_name
+                FROM descriptors d
+                JOIN descriptor_packs p ON p.id = d.pack_id
+                WHERE (d.title LIKE ? OR d.rendered_text LIKE ? OR IFNULL(d.notes,'') LIKE ?)
+                ORDER BY d.updated_at DESC
+                """,
+                (q_like, q_like, q_like),
+            ).fetchall()
+
+        return conn.execute(
+            """
+            SELECT d.*, p.name AS pack_name
+            FROM descriptors d
+            JOIN descriptor_packs p ON p.id = d.pack_id
+            ORDER BY d.updated_at DESC
+            """
+        ).fetchall()
+
+def get_descriptor(descriptor_id: int):
+    with get_db() as conn:
+        return conn.execute("SELECT * FROM descriptors WHERE id = ?", (descriptor_id,)).fetchone()
+
+def normalise_pack(pack: dict) -> dict:
+    """
+    Ensure pack has predictable structure.
+    Expected keys: fields_order (list), fields (dict), templates (dict), default_template (optional).
+    """
+    if not isinstance(pack, dict):
+        return {"fields_order": [], "fields": {}, "templates": {"default": ""}, "default_template": "default"}
+
+    fields = pack.get("fields") or {}
+    templates = pack.get("templates") or {}
+    fields_order = pack.get("fields_order") or list(fields.keys())
+    default_template = pack.get("default_template") or ("default" if "default" in templates else (next(iter(templates.keys()), "default")))
+
+    # coerce
+    if not isinstance(fields, dict):
+        fields = {}
+    if not isinstance(templates, dict):
+        templates = {"default": ""}
+    if not isinstance(fields_order, list):
+        fields_order = list(fields.keys())
+
+    # guarantee every field_order key exists in fields
+    for k in list(fields_order):
+        if k not in fields:
+            fields[k] = {"label": k, "options": []}
+
+    # ensure at least one template
+    if not templates:
+        templates = {"default": ""}
+
+    if default_template not in templates:
+        default_template = next(iter(templates.keys()))
+
+    pack["fields"] = fields
+    pack["fields_order"] = fields_order
+    pack["templates"] = templates
+    pack["default_template"] = default_template
+    return pack
+
+def render_from_pack(pack: dict, values: dict, template_key: str | None = None) -> str:
+    pack = normalise_pack(pack)
+    templates = pack.get("templates", {})
+    key = template_key or pack.get("default_template") or "default"
+    template = templates.get(key) or templates.get("default") or ""
+    # Safe formatting: missing keys become empty string
+    class SafeDict(dict):
+        def __missing__(self, k):
+            return ""
+    return template.format_map(SafeDict(values or {})).strip()
+
+
+
+# -------------------------
+# Thumbnail Serving (compat)
+# -------------------------
+# Some templates expect url_for('serve_thumbnail', prompt_id=...)
+# This endpoint serves the prompt's thumbnail file if present, otherwise a 1x1 transparent PNG.
+_TRANSPARENT_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
+    "/w8AAn8B9p2LhQAAAABJRU5ErkJggg=="
+)
+
+@app.route("/thumb/<int:prompt_id>")
+def serve_thumbnail(prompt_id: int):
+    try:
+        db = get_db()
+        row = db.execute("SELECT thumbnail FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+        rel = row["thumbnail"] if row else None
+
+        if rel:
+            # common: 'uploads/thumbs/xyz.webp' stored relative to /static
+            p = BASE_DIR / "static" / rel
+            if p.exists():
+                return send_file(p)
+
+            # allow accidental leading 'static/'
+            rel2 = rel.replace("static/", "", 1)
+            p2 = BASE_DIR / "static" / rel2
+            if p2.exists():
+                return send_file(p2)
+
+        png_bytes = base64.b64decode(_TRANSPARENT_PNG_B64)
+        return send_file(io.BytesIO(png_bytes), mimetype="image/png")
+    except Exception:
+        png_bytes = base64.b64decode(_TRANSPARENT_PNG_B64)
+        return send_file(io.BytesIO(png_bytes), mimetype="image/png")
+
+
 @app.route("/export/selected", methods=["POST"])
 def export_selected():
     ids = request.form.getlist("prompt_ids")
@@ -843,6 +1083,12 @@ def index():
     for p in prompts:
         p["tags"] = tag_map.get(p["id"], [])
         p["group_name"] = group_name_map.get(p.get("group_id"))
+        # Optional: expand descriptor tokens for display/preview
+        p["content"] = inject_descriptors(p.get("content") or "")
+
+        # Optional: expand descriptor tokens for display/preview
+        p["content"] = inject_descriptors(p.get("content") or "")
+
 
     saved_views = get_saved_views()
     all_tags = get_all_tags()
@@ -1435,6 +1681,475 @@ def delete_tool():
             conn.commit()
     return redirect(url_for("manage"))
 
+
+# ----------------------------
+# Descriptor Packs UI
+# ----------------------------
+
+@app.route("/descriptor_packs", methods=["GET", "POST"])
+def descriptor_packs():
+    if request.method == "POST":
+        name = (request.form.get("name") or "").strip() or "Unnamed Pack"
+        pack_type = (request.form.get("pack_type") or "generic").strip() or "generic"
+
+        pack_json_text = (request.form.get("pack_json") or "").strip()
+
+        # Optional file upload
+        if not pack_json_text and "pack_file" in request.files:
+            f = request.files["pack_file"]
+            if f and f.filename:
+                pack_json_text = f.read().decode("utf-8", errors="ignore").strip()
+
+        try:
+            raw_obj = json.loads(pack_json_text) if pack_json_text else {}
+            bundle_descriptors = None
+
+            # Support a "bundle" import format:
+            # { "pack": {...meta...}, "descriptors": [ {...}, ... ] }
+            if isinstance(raw_obj, dict) and ("pack" in raw_obj) and ("descriptors" in raw_obj):
+                pack_meta = raw_obj.get("pack") or {}
+                bundle_descriptors = raw_obj.get("descriptors") or []
+
+                # Allow the bundle to override the form fields
+                name = (pack_meta.get("name") or pack_meta.get("title") or name).strip() or name
+                pack_type = (pack_meta.get("pack_type") or pack_meta.get("type") or pack_type).strip() or pack_type
+
+                pack_obj = {
+                    "schema_version": 1,
+                    "pack_type": pack_type,
+                    "meta": {
+                        "name": name,
+                        "description": pack_meta.get("description") or "",
+                    },
+                    "fields_order": ["text"],
+                    "fields": {
+                        "text": {
+                            "label": "Text",
+                            "type": "textarea",
+                            "required": True,
+                            "placeholder": "Write the descriptor text here...",
+                        }
+                    },
+                    "templates": {
+                        "default": "{text}"
+                    },
+                    "default_template": "default",
+                }
+            else:
+                pack_obj = raw_obj
+
+            pack_obj = normalise_pack(pack_obj)
+            pack_json_text = json.dumps(pack_obj, indent=2, ensure_ascii=False)
+        except Exception as e:
+            flash(f"Invalid JSON pack: {e}", "danger")
+            return redirect(url_for("descriptor_packs"))
+
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with get_db() as conn:
+            cur = conn.execute(
+                "INSERT INTO descriptor_packs (name, pack_type, pack_json, created_at, updated_at) VALUES (?,?,?,?,?)",
+                (name, pack_type, pack_json_text, now, now),
+            )
+            pack_id = cur.lastrowid
+
+            imported_count = 0
+            if bundle_descriptors:
+                for item in bundle_descriptors:
+                    if not isinstance(item, dict):
+                        continue
+                    d_title = (item.get("title") or item.get("name") or "").strip() or f"{name} Descriptor"
+                    # Accept a few possible fields from different generators
+                    d_text = (
+                        item.get("rendered_text")
+                        or item.get("text")
+                        or item.get("render")
+                        or ""
+                    )
+                    if not d_text and isinstance(item.get("values"), dict):
+                        d_text = item["values"].get("text") or ""
+
+                    d_text = str(d_text).strip()
+                    if not d_text:
+                        # Skip empty entries
+                        continue
+
+                    values_json = json.dumps({"text": d_text}, ensure_ascii=False)
+                    conn.execute(
+                        "INSERT INTO descriptors (title, pack_id, pack_type, values_json, rendered_text, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                        (d_title, pack_id, pack_type, values_json, d_text, (item.get("notes") or ""), now, now),
+                    )
+                    imported_count += 1
+
+            conn.commit()
+        if 'imported_count' in locals() and imported_count:
+            flash(f"Descriptor pack created and imported {imported_count} descriptors.", "success")
+        else:
+            flash("Descriptor pack created.", "success")
+        return redirect(url_for("descriptor_packs"))
+
+    return render_template(
+        "descriptor_packs.html",
+        packs=get_descriptor_packs(),
+        pack_types=sorted({p["pack_type"] for p in get_descriptor_packs()} | {"generic", "character", "creature", "environment", "prop", "vehicle", "scene"}),
+    )
+
+@app.route("/descriptor_pack/<int:pack_id>/edit", methods=["GET", "POST"])
+def edit_descriptor_pack(pack_id: int):
+    pack_row = get_descriptor_pack(pack_id)
+    if not pack_row:
+        flash("Pack not found.", "danger")
+        return redirect(url_for("descriptor_packs"))
+
+    if request.method == "POST":
+        name = (request.form.get("name") or "").strip() or pack_row["name"]
+        pack_type = (request.form.get("pack_type") or pack_row["pack_type"] or "generic").strip() or "generic"
+        pack_json_text = (request.form.get("pack_json") or "").strip()
+
+        try:
+            pack_obj = json.loads(pack_json_text) if pack_json_text else {}
+            pack_obj = normalise_pack(pack_obj)
+            pack_json_text = json.dumps(pack_obj, indent=2, ensure_ascii=False)
+        except Exception as e:
+            flash(f"Invalid JSON pack: {e}", "danger")
+            return redirect(url_for("edit_descriptor_pack", pack_id=pack_id))
+
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE descriptor_packs SET name=?, pack_type=?, pack_json=?, updated_at=? WHERE id=?",
+                (name, pack_type, pack_json_text, now, pack_id),
+            )
+            conn.commit()
+
+        flash("Pack updated.", "success")
+        return redirect(url_for("descriptor_packs"))
+
+    return render_template(
+        "edit_descriptor_pack.html",
+        pack=pack_row,
+    )
+
+@app.route("/descriptor_pack/<int:pack_id>/delete", methods=["POST"])
+def delete_descriptor_pack(pack_id: int):
+    with get_db() as conn:
+        conn.execute("DELETE FROM descriptor_packs WHERE id = ?", (pack_id,))
+        conn.commit()
+    flash("Pack deleted.", "success")
+    return redirect(url_for("descriptor_packs"))
+
+# ----------------------------
+# Descriptors UI
+# ----------------------------
+
+@app.route("/descriptors", methods=["GET"])
+def descriptors():
+    pack_type = (request.args.get("type") or "").strip() or None
+    q = (request.args.get("q") or "").strip() or None
+    return render_template(
+        "descriptors.html",
+        descriptors=get_descriptors(pack_type=pack_type, q=q),
+        packs=get_descriptor_packs(pack_type=pack_type) if pack_type else get_descriptor_packs(),
+        pack_type=pack_type,
+        q=q or "",
+        pack_types=sorted({p["pack_type"] for p in get_descriptor_packs()} | {"generic", "character", "creature", "environment", "prop", "vehicle", "scene"}),
+    )
+
+@app.route("/descriptor/new", methods=["GET", "POST"])
+def new_descriptor():
+    pack_id = request.args.get("pack_id", type=int) or request.form.get("pack_id", type=int)
+    pack_row = get_descriptor_pack(pack_id) if pack_id else None
+    if not pack_row:
+        flash("Choose a pack first.", "warning")
+        return redirect(url_for("descriptors"))
+
+    pack_obj = _parse_json_maybe(pack_row["pack_json"], {})
+    pack_obj = normalise_pack(pack_obj)
+
+    if request.method == "POST":
+        title = (request.form.get("title") or "").strip() or "Untitled"
+        notes = (request.form.get("notes") or "").strip()
+        template_key = (request.form.get("template_key") or "").strip() or pack_obj.get("default_template")
+
+        values = {}
+        for field_key in pack_obj.get("fields_order", []):
+            values[field_key] = (request.form.get(f"f_{field_key}") or "").strip()
+
+        rendered = render_from_pack(pack_obj, values, template_key=template_key)
+        if not rendered:
+            flash("Rendered text is empty. Check your template and fields.", "warning")
+
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with get_db() as conn:
+            conn.execute(
+                """
+                INSERT INTO descriptors (title, pack_id, pack_type, values_json, rendered_text, notes, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (title, pack_row["id"], pack_row["pack_type"], json.dumps(values, ensure_ascii=False), rendered, notes, now, now),
+            )
+            conn.commit()
+
+        flash("Descriptor saved.", "success")
+        return redirect(url_for("descriptors", type=pack_row["pack_type"]))
+
+    return render_template(
+        "edit_descriptor.html",
+        mode="new",
+        descriptor=None,
+        pack=pack_row,
+        pack_obj=pack_obj,
+        values={},
+        rendered_preview="",
+        template_key=pack_obj.get("default_template", "default"),
+    )
+
+@app.route("/descriptor/<int:descriptor_id>/edit", methods=["GET", "POST"])
+def edit_descriptor(descriptor_id: int):
+    d = get_descriptor(descriptor_id)
+    if not d:
+        flash("Descriptor not found.", "danger")
+        return redirect(url_for("descriptors"))
+
+    pack_row = get_descriptor_pack(d["pack_id"])
+    if not pack_row:
+        flash("Pack not found for this descriptor.", "danger")
+        return redirect(url_for("descriptors"))
+
+    pack_obj = _parse_json_maybe(pack_row["pack_json"], {})
+    pack_obj = normalise_pack(pack_obj)
+
+    values = _parse_json_maybe(d["values_json"], {})
+    template_key = pack_obj.get("default_template", "default")
+    rendered_preview = d["rendered_text"]
+
+    if request.method == "POST":
+        title = (request.form.get("title") or "").strip() or d["title"]
+        notes = (request.form.get("notes") or "").strip()
+        template_key = (request.form.get("template_key") or "").strip() or template_key
+
+        values = {}
+        for field_key in pack_obj.get("fields_order", []):
+            values[field_key] = (request.form.get(f"f_{field_key}") or "").strip()
+
+        rendered_preview = render_from_pack(pack_obj, values, template_key=template_key)
+
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        with get_db() as conn:
+            conn.execute(
+                """
+                UPDATE descriptors
+                SET title=?, values_json=?, rendered_text=?, notes=?, updated_at=?
+                WHERE id=?
+                """,
+                (title, json.dumps(values, ensure_ascii=False), rendered_preview, notes, now, descriptor_id),
+            )
+            conn.commit()
+
+        flash("Descriptor updated.", "success")
+        return redirect(url_for("descriptors", type=d["pack_type"]))
+
+    return render_template(
+        "edit_descriptor.html",
+        mode="edit",
+        descriptor=d,
+        pack=pack_row,
+        pack_obj=pack_obj,
+        values=values,
+        rendered_preview=rendered_preview,
+        template_key=template_key,
+    )
+
+@app.route("/descriptor/<int:descriptor_id>/delete", methods=["POST"])
+def delete_descriptor(descriptor_id: int):
+    d = get_descriptor(descriptor_id)
+    with get_db() as conn:
+        conn.execute("DELETE FROM descriptors WHERE id = ?", (descriptor_id,))
+        conn.commit()
+    flash("Descriptor deleted.", "success")
+    if d:
+        return redirect(url_for("descriptors", type=d["pack_type"]))
+    return redirect(url_for("descriptors"))
+
+# Quick server-side preview (optional)
+@app.route("/api/descriptor/preview", methods=["POST"])
+def api_descriptor_preview():
+    data = request.get_json(silent=True) or {}
+    pack_id = data.get("pack_id")
+    values = data.get("values") or {}
+    template_key = data.get("template_key")
+    if not pack_id:
+        return jsonify({"ok": False, "error": "pack_id required"}), 400
+
+    pack_row = get_descriptor_pack(int(pack_id))
+    if not pack_row:
+        return jsonify({"ok": False, "error": "pack not found"}), 404
+
+    pack_obj = _parse_json_maybe(pack_row["pack_json"], {})
+    pack_obj = normalise_pack(pack_obj)
+    rendered = render_from_pack(pack_obj, values, template_key=template_key)
+    return jsonify({"ok": True, "rendered": rendered})
+
+
+
+
+@app.route("/api/descriptors/list")
+def api_descriptors_list():
+    """Return a lightweight list of saved descriptors for the prompt editor picker."""
+    pack_type = request.args.get("pack_type", "all")
+    q = (request.args.get("q") or "").strip().lower()
+
+    db = get_db()
+    where = []
+    params = []
+
+    if pack_type and pack_type != "all":
+        where.append("pack_type = ?")
+        params.append(pack_type)
+
+    if q:
+        where.append("(LOWER(title) LIKE ? OR LOWER(rendered_text) LIKE ?)")
+        params.extend([f"%{q}%", f"%{q}%"])
+
+    # Respect NSFW lock: hide obvious NSFW descriptors when locked.
+    # Descriptors do not have a tags join table (like prompts), so use a conservative keyword filter.
+    if not nsfw_is_unlocked():
+        nsfw_clauses = []
+        for t in NSFW_TAGS:
+            t = (t or "").strip().lower()
+            if not t:
+                continue
+            nsfw_clauses.append("(LOWER(title) LIKE ? OR LOWER(rendered_text) LIKE ?)")
+            params.extend([f"%{t}%", f"%{t}%"])
+        if nsfw_clauses:
+            where.append("NOT (" + " OR ".join(nsfw_clauses) + ")")
+
+    sql = "SELECT id, title, pack_type, rendered_text, updated_at FROM descriptors"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY updated_at DESC LIMIT 300"
+
+    rows = db.execute(sql, params).fetchall()
+    return jsonify([{
+        "id": r["id"],
+        "title": r["title"],
+        "pack_type": r["pack_type"],
+        "rendered_text": r["rendered_text"] or ""
+    } for r in rows])
+
+
+
+# ---------------------------
+# Descriptor Remix
+# ---------------------------
+
+@app.route("/remix", methods=["GET"])
+def descriptor_remix():
+    # Hard gate: Remix is hidden/disabled unless Ollama is reachable and has at least one model.
+    if not ollama_is_ready_cached():
+        flash("Remix is unavailable because Ollama is not reachable or no models are loaded.")
+        return redirect(url_for("index"))
+
+    models = ollama_models_cached()
+    return render_template("remix.html", models=models)
+
+
+@app.route("/api/remix/randomise", methods=["POST"])
+def api_remix_randomise():
+    if not ollama_is_ready_cached():
+        return jsonify({"ok": False, "error": "Ollama is not available."}), 400
+
+    data = request.get_json(silent=True) or {}
+    pack_type = (data.get("pack_type") or "all").strip()
+    try:
+        count = int(data.get("count") or 8)
+    except Exception:
+        count = 8
+    count = max(1, min(count, 50))
+
+    db = get_db()
+    where = []
+    params = []
+
+    if pack_type and pack_type != "all":
+        where.append("pack_type = ?")
+        params.append(pack_type)
+
+    if not nsfw_is_unlocked():
+        # Same conservative keyword-based exclusion used by /api/descriptors/list
+        nsfw_clauses = []
+        for t in NSFW_TAGS:
+            t = (t or "").strip().lower()
+            if not t:
+                continue
+            nsfw_clauses.append("(LOWER(title) LIKE ? OR LOWER(rendered_text) LIKE ?)")
+            params.extend([f"%{t}%", f"%{t}%"])
+        if nsfw_clauses:
+            where.append("NOT (" + " OR ".join(nsfw_clauses) + ")")
+
+    sql = "SELECT id, title, pack_type, rendered_text FROM descriptors"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY RANDOM() LIMIT ?"
+    params2 = params + [count]
+
+    rows = db.execute(sql, params2).fetchall()
+    items = [{
+        "id": r["id"],
+        "title": r["title"],
+        "pack_type": r["pack_type"],
+        "rendered_text": (r["rendered_text"] or "").strip()
+    } for r in rows]
+
+    raw = ", ".join([i["rendered_text"] for i in items if i["rendered_text"]])
+    return jsonify({"ok": True, "items": items, "raw": raw})
+
+
+@app.route("/api/remix/rewrite", methods=["POST"])
+def api_remix_rewrite():
+    if not ollama_is_ready_cached():
+        return jsonify({"ok": False, "error": "Ollama is not available."}), 400
+
+    data = request.get_json(silent=True) or {}
+    raw = (data.get("raw") or "").strip()
+    model = (data.get("model") or "").strip() or None
+    user_system = (data.get("system_prompt") or "").strip()
+
+    if not raw:
+        return jsonify({"ok": False, "error": "Nothing to rewrite."}), 400
+
+    # Default guidance aims to: deduplicate, smooth, and collapse fragments into a coherent prompt.
+    default_system = (
+        "You rewrite rough prompt fragments into a single clean, coherent prompt. "
+        "Do NOT preserve the original sentence order if it reads awkwardly. "
+        "Combine related details, remove repetition, and drop orphan fragments that don't fit. "
+        "Keep the result concise but specific. "
+        "Output only the rewritten prompt, no commentary."
+    )
+
+    # Non-negotiable constraints: never invent beyond the supplied descriptors.
+    guardrail = (
+        "NON-NEGOTIABLE RULES: "
+        "Use ONLY attributes explicitly present in the input. "
+        "Do NOT invent, infer, or add new attributes. "
+        "If there are conflicts, resolve them by OMITTING conflicting details, not by inventing a compromise."
+    )
+
+    # Allow the user to steer style/format, but always enforce guardrails.
+    # Limit system prompt length to avoid accidental mega-prompts.
+    if user_system:
+        user_system = user_system[:2000]
+        system = f"{user_system}\n\n{guardrail}"
+    else:
+        system = f"{default_system}\n\n{guardrail}"
+
+    try:
+        rewritten = ollama_generate(raw, model=model, system=system)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Ollama error: {e}"}), 500
+
+    return jsonify({"ok": True, "rewritten": rewritten})
+
+
 @app.route("/bulk_update", methods=["POST"])
 def bulk_update():
     ids = request.form.getlist("prompt_ids")
@@ -1558,6 +2273,24 @@ def restore_backup():
 OLLAMA_DEFAULT_MODEL = "gemma3:4b"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
+
+# Cached readiness detection (prevents hammering /api/tags)
+_OLLAMA_CACHE = {"ts": 0.0, "ready": False, "models": []}
+
+def ollama_models_cached(ttl_seconds: float = 10.0) -> list[str]:
+    now = time.time()
+    if (now - _OLLAMA_CACHE["ts"]) < ttl_seconds:
+        return list(_OLLAMA_CACHE.get("models") or [])
+    models = ollama_list_models()
+    _OLLAMA_CACHE["ts"] = now
+    _OLLAMA_CACHE["models"] = models
+    _OLLAMA_CACHE["ready"] = bool(models)
+    return list(models)
+
+def ollama_is_ready_cached(ttl_seconds: float = 10.0) -> bool:
+    return bool(ollama_models_cached(ttl_seconds=ttl_seconds))
+
+
 def ollama_list_models():
     try:
         r = requests.get("http://localhost:11434/api/tags", timeout=1.5)
@@ -1658,7 +2391,7 @@ def refine_prompt(prompt_id: int):
                         prompt["notes"],
                         prompt["thumbnail"],
                         parent_id,
-                        prompt.get("group_id"),
+                        (prompt["group_id"] if ("group_id" in prompt.keys()) else None),
                         datetime.utcnow().isoformat(),
                         datetime.utcnow().isoformat(),
                     )
@@ -1682,7 +2415,7 @@ def refine_prompt(prompt_id: int):
                         prompt["notes"],
                         prompt["thumbnail"],
                         None,
-                        prompt.get("group_id"),
+                        (prompt["group_id"] if ("group_id" in prompt.keys()) else None),
                         datetime.utcnow().isoformat(),
                         datetime.utcnow().isoformat(),
                     ),
@@ -1717,7 +2450,7 @@ def save_from_use(prompt_id: int):
                 INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], content, prompt["notes"], prompt["thumbnail"], parent_id, prompt.get("group_id"), now, now),
+                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], content, prompt["notes"], prompt["thumbnail"], parent_id, (prompt["group_id"] if ("group_id" in prompt.keys()) else None), now, now),
             )
             new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             # Copy tags to the variant

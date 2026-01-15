@@ -13,7 +13,7 @@
 
   <div class="card-thumb-area">
     {% if p.thumbnail %}
-      <img class="thumb" src="{{ url_for('static', filename=p.thumbnail) }}" alt="Thumbnail">
+      <img class="thumb" src="{{ url_for('serve_thumbnail', prompt_id=p.id) }}" alt="Thumbnail">
     {% else %}
       <div class="thumb-placeholder">{{ (p.category or '?')[:1] }}</div>
     {% endif %}

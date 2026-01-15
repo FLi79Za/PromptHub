@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Descriptors</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:20px;}
+    table{border-collapse:collapse;width:100%;}
+    th,td{border-bottom:1px solid #ddd;padding:8px;vertical-align:top;}
+    input,select,button{padding:8px;}
+    .row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;}
+    pre{white-space:pre-wrap;margin:0;font-family:ui-monospace,Consolas,monospace;}
+  </style>
+</head>
+<body>
+  <h1>Descriptors</h1>
+  <p><a href="{{ url_for('index') }}">Home</a> | <a href="{{ url_for('descriptor_packs') }}">Descriptor Packs</a> | <a href="{{ url_for('manage') }}">Manage</a></p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <ul>
+        {% for cat,msg in messages %}
+          <li><strong>{{ cat }}</strong>: {{ msg }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+
+  <form method="get" class="row">
+    <label>Type<br>
+      <select name="type">
+        <option value="">All</option>
+        {% for t in pack_types %}
+          <option value="{{ t }}" {% if pack_type==t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Search<br>
+      <input name="q" value="{{ q }}" placeholder="title, notes, rendered text">
+    </label>
+    <button type="submit">Filter</button>
+  </form>
+
+  <h2>Create new</h2>
+  <ul>
+    {% for p in packs %}
+      <li>
+        <strong>{{ p["pack_type"] }}</strong> – {{ p["name"] }}
+        (<a href="{{ url_for('new_descriptor', pack_id=p['id']) }}">New</a>)
+      </li>
+    {% endfor %}
+  </ul>
+
+  <h2>Saved ({{ descriptors|length }})</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Pack</th>
+        <th>Updated</th>
+        <th>Rendered</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in descriptors %}
+        <tr>
+          <td>{{ d["title"] }}</td>
+          <td>{{ d["pack_name"] }}<br><small>{{ d["pack_type"] }}</small></td>
+          <td>{{ d["updated_at"] }}</td>
+          <td><pre>{{ d["rendered_text"] }}</pre></td>
+          <td>
+            <a href="{{ url_for('edit_descriptor', descriptor_id=d['id']) }}">Edit</a>
+            |
+            <form method="post" action="{{ url_for('delete_descriptor', descriptor_id=d['id']) }}" style="display:inline" onsubmit="return confirm('Delete this descriptor?');">
+              <button type="submit">Delete</button>
+            </form>
+            |
+            <button type="button" onclick="navigator.clipboard.writeText({{ d['rendered_text']|tojson }});">Copy</button>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

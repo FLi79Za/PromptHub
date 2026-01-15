@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-header">
+  <h2>Descriptor Remix</h2>
+  <p class="muted" style="margin-top:6px;">
+    Mix descriptors into rough prompt material, then optionally ask Ollama to rewrite it into a clean prompt. Nothing is auto-saved.
+  </p>
+</div>
+
+<div class="panel" style="display:grid; grid-template-columns: 360px 1fr; gap:16px;">
+  <!-- Left: Controls + Picker -->
+  <div class="card" style="padding:14px;">
+    <h3 style="margin-top:0;">Build a remix</h3>
+
+    <label class="label">Descriptor pack type</label>
+    <select id="packType" class="input">
+      <option value="all">All</option>
+      <option value="character">Character</option>
+      <option value="creature">Creature</option>
+      <option value="style">Style</option>
+      <option value="scene">Scene</option>
+      <option value="environment">Environment</option>
+      <option value="camera">Camera</option>
+      <option value="lighting">Lighting</option>
+      <option value="misc">Misc</option>
+    </select>
+
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:12px;">
+      <div>
+        <label class="label">Random count</label>
+        <input id="count" class="input" type="number" min="1" max="50" value="8">
+      </div>
+      <div>
+        <label class="label">Ollama model</label>
+        <select id="model" class="input">
+          {% for m in models %}
+            <option value="{{ m }}">{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
+      <button id="btnRandom" class="btn-primary" type="button">Randomise</button>
+      <button id="btnCompose" class="btn-secondary" type="button" title="Compose from your selected descriptors">Compose selected</button>
+      <button id="btnClear" class="btn-secondary" type="button">Clear selection</button>
+    </div>
+
+    <hr style="margin:14px 0; opacity:0.25;">
+
+    <h4 style="margin:0 0 10px;">Pick descriptors (optional)</h4>
+
+    <input id="search" class="input" type="text" placeholder="Search descriptors..." autocomplete="off">
+
+    <div id="picker" class="card" style="margin-top:10px; padding:10px; max-height:360px; overflow:auto;">
+      <div class="muted">Loading descriptors...</div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <div class="label">Selected</div>
+      <div id="selected" class="card" style="padding:10px; max-height:160px; overflow:auto;">
+        <div class="muted">Nothing selected yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Output -->
+  <div class="card" style="padding:14px;">
+    <div style="display:flex; gap:10px; align-items:center; justify-content:space-between;">
+      <h3 style="margin:0;">Output</h3>
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button id="btnRewrite" class="btn-primary" type="button">Rewrite with Ollama</button>
+        <button id="btnCopyRaw" class="btn-secondary" type="button">Copy raw</button>
+        <button id="btnCopyRewritten" class="btn-secondary" type="button">Copy rewritten</button>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label class="label">Raw mash-up</label>
+      <textarea id="raw" class="input" rows="7" placeholder="Randomise or compose selected descriptors to generate rough prompt fragments..."></textarea>
+    </div>
+
+
+    <div style="margin-top:12px;">
+      <label class="label">Rewrite instructions (system prompt)</label>
+      <textarea id="systemPrompt" class="input" rows="6" placeholder="Optional. Guide Ollama on tone/format, e.g. 'Write a single cinematic paragraph, no lists.'"></textarea>
+      <div class="muted" style="margin-top:6px; display:flex; gap:10px; flex-wrap:wrap;">
+        <button id="btnSystemDefault" class="btn-secondary" type="button">Use default</button>
+        <span>Style guidance is allowed, but Remix will still enforce “no invention” rules.</span>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label class="label">Rewritten prompt</label>
+      <textarea id="rewritten" class="input" rows="10" placeholder="Click 'Rewrite with Ollama' to clean this up into a coherent prompt..."></textarea>
+    </div>
+
+    <div id="status" class="muted" style="margin-top:10px;"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const packTypeEl = document.getElementById("packType");
+  const countEl = document.getElementById("count");
+  const modelEl = document.getElementById("model");
+  const searchEl = document.getElementById("search");
+  const pickerEl = document.getElementById("picker");
+  const selectedEl = document.getElementById("selected");
+  const rawEl = document.getElementById("raw");
+  const rewrittenEl = document.getElementById("rewritten");
+  const systemPromptEl = document.getElementById("systemPrompt");
+  const statusEl = document.getElementById("status");
+
+  const btnRandom = document.getElementById("btnRandom");
+  const btnCompose = document.getElementById("btnCompose");
+  const btnClear = document.getElementById("btnClear");
+  const btnRewrite = document.getElementById("btnRewrite");
+  const btnCopyRaw = document.getElementById("btnCopyRaw");
+  const btnCopyRewritten = document.getElementById("btnCopyRewritten");
+  const btnSystemDefault = document.getElementById("btnSystemDefault");
+
+  // Selected descriptors: id -> {id,title,rendered_text,pack_type}
+  const selected = new Map();
+
+  function setStatus(msg) {
+    statusEl.textContent = msg || "";
+  }
+
+  function escapeHtml(s) {
+    return (s || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  }
+
+  function renderSelected() {
+    if (selected.size === 0) {
+      selectedEl.innerHTML = '<div class="muted">Nothing selected yet.</div>';
+      return;
+    }
+    const items = Array.from(selected.values());
+    selectedEl.innerHTML = items.map(it => `
+      <div style="display:flex; gap:10px; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06);">
+        <div style="min-width:0;">
+          <div style="font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(it.title)}</div>
+          <div class="muted" style="font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(it.rendered_text)}</div>
+        </div>
+        <button class="btn-secondary" type="button" data-remove="${it.id}" style="padding:6px 10px;">Remove</button>
+      </div>
+    `).join("");
+    selectedEl.querySelectorAll("button[data-remove]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        selected.delete(btn.getAttribute("data-remove"));
+        renderSelected();
+      });
+    });
+  }
+
+  async function loadDescriptors() {
+    const pt = packTypeEl.value || "all";
+    const q = (searchEl.value || "").trim();
+    const url = `/api/descriptors/list?pack_type=${encodeURIComponent(pt)}&q=${encodeURIComponent(q)}`;
+
+    pickerEl.innerHTML = '<div class="muted">Loading descriptors...</div>';
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!Array.isArray(data)) {
+        pickerEl.innerHTML = '<div class="muted">No descriptors found.</div>';
+        return;
+      }
+      if (data.length === 0) {
+        pickerEl.innerHTML = '<div class="muted">No descriptors found.</div>';
+        return;
+      }
+
+      pickerEl.innerHTML = data.map(d => `
+        <label style="display:block; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.06); cursor:pointer;">
+          <input type="checkbox" data-id="${d.id}" style="margin-right:8px;">
+          <span style="font-weight:600;">${escapeHtml(d.title)}</span>
+          <div class="muted" style="font-size:12px; margin-left:22px;">${escapeHtml(d.rendered_text || "")}</div>
+        </label>
+      `).join("");
+
+      // Preserve checkbox states for already-selected items
+      pickerEl.querySelectorAll("input[type=checkbox][data-id]").forEach(cb => {
+        const id = cb.getAttribute("data-id");
+        cb.checked = selected.has(id);
+        cb.addEventListener("change", () => {
+          const row = data.find(x => String(x.id) === String(id));
+          if (!row) return;
+          if (cb.checked) selected.set(String(id), { ...row, id: String(row.id) });
+          else selected.delete(String(id));
+          renderSelected();
+        });
+      });
+    } catch (e) {
+      pickerEl.innerHTML = '<div class="muted">Failed to load descriptors.</div>';
+    }
+  }
+
+  function composeSelectedToRaw() {
+    if (selected.size === 0) {
+      setStatus("Select some descriptors first, or use Randomise.");
+      return;
+    }
+    const parts = Array.from(selected.values())
+      .map(x => (x.rendered_text || "").trim())
+      .filter(Boolean);
+    rawEl.value = parts.join(", ");
+    setStatus(`Composed ${parts.length} selected descriptors.`);
+  }
+
+  async function randomise() {
+    setStatus("Randomising...");
+    rewrittenEl.value = "";
+    const payload = {
+      pack_type: packTypeEl.value || "all",
+      count: Number(countEl.value || 8)
+    };
+    try {
+      const res = await fetch("/api/remix/randomise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setStatus(data.error || "Randomise failed.");
+        return;
+      }
+      rawEl.value = data.raw || "";
+      setStatus(`Randomised ${Array.isArray(data.items) ? data.items.length : 0} descriptors.`);
+    } catch (e) {
+      setStatus("Randomise failed.");
+    }
+  }
+
+  async function rewrite() {
+    const raw = (rawEl.value || "").trim();
+    if (!raw) {
+      setStatus("Nothing to rewrite. Randomise or compose something first.");
+      return;
+    }
+    setStatus("Rewriting with Ollama...");
+    try {
+      const res = await fetch("/api/remix/rewrite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ raw, model: modelEl.value || "", system_prompt: (systemPromptEl.value || "").trim() })
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setStatus(data.error || "Rewrite failed.");
+        return;
+      }
+      rewrittenEl.value = data.rewritten || "";
+      setStatus("Rewrite complete.");
+    } catch (e) {
+      setStatus("Rewrite failed.");
+    }
+  }
+
+  async function copyText(el, label) {
+    try {
+      await navigator.clipboard.writeText(el.value || "");
+      setStatus(`Copied ${label}.`);
+    } catch (e) {
+      // fallback
+      el.select();
+      document.execCommand("copy");
+      setStatus(`Copied ${label}.`);
+    }
+  }
+
+  // Events
+  packTypeEl.addEventListener("change", () => loadDescriptors());
+  searchEl.addEventListener("input", () => {
+    // soft debounce
+    window.clearTimeout(searchEl._t);
+    searchEl._t = window.setTimeout(loadDescriptors, 200);
+  });
+
+  btnRandom.addEventListener("click", randomise);
+  btnCompose.addEventListener("click", composeSelectedToRaw);
+  btnClear.addEventListener("click", () => {
+    selected.clear();
+    renderSelected();
+    // also uncheck visible checkboxes
+    pickerEl.querySelectorAll("input[type=checkbox][data-id]").forEach(cb => cb.checked = false);
+    setStatus("Selection cleared.");
+  });
+
+  btnRewrite.addEventListener("click", rewrite);
+  btnCopyRaw.addEventListener("click", () => copyText(rawEl, "raw prompt"));
+  btnCopyRewritten.addEventListener("click", () => copyText(rewrittenEl, "rewritten prompt"));
+
+  // Default system prompt (user can override)
+  const DEFAULT_SYSTEM_PROMPT = 'Rewrite the mashed-up descriptors into ONE clean, coherent prompt. Prefer a single paragraph. Remove repetition. Keep it concise but specific. Do not include bullet points, headings, or commentary.';
+
+  // Pre-fill the system prompt box
+  systemPromptEl.value = DEFAULT_SYSTEM_PROMPT;
+
+  btnSystemDefault.addEventListener("click", () => {
+    systemPromptEl.value = DEFAULT_SYSTEM_PROMPT;
+    setStatus("System prompt reset to default.");
+  });
+
+  // Init
+  renderSelected();
+  loadDescriptors();
+})();
+</script>
+
+{% endblock %}

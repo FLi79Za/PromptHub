@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{% if mode=='new' %}New{% else %}Edit{% endif %} Descriptor</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:20px;}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}
+    label{display:block;}
+    select,input,textarea,button{padding:8px;width:100%;}
+    textarea{min-height:160px;font-family:ui-monospace,Consolas,monospace;}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;}
+    .card{border:1px solid #ddd;border-radius:8px;padding:12px;}
+  </style>
+</head>
+<body>
+  <h1>{% if mode=='new' %}New{% else %}Edit{% endif %} Descriptor</h1>
+  <p><a href="{{ url_for('descriptors', type=pack['pack_type']) }}">Back to descriptors</a></p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <ul>
+        {% for cat,msg in messages %}
+          <li><strong>{{ cat }}</strong>: {{ msg }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+
+  <form method="post" id="descForm">
+    <input type="hidden" name="pack_id" value="{{ pack['id'] }}">
+
+    <div class="row">
+      <label style="flex:1;min-width:260px;">Title<br>
+        <input name="title" value="{{ descriptor['title'] if descriptor else '' }}" placeholder="eg Night Market Alley">
+      </label>
+      <label style="min-width:220px;">Template<br>
+        <select name="template_key" id="template_key">
+          {% for k in pack_obj['templates'].keys() %}
+            <option value="{{ k }}" {% if template_key==k %}selected{% endif %}>{{ k }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="button" style="min-width:160px;" onclick="randomiseAll()">Randomise all</button>
+    </div>
+
+    <div class="grid card">
+      {% for key in pack_obj['fields_order'] %}
+        {% set f = pack_obj['fields'][key] %}
+        <label>{{ f.get('label', key) }}<br>
+          <select name="f_{{ key }}" data-field="{{ key }}" onchange="updatePreview()">
+            <option value=""></option>
+            {% for opt in (f.get('options') or []) %}
+              <option value="{{ opt }}" {% if values.get(key,'')==opt %}selected{% endif %}>{{ opt }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <label>Notes<br>
+        <textarea name="notes" placeholder="optional notes...">{{ descriptor['notes'] if descriptor else '' }}</textarea>
+      </label>
+      <label style="margin-top:0.75rem; display:flex; gap:0.5rem; align-items:center;">
+        <input type="checkbox" name="nsfw" {% if descriptor and descriptor['nsfw'] %}checked{% endif %}>
+        Mark as NSFW (hidden when NSFW lock is on)
+      </label>
+    </div>
+
+    <div class="card">
+      <label>Rendered preview<br>
+        <textarea id="rendered" readonly>{{ rendered_preview }}</textarea>
+      </label>
+      <div class="row">
+        <button type="button" style="min-width:160px;" onclick="navigator.clipboard.writeText(document.getElementById('rendered').value)">Copy</button>
+        <button type="submit" style="min-width:160px;">Save</button>
+      </div>
+    </div>
+  </form>
+
+<script>
+async function updatePreview(){
+  const values = {};
+  document.querySelectorAll('select[data-field]').forEach(sel => {
+    values[sel.dataset.field] = sel.value || "";
+  });
+  const body = {
+    pack_id: {{ pack['id'] }},
+    template_key: document.getElementById('template_key').value,
+    values: values
+  };
+  const res = await fetch("{{ url_for('api_descriptor_preview') }}", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if(data && data.ok){
+    document.getElementById('rendered').value = data.rendered || "";
+  }
+}
+
+function randomiseAll(){
+  document.querySelectorAll('select[data-field]').forEach(sel => {
+    const opts = Array.from(sel.options).slice(1);
+    if(opts.length){
+      sel.value = opts[Math.floor(Math.random()*opts.length)].value;
+    }
+  });
+  updatePreview();
+}
+
+document.getElementById('template_key').addEventListener('change', updatePreview);
+updatePreview();
+</script>
+</body>
+</html>

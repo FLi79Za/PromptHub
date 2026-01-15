@@ -22,7 +22,28 @@
         </li>
       {% endfor %}
     </ul>
+
     <hr style="border-color:#333;">
+
+    <!-- Descriptors / Packs navigation -->
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:1rem;">
+      <h3 style="margin:0;">Builders</h3>
+    </div>
+    <ul class="view-list" style="list-style:none; padding:0; margin: 1rem 0;">
+      <li style="margin-bottom:0.5rem;">
+        <a href="{{ url_for('descriptors') }}" class="btn-secondary" style="display:block; text-align:left; {% if request.endpoint == 'descriptors' %}font-weight:bold; border-color:#666;{% endif %}">
+          Descriptors
+        </a>
+      </li>
+      <li style="margin-bottom:0.5rem;">
+        <a href="{{ url_for('descriptor_packs') }}" class="btn-secondary" style="display:block; text-align:left; {% if request.endpoint == 'descriptor_packs' %}font-weight:bold; border-color:#666;{% endif %}">
+          Descriptor Packs
+        </a>
+      </li>
+    </ul>
+
+    <hr style="border-color:#333;">
+
     <form method="post" action="{{ url_for('save_view') }}" style="margin-top:1rem;">
       <input type="hidden" name="query_string" value="{{ request.query_string.decode() }}">
       <label style="font-size:0.85em;">Save current filters as:</label>

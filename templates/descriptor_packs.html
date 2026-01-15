@@ -1,0 +1,85 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Descriptor Packs</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:20px;}
+    table{border-collapse:collapse;width:100%;}
+    th,td{border-bottom:1px solid #ddd;padding:8px;vertical-align:top;}
+    .row{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;}
+    .card{border:1px solid #ddd;border-radius:8px;padding:12px;min-width:320px;flex:1;}
+    textarea{width:100%;min-height:220px;font-family:ui-monospace,Consolas,monospace;}
+    input,select,button{padding:8px;}
+    .actions form{display:inline;}
+  </style>
+</head>
+<body>
+  <h1>Descriptor Packs</h1>
+  <p><a href="{{ url_for('index') }}">Home</a> | <a href="{{ url_for('descriptors') }}">Descriptors</a> | <a href="{{ url_for('manage') }}">Manage</a></p>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <ul>
+        {% for cat,msg in messages %}
+          <li><strong>{{ cat }}</strong>: {{ msg }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  {% endwith %}
+
+  <div class="row">
+    <div class="card">
+      <h2>Create pack</h2>
+      <form method="post" enctype="multipart/form-data">
+        <p><label>Name<br><input name="name" placeholder="Humans Core" style="width:100%"></label></p>
+        <p><label>Type<br>
+          <select name="pack_type" style="width:100%">
+            {% for t in pack_types %}
+              <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+          </select>
+        </label></p>
+
+        <p><label>Upload JSON file (optional)<br><input type="file" name="pack_file"></label></p>
+
+        <p><label>...or paste JSON here<br>
+          <textarea name="pack_json" placeholder='{"fields_order": [...], "fields": {...}, "templates": {...}}'></textarea>
+        </label></p>
+
+        <button type="submit">Create pack</button>
+      </form>
+    </div>
+
+    <div class="card" style="flex:2">
+      <h2>Existing packs ({{ packs|length }})</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Updated</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in packs %}
+            <tr>
+              <td>{{ p["name"] }}</td>
+              <td>{{ p["pack_type"] }}</td>
+              <td>{{ p["updated_at"] }}</td>
+              <td class="actions">
+                <a href="{{ url_for('edit_descriptor_pack', pack_id=p['id']) }}">Edit</a>
+                |
+                <form method="post" action="{{ url_for('delete_descriptor_pack', pack_id=p['id']) }}" onsubmit="return confirm('Delete this pack? This will also delete its saved descriptors.');">
+                  <button type="submit">Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>

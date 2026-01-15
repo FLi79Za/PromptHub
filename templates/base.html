@@ -17,6 +17,10 @@
         <a href="{{ url_for('import_prompt') }}">Import</a>
         <a href="{{ url_for('manage') }}">Manage</a>
 
+        {% if ollama_ready %}
+          <a href="{{ url_for('descriptor_remix') }}">Remix</a>
+        {% endif %}
+
         {# Subtle content visibility toggle #}
         {% if nsfw_unlocked %}
           <form action="{{ url_for('nsfw_lock') }}" method="post" style="display:inline;">

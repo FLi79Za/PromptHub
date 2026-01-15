@@ -59,8 +59,8 @@
           <span id="copyFeedback" style="font-size:0.85em; color:#51cf66; opacity:0; transition:opacity 0.3s;">Copied!</span>
       </div>
 
-      <textarea id="templateSource" style="display:none;">{{ prompt.content }}</textarea>
-      <textarea name="content" id="finalOutput" rows="12" style="font-family:monospace; line-height:1.5; font-size:1.1em; padding:1rem;">{{ prompt.content }}</textarea>
+      <textarea id="templateSource" style="display:none;">{{ final_text or prompt.content }}</textarea>
+      <textarea name="content" id="finalOutput" rows="12" style="font-family:monospace; line-height:1.5; font-size:1.1em; padding:1rem;">{{ final_text or prompt.content }}</textarea>
 
       <div class="action-bar" style="margin-top:1rem; display:flex; gap:1rem; flex-wrap:wrap;">
           <button type="button" class="btn-primary" onclick="copyToClipboard()" style="flex:2;">Copy to Clipboard</button>
