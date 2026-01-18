@@ -260,13 +260,6 @@
         <input id="descSearch" type="text" placeholder="Search descriptors..." style="min-width:240px;">
         <select id="descType">
           <option value="all">All types</option>
-          <option value="character">character</option>
-          <option value="creature">creature</option>
-          <option value="environment">environment</option>
-          <option value="scene">scene</option>
-          <option value="prop">prop</option>
-          <option value="vehicle">vehicle</option>
-          <option value="other">other</option>
         </select>
 
         <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.9em; opacity:0.95;">
@@ -295,7 +288,7 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', () => {
+function initEditPromptPage() {
 
     // ==========================================
     // 0. DESCRIPTOR PICKER (Optional)
@@ -312,6 +305,37 @@ document.addEventListener('DOMContentLoaded', () => {
     const insertAsToken = document.getElementById('insertAsToken');
 
     let selectedDescriptor = null;
+
+    let descTypesLoaded = false;
+
+    async function loadDescriptorTypes() {
+      if (!descType) return;
+      try {
+        const res = await fetch('/api/descriptors/types', { headers: { 'Accept': 'application/json' } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const types = await res.json();
+        const current = descType.value || 'all';
+
+        descType.innerHTML = '';
+        const optAll = document.createElement('option');
+        optAll.value = 'all';
+        optAll.textContent = 'All types';
+        descType.appendChild(optAll);
+
+        (Array.isArray(types) ? types : []).forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          descType.appendChild(opt);
+        });
+
+        descType.value = (Array.isArray(types) && types.includes(current)) ? current : 'all';
+      } catch (e) {
+        console.error('Failed to load descriptor types', e);
+        // Leave dropdown as-is (at least "All types")
+      }
+    }
+
 
     function getPromptTextarea() {
       return document.getElementById('content') || document.querySelector('textarea[name="content"]') || document.querySelector('textarea');
@@ -339,7 +363,11 @@ document.addEventListener('DOMContentLoaded', () => {
         selectedDescriptor = null;
         if (descPreview) descPreview.textContent = '';
         if (descSearch) descSearch.value = '';
-        fetchDescriptors();
+        if (!descTypesLoaded) {
+          loadDescriptorTypes().finally(() => { descTypesLoaded = true; fetchDescriptors(); });
+        } else {
+          fetchDescriptors();
+        }
         setTimeout(() => { if (descSearch) descSearch.focus(); }, 50);
       }
     }
@@ -633,6 +661,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
-});
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initEditPromptPage);
+} else {
+  initEditPromptPage();
+}
 </script>
 {% endblock %}

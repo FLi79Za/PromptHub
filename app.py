@@ -1738,6 +1738,16 @@ def descriptor_packs():
             else:
                 pack_obj = raw_obj
 
+                # If the imported JSON contains a pack_type/type, prefer it over the form value
+                if isinstance(pack_obj, dict):
+                    inferred_type = (
+                        (pack_obj.get("pack_type") or pack_obj.get("type"))
+                        or ((pack_obj.get("meta") or {}).get("pack_type"))
+                        or ((pack_obj.get("meta") or {}).get("type"))
+                    )
+                    if inferred_type:
+                        pack_type = str(inferred_type).strip() or pack_type
+
             pack_obj = normalise_pack(pack_obj)
             pack_json_text = json.dumps(pack_obj, indent=2, ensure_ascii=False)
         except Exception as e:
@@ -1818,6 +1828,11 @@ def edit_descriptor_pack(pack_id: int):
             conn.execute(
                 "UPDATE descriptor_packs SET name=?, pack_type=?, pack_json=?, updated_at=? WHERE id=?",
                 (name, pack_type, pack_json_text, now, pack_id),
+            )
+            # Keep existing descriptors aligned with the new pack_type
+            conn.execute(
+                "UPDATE descriptors SET pack_type=?, updated_at=? WHERE pack_id=?",
+                (pack_type, now, pack_id),
             )
             conn.commit()
 
@@ -2035,6 +2050,24 @@ def api_descriptors_list():
         "pack_type": r["pack_type"],
         "rendered_text": r["rendered_text"] or ""
     } for r in rows])
+
+
+@app.route("/api/descriptors/types")
+@app.route("/api/descriptors/types")
+def api_descriptors_types():
+    """Return all known descriptor pack types (for UI dropdowns)."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT DISTINCT pack_type FROM descriptor_packs WHERE pack_type IS NOT NULL AND pack_type != ''"
+    ).fetchall()
+
+    defaults = {"generic", "character", "creature", "environment", "scene", "prop", "vehicle", "other"}
+
+    types = sorted(
+        {(r["pack_type"] or "").strip() for r in rows if (r["pack_type"] or "").strip()}
+        | defaults
+    )
+    return jsonify(types)
 
 
 
