@@ -213,11 +213,18 @@ function togglePreview(id){
 function copyPrompt(id){
   const el = document.querySelector(`#preview-${id} pre`);
   if(el) {
-      navigator.clipboard.writeText(el.innerText);
+      const text = el.innerText;
+      navigator.clipboard.writeText(text);
       const btn = event.target;
       const originalText = btn.textContent;
       btn.textContent = "Copied!";
       setTimeout(() => btn.textContent = originalText, 1500);
+
+      fetch("/api/prompt/" + id + "/usage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: text, source: "index" })
+      }).catch(() => {});
   } else {
       alert("Please open the preview first to copy the text.");
   }

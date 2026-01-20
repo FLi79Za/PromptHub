@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page" style="max-width: 900px; margin: 0 auto;">
+
+  <div class="page-header" style="margin-bottom: 1rem; display:flex; justify-content:space-between; gap:1rem; flex-wrap:wrap; align-items:end;">
+    <div>
+      <h2 style="margin:0;">Prompt History</h2>
+      <h3 style="margin:0; opacity: 0.6; font-weight: normal;">{{ prompt.title }}</h3>
+      <div style="margin-top:0.25rem; font-size:0.9em; opacity:0.7;">Saved snapshots appear when you copy from the Use page.</div>
+    </div>
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+      <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}" style="text-decoration:none;">Back to Use</a>
+      <a class="btn-secondary" href="{{ url_for('index') }}" style="text-decoration:none;">Library</a>
+    </div>
+  </div>
+
+  {% if not uses or uses|length == 0 %}
+    <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:1rem;">
+      No history yet. Open the prompt, tweak it, and click Copy to Clipboard.
+    </div>
+  {% else %}
+
+    {% for u in uses %}
+      <div style="border:1px solid var(--border); border-radius:8px; padding:1rem; background:var(--surface-2); margin-bottom:1rem;">
+        <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-bottom:0.75rem;">
+          <div style="font-size:0.9em; opacity:0.75;">
+            {{ u['created_at'] }}{% if u['source'] %} · {{ u['source'] }}{% endif %}
+          </div>
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <button type="button" class="btn-secondary" onclick="copyHistoryText('h{{ u['id'] }}')">Copy</button>
+          </div>
+        </div>
+
+        <textarea id="h{{ u['id'] }}" rows="7" style="font-family:monospace; line-height:1.45; font-size:0.95em; padding:0.75rem;">{{ u['content'] }}</textarea>
+      </div>
+    {% endfor %}
+
+  {% endif %}
+
+</section>
+
+<script>
+function copyHistoryText(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const text = el.value || "";
+  if (!text) return;
+
+  navigator.clipboard.writeText(text).catch(() => {
+    try {
+      el.focus();
+      el.select();
+    } catch (e) {}
+  });
+}
+</script>
+
+{% endblock %}

@@ -254,8 +254,25 @@ def init_db() -> None:
         for t in ["Generic", "Flux", "Flux Kontext", "Qwen Edit", "Nano Banana", "Z-Image", "Suno", "RVC", "Other"]:
             conn.execute("INSERT INTO tools (name) VALUES (?)", (t,))
 
-    conn.commit()
-    conn.close()
+    
+    # Prompt usage history
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS prompt_uses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt_id INTEGER NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            source TEXT,
+            FOREIGN KEY(prompt_id) REFERENCES prompts(id) ON DELETE CASCADE
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_prompt_uses_prompt_id_created_at
+        ON prompt_uses(prompt_id, created_at DESC)
+    """)
+
+#conn.commit()
+ #   conn.close()
 
 def get_categories() -> list[str]:
     with get_db() as conn:
@@ -2633,6 +2650,90 @@ def api_generate_refinement():
         return jsonify({"success": True, "content": refined})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+
+
+
+@app.route("/api/prompt/<int:prompt_id>/usage", methods=["GET", "POST"])
+def api_prompt_usage(prompt_id):
+    init_db()
+    with get_db() as conn:
+        p = conn.execute(
+            "SELECT id FROM prompts WHERE id = ?",
+            (prompt_id,),
+        ).fetchone()
+        if not p:
+            return jsonify({"ok": False, "error": "not found"}), 404
+
+        if request.method == "POST":
+            data = request.get_json(silent=True) or {}
+            content = (data.get("content") or "").strip()
+            source = (data.get("source") or "clipboard").strip()
+
+            if not content:
+                return jsonify({"ok": False, "error": "empty"}), 400
+
+            last = conn.execute(
+                "SELECT content FROM prompt_uses WHERE prompt_id = ? ORDER BY created_at DESC LIMIT 1",
+                (prompt_id,),
+            ).fetchone()
+
+            if last and (last["content"] or "") == content:
+                return jsonify({"ok": True, "deduped": True})
+
+            now = datetime.utcnow().isoformat(timespec="seconds")
+            conn.execute(
+                "INSERT INTO prompt_uses (prompt_id, content, created_at, source) VALUES (?,?,?,?)",
+                (prompt_id, content, now, source),
+            )
+
+            conn.execute(
+                """
+                DELETE FROM prompt_uses
+                WHERE id IN (
+                    SELECT id FROM prompt_uses
+                    WHERE prompt_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT -1 OFFSET 250
+                )
+                """,
+                (prompt_id,),
+            )
+
+            conn.commit()
+            return jsonify({"ok": True})
+
+        rows = conn.execute(
+            "SELECT id, content, created_at, source FROM prompt_uses WHERE prompt_id = ? ORDER BY created_at DESC LIMIT 20",
+            (prompt_id,),
+        ).fetchall()
+
+        return jsonify([dict(r) for r in rows])
+
+
+@app.route("/prompt/<int:prompt_id>/history")
+def prompt_history(prompt_id):
+    init_db()
+    with get_db() as conn:
+        prompt = conn.execute(
+            "SELECT * FROM prompts WHERE id = ?",
+            (prompt_id,),
+        ).fetchone()
+        if not prompt:
+            flash("Prompt not found")
+            return redirect(url_for("index"))
+
+        rows = conn.execute(
+            "SELECT * FROM prompt_uses WHERE prompt_id = ? ORDER BY created_at DESC",
+            (prompt_id,),
+        ).fetchall()
+
+    return render_template(
+        "prompt_history.html",
+        prompt=prompt,
+        uses=rows,
+    )
 
 
 # --- MAIN BLOCK MUST BE LAST ---

@@ -9,6 +9,7 @@
       <h3 style="margin:0; opacity: 0.6; font-weight: normal;">{{ prompt.title }}</h3>
     </div>
     <a class="btn-secondary" href="{{ url_for('index') }}">Back to Library</a>
+    <a class="btn-secondary" href="{{ url_for('prompt_history', prompt_id=prompt.id) }}" style="margin-left:0.5rem;">History</a>
   </div>
 
   {% if variants and variants|length > 1 %}
@@ -115,10 +116,52 @@
       <div style="display:flex; gap:0.75rem; align-items:center;">
         <span id="descriptorInsertFeedback" style="font-size:0.85em; color:#51cf66; opacity:0; transition:opacity 0.3s;">Inserted!</span>
         <span id="copyFeedback" style="font-size:0.85em; color:#51cf66; opacity:0; transition:opacity 0.3s;">Copied!</span>
+        <span id="replaceFeedback" style="font-size:0.85em; color:#51cf66; opacity:0; transition:opacity 0.3s;">Replaced!</span>
       </div>
     </div>
 
+    <!-- Find + Replace -->
+    <details id="findReplacePanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1rem; border:1px solid #333;">
+      <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+        <span style="font-weight:bold;">🔎 Find & Replace</span>
+        <span style="opacity:0.7; font-size:0.9em;">Click to toggle</span>
+      </summary>
+
+      <div style="margin-top:1rem; display:flex; flex-direction:column; gap:0.75rem;">
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+          <input id="frFind" type="text" placeholder="Find…" style="flex:1; min-width:240px;">
+          <input id="frReplace" type="text" placeholder="Replace with…" style="flex:1; min-width:240px;">
+        </div>
+
+        <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+          <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
+            <label style="display:flex; gap:0.4rem; align-items:center; opacity:0.85; font-size:0.95em; cursor:pointer;">
+              <input id="frMatchCase" type="checkbox">
+              Match case
+            </label>
+            <label style="display:flex; gap:0.4rem; align-items:center; opacity:0.85; font-size:0.95em; cursor:pointer;">
+              <input id="frWholeWord" type="checkbox" checked>
+              Whole word
+            </label>
+          </div>
+
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="btn-secondary" onclick="frFindNext()">Find next</button>
+            <button type="button" class="btn-secondary" onclick="frReplaceOne()">Replace</button>
+            <button type="button" class="btn-secondary" onclick="frReplaceAll()">Replace all</button>
+            <span id="frStatus" style="font-size:0.9em; opacity:0.7;"></span>
+          </div>
+        </div>
+
+        <div style="font-size:0.9em; opacity:0.75;">
+          Tip: with “Whole word” on, “he” won’t match inside “the”.
+        </div>
+      </div>
+    </details>
+
+    <!-- IMPORTANT: this is the immutable base template (with placeholders). DO NOT overwrite it in JS. -->
     <textarea id="templateSource" style="display:none;">{{ final_text or prompt.content }}</textarea>
+
     <textarea name="content" id="finalOutput" rows="12" style="font-family:monospace; line-height:1.5; font-size:1.1em; padding:1rem;">{{ final_text or prompt.content }}</textarea>
 
     <div class="action-bar" style="margin-top:1rem; display:flex; gap:1rem; flex-wrap:wrap;">
@@ -136,30 +179,212 @@
     </div>
   </form>
 
+  <div id="usageCfg" data-usage-url="{{ url_for('api_prompt_usage', prompt_id=prompt.id) }}" style="display:none;"></div>
 </section>
 
-<<script>
+<script>
+/* =========================
+   Variables: placeholder fill
+   ========================= */
+
 function updateFinal() {
-  let text = document.getElementById('templateSource').value;
-  const inputs = document.querySelectorAll('.placeholder-input');
+  // Use the immutable base template every time.
+  // Do NOT sync it back, or the placeholder disappears after the first character.
+  let text = document.getElementById("templateSource").value;
+
+  const inputs = document.querySelectorAll(".placeholder-input");
   inputs.forEach(input => {
-    const key = input.getAttribute('data-target');
+    const key = input.getAttribute("data-target");
     const val = input.value;
     if (val) {
-      const regex = new RegExp(`\\[\\[${key}\\]\\]`, 'g');
+      const regex = new RegExp(`\\[\\[${key}\\]\\]`, "g");
       text = text.replace(regex, val);
     }
   });
-  document.getElementById('finalOutput').value = text;
+
+  document.getElementById("finalOutput").value = text;
 }
 
 function copyToClipboard() {
-  const text = document.getElementById('finalOutput').value;
+  const text = document.getElementById("finalOutput").value;
   navigator.clipboard.writeText(text).then(() => {
-    const feedback = document.getElementById('copyFeedback');
-    feedback.style.opacity = '1';
-    setTimeout(() => feedback.style.opacity = '0', 2000);
+    const feedback = document.getElementById("copyFeedback");
+    feedback.style.opacity = "1";
+    setTimeout(() => feedback.style.opacity = "0", 2000);
+    saveUsageSnapshot(text);
   });
+}
+
+function saveUsageSnapshot(text) {
+  const cfg = document.getElementById("usageCfg");
+  if (!cfg) return;
+  const url = cfg.getAttribute("data-usage-url");
+  if (!url) return;
+
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content: text, source: "clipboard" })
+  }).catch(() => {});
+}
+
+/* =========================
+   Find & Replace
+   ========================= */
+
+let _frLastIndex = 0;
+let _frLastNeedle = "";
+let _frLastFlags = "";
+
+function frFlash() {
+  const feedback = document.getElementById("replaceFeedback");
+  feedback.style.opacity = "1";
+  setTimeout(() => feedback.style.opacity = "0", 1500);
+}
+
+function frSetStatus(msg) {
+  const el = document.getElementById("frStatus");
+  if (el) el.textContent = msg || "";
+}
+
+function frEscapeRegex(s) {
+  return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function frBuildRegex() {
+  const findVal = (document.getElementById("frFind").value || "");
+  const matchCase = !!document.getElementById("frMatchCase").checked;
+  const wholeWord = !!document.getElementById("frWholeWord").checked;
+
+  if (!findVal.trim()) return null;
+
+  const escaped = frEscapeRegex(findVal);
+  const pat = wholeWord ? `\\b${escaped}\\b` : escaped;
+  const flags = "g" + (matchCase ? "" : "i");
+
+  return { re: new RegExp(pat, flags), needle: findVal, flags: flags };
+}
+
+function frSelectRange(start, end) {
+  const ta = document.getElementById("finalOutput");
+  if (!ta) return;
+  ta.focus();
+  ta.setSelectionRange(start, end);
+}
+
+function frFindNext() {
+  const ta = document.getElementById("finalOutput");
+  if (!ta) return;
+
+  const built = frBuildRegex();
+  if (!built) {
+    frSetStatus("Enter something to find");
+    return;
+  }
+
+  const text = ta.value;
+
+  const stateKey = built.needle + "|" + built.flags;
+  if (stateKey !== (_frLastNeedle + "|" + _frLastFlags)) {
+    _frLastIndex = 0;
+    _frLastNeedle = built.needle;
+    _frLastFlags = built.flags;
+  }
+
+  built.re.lastIndex = _frLastIndex;
+
+  const m = built.re.exec(text);
+  if (!m) {
+    built.re.lastIndex = 0;
+    _frLastIndex = 0;
+    const m2 = built.re.exec(text);
+    if (!m2) {
+      frSetStatus("No matches");
+      return;
+    }
+    frSelectRange(m2.index, m2.index + m2[0].length);
+    _frLastIndex = built.re.lastIndex;
+    frSetStatus("Wrapped");
+    return;
+  }
+
+  frSelectRange(m.index, m.index + m[0].length);
+  _frLastIndex = built.re.lastIndex;
+  frSetStatus("Found");
+}
+
+function frReplaceOne() {
+  const ta = document.getElementById("finalOutput");
+  if (!ta) return;
+
+  const built = frBuildRegex();
+  if (!built) {
+    frSetStatus("Enter something to find");
+    return;
+  }
+
+  const repl = (document.getElementById("frReplace").value || "");
+
+  const selStart = ta.selectionStart;
+  const selEnd = ta.selectionEnd;
+  const selected = ta.value.substring(selStart, selEnd);
+
+  const matchCase = !!document.getElementById("frMatchCase").checked;
+  const needle = built.needle;
+  const selectedMatches = matchCase ? (selected === needle) : (selected.toLowerCase() === needle.toLowerCase());
+
+  if (!selected || !selectedMatches) {
+    frFindNext();
+    const sel2 = ta.value.substring(ta.selectionStart, ta.selectionEnd);
+    const sel2Matches = matchCase ? (sel2 === needle) : (sel2.toLowerCase() === needle.toLowerCase());
+    if (!sel2 || !sel2Matches) {
+      frSetStatus("No match selected");
+      return;
+    }
+  }
+
+  const before = ta.value.substring(0, ta.selectionStart);
+  const after = ta.value.substring(ta.selectionEnd);
+  ta.value = before + repl + after;
+
+  const newPos = before.length + repl.length;
+  ta.focus();
+  ta.setSelectionRange(newPos, newPos);
+
+  _frLastIndex = newPos;
+
+  frFlash();
+  frSetStatus("Replaced 1");
+}
+
+function frReplaceAll() {
+  const ta = document.getElementById("finalOutput");
+  if (!ta) return;
+
+  const built = frBuildRegex();
+  if (!built) {
+    frSetStatus("Enter something to find");
+    return;
+  }
+
+  const repl = (document.getElementById("frReplace").value || "");
+
+  const text = ta.value;
+  const matches = text.match(built.re);
+  const count = matches ? matches.length : 0;
+
+  if (!count) {
+    frSetStatus("No matches");
+    return;
+  }
+
+  const rebuilt = frBuildRegex();
+  ta.value = text.replace(rebuilt.re, repl);
+
+  _frLastIndex = 0;
+
+  frFlash();
+  frSetStatus(`Replaced ${count}`);
 }
 
 /* =========================
@@ -196,7 +421,7 @@ function setDescriptorScope(scope) {
     allBtn.style.fontWeight = "normal";
     document.getElementById("descriptorScopeHint").textContent = "(filtered)";
     renderRelevantChips();
-    populatePackDropdown();
+    populatePackDropdown(false);
   } else {
     allBtn.style.borderColor = "#00bfff";
     allBtn.style.fontWeight = "bold";
@@ -240,14 +465,13 @@ function renderRelevantChips() {
   });
 }
 
-function populatePackDropdown(allMode = false) {
+function populatePackDropdown(allMode) {
   const select = document.getElementById("descriptorPackSelect");
   const current = select.value;
 
-  select.innerHTML = `<option value="">(All packs)</option>`;
+  select.innerHTML = "<option value=\"\">(All packs)</option>";
 
   const types = allMode ? getRelevantPackTypes() : getRelevantPackTypes();
-
   types.forEach(t => {
     const opt = document.createElement("option");
     opt.value = t;
@@ -266,12 +490,7 @@ function buildDescriptorListUrl() {
 
   const params = new URLSearchParams();
   if (q) params.set("q", q);
-
-  if (descriptorScope === "all") {
-    if (packSel) params.set("pack_type", packSel);
-  } else {
-    if (packSel) params.set("pack_type", packSel);
-  }
+  if (packSel) params.set("pack_type", packSel);
 
   return `/api/descriptors/list?${params.toString()}`;
 }
@@ -319,10 +538,6 @@ function insertDescriptorText(d) {
 }
 
 function insertDescriptorToken(id) {
-  const ta = document.getElementById("finalOutput");
-  if (!ta) return;
-
-  // Build token without ever having '{{' / '}}' appear in the template source.
   const token = String.fromCharCode(123,123) + "descriptor:" + id + String.fromCharCode(125,125);
   insertTextAtCursor(token);
 }
@@ -373,10 +588,8 @@ function renderDescriptorResults(items) {
     row.appendChild(meta);
     if (preview.textContent) row.appendChild(preview);
 
-    // Default behaviour: insert editable text
     row.onclick = () => insertDescriptorText(d);
 
-    // Actions row
     const actions = document.createElement("div");
     actions.style.marginTop = "0.55rem";
     actions.style.display = "flex";
@@ -456,7 +669,7 @@ async function fetchRelevantMerged(q) {
   return deduped;
 }
 
-async function refreshDescriptors(force = false) {
+async function refreshDescriptors(force) {
   const q = (document.getElementById("descriptorSearch").value || "").trim();
   const packSel = (document.getElementById("descriptorPackSelect").value || "").trim();
 
@@ -484,7 +697,7 @@ async function refreshDescriptors(force = false) {
   } catch (e) {
     setDescriptorStatus("Failed to load");
     const box = document.getElementById("descriptorResults");
-    box.innerHTML = `<div style="opacity:0.8; padding:0.75rem;">Could not load descriptors. Check that <code>/api/descriptors/list</code> is available.</div>`;
+    box.innerHTML = "<div style=\"opacity:0.8; padding:0.75rem;\">Could not load descriptors. Check that <code>/api/descriptors/list</code> is available.</div>";
   }
 }
 
