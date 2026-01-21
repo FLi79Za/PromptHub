@@ -408,12 +408,12 @@ function initEditPromptPage() {
             </div>
           `;
 
-          row.addEventListener('click', () => {
-            selectedDescriptor = item;
-            if (descPreview) descPreview.textContent = item.rendered_text || '';
-            [...descList.querySelectorAll('button')].forEach(b => b.style.outline = 'none');
-            row.style.outline = '2px solid #00bfff';
-          });
+row.addEventListener('click', () => {
+  selectedDescriptor = item;
+  if (descPreview) descPreview.textContent = item.rendered_text || item.description || '';
+  [...descList.querySelectorAll('button')].forEach(b => b.style.outline = 'none');
+  row.style.outline = '2px solid #00bfff';
+});
 
           descList.appendChild(row);
         });

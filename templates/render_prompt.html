@@ -576,13 +576,30 @@ function renderDescriptorResults(items) {
     meta.style.fontSize = "0.85em";
     meta.textContent = `${d.pack_type || "unknown"} • ID ${d.id}`;
 
+    const rawPreview = (d.rendered_text || d.description || "")
+      .replace(/\s+/g, " ")
+      .trim();
+
     const preview = document.createElement("div");
     preview.style.marginTop = "0.4rem";
     preview.style.opacity = "0.9";
     preview.style.fontSize = "0.95em";
-    preview.style.whiteSpace = "pre-wrap";
     preview.style.lineHeight = "1.35";
-    preview.textContent = (d.rendered_text || d.description || "").slice(0, 220);
+    preview.style.wordBreak = "break-word";
+
+    // 2-line clamp for fast scanning
+    preview.style.display = "-webkit-box";
+    preview.style.webkitBoxOrient = "vertical";
+    preview.style.webkitLineClamp = "2";
+    preview.style.overflow = "hidden";
+
+    if (rawPreview) {
+      const limit = 220;
+      preview.textContent = rawPreview.length > limit
+        ? rawPreview.slice(0, limit - 1) + "…"
+        : rawPreview;
+      preview.title = rawPreview;
+    }
 
     row.appendChild(title);
     row.appendChild(meta);
@@ -602,7 +619,10 @@ function renderDescriptorResults(items) {
     btnText.textContent = "Insert text";
     btnText.style.padding = "0.25rem 0.6rem";
     btnText.style.fontSize = "0.9em";
-    btnText.onclick = (e) => { e.stopPropagation(); insertDescriptorText(d); };
+    btnText.onclick = (e) => {
+      e.stopPropagation();
+      insertDescriptorText(d);
+    };
 
     const btnToken = document.createElement("button");
     btnToken.type = "button";
@@ -611,7 +631,10 @@ function renderDescriptorResults(items) {
     btnToken.style.padding = "0.25rem 0.6rem";
     btnToken.style.fontSize = "0.9em";
     btnToken.title = "Insert as a descriptor reference token";
-    btnToken.onclick = (e) => { e.stopPropagation(); insertDescriptorToken(d.id); };
+    btnToken.onclick = (e) => {
+      e.stopPropagation();
+      insertDescriptorToken(d.id);
+    };
 
     actions.appendChild(btnText);
     actions.appendChild(btnToken);
@@ -620,6 +643,7 @@ function renderDescriptorResults(items) {
     box.appendChild(row);
   });
 }
+
 
 /* ---- fetch + refresh ---- */
 
