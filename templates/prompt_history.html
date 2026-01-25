@@ -25,7 +25,7 @@
       <div style="border:1px solid var(--border); border-radius:8px; padding:1rem; background:var(--surface-2); margin-bottom:1rem;">
         <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-bottom:0.75rem;">
           <div style="font-size:0.9em; opacity:0.75;">
-            {{ u['created_at'] }}{% if u['source'] %} · {{ u['source'] }}{% endif %}
+            <span class="usage-ts" data-ts="{{ u['created_at'] }}"></span>{% if u['source'] %} · {{ u['source'] }}{% endif %}
           </div>
           <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
             <button type="button" class="btn-secondary" onclick="copyHistoryText('h{{ u['id'] }}')">Copy</button>
@@ -54,6 +54,30 @@ function copyHistoryText(id) {
     } catch (e) {}
   });
 }
+
+document.querySelectorAll(".usage-ts").forEach(el => {
+  let raw = el.getAttribute("data-ts");
+  if (!raw) return;
+
+  // If no timezone info is present, assume UTC
+  if (!raw.endsWith("Z") && !raw.includes("+")) {
+    raw = raw + "Z";
+  }
+
+  const d = new Date(raw);
+  if (isNaN(d)) {
+    el.textContent = raw;
+    return;
+  }
+
+  el.textContent = d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+});
 </script>
 
 {% endblock %}

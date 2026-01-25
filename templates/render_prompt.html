@@ -1,43 +1,22 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="page" style="max-width: 800px; margin: 0 auto;">
+<section class="page" style="max-width: 980px; margin: 0 auto;">
 
-  <div class="page-header" style="margin-bottom: 1rem;">
+  <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; flex-wrap:wrap;">
     <div>
       <h2 style="margin:0;">Use Prompt</h2>
       <h3 style="margin:0; opacity: 0.6; font-weight: normal;">{{ prompt.title }}</h3>
     </div>
-    <a class="btn-secondary" href="{{ url_for('index') }}">Back to Library</a>
-    <a class="btn-secondary" href="{{ url_for('prompt_history', prompt_id=prompt.id) }}" style="margin-left:0.5rem;">History</a>
+
+    <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+      <a class="btn-secondary" href="{{ url_for('prompt_history', prompt_id=prompt.id) }}">History</a>
+      <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=prompt.id) }}">Edit</a>
+      <a class="btn-secondary" href="{{ url_for('index') }}">Back</a>
+    </div>
   </div>
 
-  {% if variants and variants|length > 1 %}
-  <div style="margin-bottom: 2rem; background: #111; padding: 0.75rem; border-radius: 8px; border: 1px solid #333; display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-    <span style="font-size:0.85em; text-transform:uppercase; color:#666; font-weight:bold; margin-right:0.5rem;">Variants:</span>
-
-    {% for v in variants %}
-      <a href="{{ url_for('render_prompt', prompt_id=v.id) }}"
-         style="text-decoration:none; padding: 0.3rem 0.8rem; border-radius: 4px; font-size: 0.9em; transition: all 0.2s;
-                {% if v.id == prompt.id %}
-                  background: #00bfff; color: #000; font-weight: bold; cursor: default;
-                {% else %}
-                  background: #333; color: #ccc;
-                {% endif %}">
-        {{ v.title }}
-      </a>
-    {% endfor %}
-  </div>
-  {% endif %}
-
-  {% if prompt.notes %}
-  <details style="background: #252525; border-left: 4px solid #00bfff; border-radius: 4px; margin-bottom: 2rem;">
-    <summary style="padding: 0.75rem 1rem; cursor: pointer; color: #fff; font-weight: bold; font-size: 0.95em; user-select: none;">
-      📝 Notes & Instructions (Click to toggle)
-    </summary>
-    <div style="padding: 0 1rem 1rem 1rem; color: #ddd; font-size: 0.95em; white-space: pre-wrap; line-height: 1.5; border-top: 1px solid #333; margin-top: 0.25rem; padding-top: 0.75rem;">{{ prompt.notes }}</div>
-  </details>
-  {% endif %}
+  <input type="hidden" id="promptId" value="{{ prompt.id }}">
 
   {% if placeholders %}
   <div style="background:#1a1a1a; padding:1.5rem; border-radius:8px; margin-bottom:2rem; border:1px solid #333;">
@@ -67,10 +46,10 @@
           <span style="font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Scope</span>
 
           <div style="display:flex; gap:0.5rem; align-items:center;">
-            <button type="button" class="btn-secondary" id="scopeRelevantBtn" onclick="setDescriptorScope('relevant')" title="Show relevant packs for this prompt type">
+            <button type="button" class="btn-secondary" id="scopeRelevantBtn" onclick="setDescriptorScope('relevant')" title="Show quick filters (does not hide types)">
               Relevant only
             </button>
-            <button type="button" class="btn-secondary" id="scopeAllBtn" onclick="setDescriptorScope('all')" title="Show all descriptor packs">
+            <button type="button" class="btn-secondary" id="scopeAllBtn" onclick="setDescriptorScope('all')" title="Show all types">
               All
             </button>
           </div>
@@ -82,7 +61,7 @@
         <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
           <label style="margin:0; font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Pack</label>
           <select id="descriptorPackSelect" onchange="refreshDescriptors()" style="min-width: 200px;">
-            <option value="">(All packs)</option>
+            <option value="all">(All packs)</option>
           </select>
         </div>
       </div>
@@ -100,7 +79,7 @@
       <!-- Results -->
       <div id="descriptorResults"
            style="border:1px solid #333; border-radius:8px; max-height:320px; overflow:auto; background:#111; padding:0.5rem;">
-        <div style="opacity:0.7; padding:0.75rem;">Type in the search box or pick a pack to load descriptors.</div>
+        <div style="opacity:0.7; padding:0.75rem;">Loading descriptors…</div>
       </div>
 
       <div style="font-size:0.9em; opacity:0.75;">
@@ -179,7 +158,6 @@
     </div>
   </form>
 
-  <div id="usageCfg" data-usage-url="{{ url_for('api_prompt_usage', prompt_id=prompt.id) }}" style="display:none;"></div>
 </section>
 
 <script>
@@ -206,35 +184,45 @@ function updateFinal() {
 }
 
 function copyToClipboard() {
-  const text = document.getElementById("finalOutput").value;
-  navigator.clipboard.writeText(text).then(() => {
-    const feedback = document.getElementById("copyFeedback");
-    feedback.style.opacity = "1";
-    setTimeout(() => feedback.style.opacity = "0", 2000);
-    saveUsageSnapshot(text);
-  });
-}
+  const textarea = document.getElementById("finalOutput");
+  textarea.select();
+  textarea.setSelectionRange(0, 999999);
+  navigator.clipboard.writeText(textarea.value);
 
-function saveUsageSnapshot(text) {
-  const cfg = document.getElementById("usageCfg");
-  if (!cfg) return;
-  const url = cfg.getAttribute("data-usage-url");
-  if (!url) return;
+  // Record usage history (best-effort)
+  try {
+    const idEl = document.getElementById("promptId");
+    const pid = idEl ? parseInt(idEl.value, 10) : null;
+    if (pid) {
+      fetch("/api/prompt/" + pid + "/usage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: textarea.value, source: "use" })
+      }).catch(() => {});
+    }
+  } catch (e) {
+    // ignore
+  }
 
-  fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content: text, source: "clipboard" })
-  }).catch(() => {});
+  const feedback = document.getElementById("copyFeedback");
+  feedback.style.opacity = "1";
+  setTimeout(() => feedback.style.opacity = "0", 1500);
 }
 
 /* =========================
-   Find & Replace
+   Find & Replace (Use page)
    ========================= */
 
 let _frLastIndex = 0;
-let _frLastNeedle = "";
-let _frLastFlags = "";
+
+function frGetTextArea() {
+  return document.getElementById("finalOutput");
+}
+
+function frSetStatus(msg) {
+  const el = document.getElementById("frStatus");
+  el.textContent = msg || "";
+}
 
 function frFlash() {
   const feedback = document.getElementById("replaceFeedback");
@@ -242,205 +230,211 @@ function frFlash() {
   setTimeout(() => feedback.style.opacity = "0", 1500);
 }
 
-function frSetStatus(msg) {
-  const el = document.getElementById("frStatus");
-  if (el) el.textContent = msg || "";
-}
-
-function frEscapeRegex(s) {
-  return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function frBuildRegex() {
-  const findVal = (document.getElementById("frFind").value || "");
-  const matchCase = !!document.getElementById("frMatchCase").checked;
-  const wholeWord = !!document.getElementById("frWholeWord").checked;
+  const find = document.getElementById("frFind").value || "";
+  const matchCase = document.getElementById("frMatchCase").checked;
+  const wholeWord = document.getElementById("frWholeWord").checked;
 
-  if (!findVal.trim()) return null;
+  const flags = matchCase ? "g" : "gi";
+  const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = wholeWord ? `\\b${escaped}\\b` : escaped;
 
-  const escaped = frEscapeRegex(findVal);
-  const pat = wholeWord ? `\\b${escaped}\\b` : escaped;
-  const flags = "g" + (matchCase ? "" : "i");
-
-  return { re: new RegExp(pat, flags), needle: findVal, flags: flags };
-}
-
-function frSelectRange(start, end) {
-  const ta = document.getElementById("finalOutput");
-  if (!ta) return;
-  ta.focus();
-  ta.setSelectionRange(start, end);
+  return { re: new RegExp(pattern, flags), find };
 }
 
 function frFindNext() {
-  const ta = document.getElementById("finalOutput");
-  if (!ta) return;
+  const ta = frGetTextArea();
+  const text = ta.value;
+  const rebuilt = frBuildRegex();
 
-  const built = frBuildRegex();
-  if (!built) {
-    frSetStatus("Enter something to find");
+  if (!rebuilt.find) {
+    frSetStatus("Enter text to find.");
     return;
   }
 
-  const text = ta.value;
+  rebuilt.re.lastIndex = _frLastIndex;
 
-  const stateKey = built.needle + "|" + built.flags;
-  if (stateKey !== (_frLastNeedle + "|" + _frLastFlags)) {
-    _frLastIndex = 0;
-    _frLastNeedle = built.needle;
-    _frLastFlags = built.flags;
-  }
-
-  built.re.lastIndex = _frLastIndex;
-
-  const m = built.re.exec(text);
+  const m = rebuilt.re.exec(text);
   if (!m) {
-    built.re.lastIndex = 0;
+    // wrap
     _frLastIndex = 0;
-    const m2 = built.re.exec(text);
+    rebuilt.re.lastIndex = 0;
+    const m2 = rebuilt.re.exec(text);
     if (!m2) {
-      frSetStatus("No matches");
+      frSetStatus("No matches.");
       return;
     }
-    frSelectRange(m2.index, m2.index + m2[0].length);
-    _frLastIndex = built.re.lastIndex;
-    frSetStatus("Wrapped");
+    ta.focus();
+    ta.setSelectionRange(m2.index, m2.index + m2[0].length);
+    _frLastIndex = m2.index + Math.max(1, m2[0].length);
+    frSetStatus("Wrapped to start.");
     return;
   }
 
-  frSelectRange(m.index, m.index + m[0].length);
-  _frLastIndex = built.re.lastIndex;
-  frSetStatus("Found");
+  ta.focus();
+  ta.setSelectionRange(m.index, m.index + m[0].length);
+  _frLastIndex = m.index + Math.max(1, m[0].length);
+  frSetStatus("Match found.");
 }
 
 function frReplaceOne() {
-  const ta = document.getElementById("finalOutput");
-  if (!ta) return;
+  const ta = frGetTextArea();
+  const find = document.getElementById("frFind").value || "";
+  const rep = document.getElementById("frReplace").value || "";
 
-  const built = frBuildRegex();
-  if (!built) {
-    frSetStatus("Enter something to find");
+  if (!find) {
+    frSetStatus("Enter text to find.");
     return;
   }
 
-  const repl = (document.getElementById("frReplace").value || "");
+  // Replace current selection if it matches, else find next and replace that.
+  const sel = ta.value.substring(ta.selectionStart, ta.selectionEnd);
+  const rebuilt = frBuildRegex();
 
-  const selStart = ta.selectionStart;
-  const selEnd = ta.selectionEnd;
-  const selected = ta.value.substring(selStart, selEnd);
+  if (sel && rebuilt.re.test(sel)) {
+    const before = ta.value.substring(0, ta.selectionStart);
+    const after = ta.value.substring(ta.selectionEnd);
+    const start = ta.selectionStart;
 
-  const matchCase = !!document.getElementById("frMatchCase").checked;
-  const needle = built.needle;
-  const selectedMatches = matchCase ? (selected === needle) : (selected.toLowerCase() === needle.toLowerCase());
+    ta.value = before + rep + after;
+    ta.focus();
+    ta.setSelectionRange(start, start + rep.length);
 
-  if (!selected || !selectedMatches) {
-    frFindNext();
-    const sel2 = ta.value.substring(ta.selectionStart, ta.selectionEnd);
-    const sel2Matches = matchCase ? (sel2 === needle) : (sel2.toLowerCase() === needle.toLowerCase());
-    if (!sel2 || !sel2Matches) {
-      frSetStatus("No match selected");
-      return;
-    }
+    _frLastIndex = start + Math.max(1, rep.length);
+    frSetStatus("Replaced 1.");
+    frFlash();
+    return;
   }
 
-  const before = ta.value.substring(0, ta.selectionStart);
-  const after = ta.value.substring(ta.selectionEnd);
-  ta.value = before + repl + after;
+  // If selection didn't match, find next match and replace it.
+  const text = ta.value;
+  rebuilt.re.lastIndex = _frLastIndex;
 
-  const newPos = before.length + repl.length;
+  const m = rebuilt.re.exec(text) || (rebuilt.re.lastIndex = 0, rebuilt.re.exec(text));
+  if (!m) {
+    frSetStatus("No matches.");
+    return;
+  }
+
+  const before = text.substring(0, m.index);
+  const after = text.substring(m.index + m[0].length);
+  ta.value = before + rep + after;
+
   ta.focus();
-  ta.setSelectionRange(newPos, newPos);
+  ta.setSelectionRange(m.index, m.index + rep.length);
 
-  _frLastIndex = newPos;
-
+  _frLastIndex = m.index + Math.max(1, rep.length);
+  frSetStatus("Replaced 1.");
   frFlash();
-  frSetStatus("Replaced 1");
 }
 
 function frReplaceAll() {
-  const ta = document.getElementById("finalOutput");
-  if (!ta) return;
-
-  const built = frBuildRegex();
-  if (!built) {
-    frSetStatus("Enter something to find");
-    return;
-  }
-
-  const repl = (document.getElementById("frReplace").value || "");
-
-  const text = ta.value;
-  const matches = text.match(built.re);
-  const count = matches ? matches.length : 0;
-
-  if (!count) {
-    frSetStatus("No matches");
-    return;
-  }
-
+  const ta = frGetTextArea();
+  const rep = document.getElementById("frReplace").value || "";
   const rebuilt = frBuildRegex();
-  ta.value = text.replace(rebuilt.re, repl);
 
+  if (!rebuilt.find) {
+    frSetStatus("Enter text to find.");
+    return;
+  }
+
+  const before = ta.value;
+  const after = before.replace(rebuilt.re, rep);
+
+  if (before === after) {
+    frSetStatus("No matches.");
+    return;
+  }
+
+  ta.value = after;
+  ta.focus();
   _frLastIndex = 0;
 
+  const count = (before.match(rebuilt.re) || []).length;
+  frSetStatus(`Replaced ${count}.`);
   frFlash();
-  frSetStatus(`Replaced ${count}`);
 }
 
 /* =========================
-   Descriptor picker logic
+   Descriptor picker (Use-stage)
    ========================= */
 
-const RELEVANT_PACKS_IMAGE = [
-  "camera",
-  "character",
-  "creature",
-  "environment",
-  "scene",
-  "action",
-  "prop",
-  "style"
+let _descriptorTypes = [];
+let _descTypesLoaded = false;
+let _descScopeUiMode = "all";
+
+const DESC_PREFERRED_ORDER = [
+  "character", "creature", "environment", "scene", "action", "camera", "lighting", "style", "prop", "vehicle"
 ];
 
-let descriptorScope = "relevant";
+function setDescriptorScope(mode) {
+  _descScopeUiMode = (mode === "relevant") ? "relevant" : "all";
 
-function getRelevantPackTypes() {
-  return RELEVANT_PACKS_IMAGE.slice();
-}
+  const btnRel = document.getElementById("scopeRelevantBtn");
+  const btnAll = document.getElementById("scopeAllBtn");
+  if (btnRel) btnRel.style.opacity = _descScopeUiMode === "relevant" ? "1" : "0.65";
+  if (btnAll) btnAll.style.opacity = _descScopeUiMode === "all" ? "1" : "0.65";
 
-function setDescriptorScope(scope) {
-  descriptorScope = scope;
-
-  const relevantBtn = document.getElementById("scopeRelevantBtn");
-  const allBtn = document.getElementById("scopeAllBtn");
-
-  if (scope === "relevant") {
-    relevantBtn.style.borderColor = "#00bfff";
-    relevantBtn.style.fontWeight = "bold";
-    allBtn.style.borderColor = "";
-    allBtn.style.fontWeight = "normal";
-    document.getElementById("descriptorScopeHint").textContent = "(filtered)";
-    renderRelevantChips();
-    populatePackDropdown(false);
+  const hint = document.getElementById("descriptorScopeHint");
+  if (_descScopeUiMode === "relevant") {
+    if (hint) hint.textContent = "(quick filters)";
   } else {
-    allBtn.style.borderColor = "#00bfff";
-    allBtn.style.fontWeight = "bold";
-    relevantBtn.style.borderColor = "";
-    relevantBtn.style.fontWeight = "normal";
-    document.getElementById("descriptorScopeHint").textContent = "(global)";
-    document.getElementById("relevantChips").innerHTML = "";
-    populatePackDropdown(true);
+    if (hint) hint.textContent = "(all types)";
   }
 
-  document.getElementById("descriptorPackSelect").value = "";
-  refreshDescriptors();
+  renderRelevantChips();
+}
+
+async function loadDescriptorTypesOnce() {
+  if (_descTypesLoaded) return _descriptorTypes;
+
+  try {
+    const res = await fetch("/api/descriptors/types", { headers: { "Accept": "application/json" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const types = await res.json();
+    _descriptorTypes = Array.isArray(types) ? types.filter(Boolean).map(t => String(t)) : [];
+  } catch (e) {
+    // Fallback: keep UI functional even if the types endpoint is unavailable.
+    _descriptorTypes = [];
+  }
+
+  // Ensure we always have at least something usable
+  const fallback = ["generic", "character", "creature", "environment", "scene", "action", "prop", "style", "lighting", "vehicle", "other"];
+  const set = new Set(_descriptorTypes.map(t => t.trim()).filter(Boolean));
+  fallback.forEach(t => set.add(t));
+
+  _descriptorTypes = Array.from(set).sort((a, b) => a.localeCompare(b));
+  _descTypesLoaded = true;
+  return _descriptorTypes;
+}
+
+function getQuickChipTypes() {
+  const types = _descriptorTypes.slice();
+
+  // Keep only known / common types for chips, but do not block anything from dropdown.
+  const lower = new Set(types.map(t => String(t).toLowerCase()));
+  const ordered = [];
+
+  DESC_PREFERRED_ORDER.forEach(t => {
+    if (lower.has(t)) ordered.push(t);
+  });
+
+  // Add a few more (if present) until we hit a sensible cap
+  const extras = types
+    .map(t => String(t).toLowerCase())
+    .filter(t => !ordered.includes(t) && t !== "generic" && t !== "other")
+    .slice(0, 8);
+
+  return (_descScopeUiMode === "relevant") ? ordered.concat(extras) : types.map(t => String(t).toLowerCase());
 }
 
 function renderRelevantChips() {
   const wrap = document.getElementById("relevantChips");
+  if (!wrap) return;
+
   wrap.innerHTML = "";
 
-  const types = getRelevantPackTypes();
+  const types = getQuickChipTypes();
   if (!types.length) return;
 
   const label = document.createElement("span");
@@ -450,60 +444,80 @@ function renderRelevantChips() {
   label.style.marginRight = "0.25rem";
   wrap.appendChild(label);
 
+  // De-dupe while keeping order
+  const seen = new Set();
   types.forEach(t => {
+    const key = String(t).toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "btn-secondary";
-    btn.textContent = t;
+    btn.textContent = key;
     btn.style.padding = "0.25rem 0.6rem";
     btn.style.fontSize = "0.9em";
     btn.onclick = () => {
-      document.getElementById("descriptorPackSelect").value = t;
+      const sel = document.getElementById("descriptorPackSelect");
+      if (sel) sel.value = key;
       refreshDescriptors(true);
     };
     wrap.appendChild(btn);
   });
 }
 
-function populatePackDropdown(allMode) {
+function populatePackDropdown() {
   const select = document.getElementById("descriptorPackSelect");
+  if (!select) return;
+
   const current = select.value;
 
-  select.innerHTML = "<option value=\"\">(All packs)</option>";
+  // Always include "All packs" option
+  select.innerHTML = "<option value=\"all\">(All packs)</option>";
 
-  const types = allMode ? getRelevantPackTypes() : getRelevantPackTypes();
+  // Use the loaded types so lighting and other custom pack types appear.
+  const types = _descriptorTypes.slice().map(t => String(t).toLowerCase());
+  const seen = new Set();
   types.forEach(t => {
+    const key = t.trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+
     const opt = document.createElement("option");
-    opt.value = t;
-    opt.textContent = t;
+    opt.value = key;
+    opt.textContent = key;
     select.appendChild(opt);
   });
 
+  // Preserve selection if still present
   if ([...select.options].some(o => o.value === current)) {
     select.value = current;
+  } else {
+    select.value = "all";
   }
 }
 
 function buildDescriptorListUrl() {
-  const q = (document.getElementById("descriptorSearch").value || "").trim();
-  const packSel = (document.getElementById("descriptorPackSelect").value || "").trim();
+  const q = (document.getElementById("descriptorSearch")?.value || "").trim();
+  const packSel = (document.getElementById("descriptorPackSelect")?.value || "all").trim();
 
   const params = new URLSearchParams();
   if (q) params.set("q", q);
-  if (packSel) params.set("pack_type", packSel);
+  if (packSel && packSel !== "all") params.set("pack_type", packSel);
 
   return `/api/descriptors/list?${params.toString()}`;
 }
 
 function setDescriptorStatus(msg) {
   const el = document.getElementById("descriptorStatus");
-  el.textContent = msg || "";
+  if (el) el.textContent = msg || "";
 }
 
 /* ---- insertion helpers ---- */
 
 function flashInserted() {
   const feedback = document.getElementById("descriptorInsertFeedback");
+  if (!feedback) return;
   feedback.style.opacity = "1";
   setTimeout(() => feedback.style.opacity = "0", 1500);
 }
@@ -546,6 +560,8 @@ function insertDescriptorToken(id) {
 
 function renderDescriptorResults(items) {
   const box = document.getElementById("descriptorResults");
+  if (!box) return;
+
   box.innerHTML = "";
 
   if (!items || !items.length) {
@@ -574,32 +590,15 @@ function renderDescriptorResults(items) {
     const meta = document.createElement("div");
     meta.style.opacity = "0.7";
     meta.style.fontSize = "0.85em";
-    meta.textContent = `${d.pack_type || "unknown"} • ID ${d.id}`;
-
-    const rawPreview = (d.rendered_text || d.description || "")
-      .replace(/\s+/g, " ")
-      .trim();
+    meta.textContent = `${(d.pack_type || "unknown")} • ID ${d.id}`;
 
     const preview = document.createElement("div");
     preview.style.marginTop = "0.4rem";
     preview.style.opacity = "0.9";
     preview.style.fontSize = "0.95em";
+    preview.style.whiteSpace = "pre-wrap";
     preview.style.lineHeight = "1.35";
-    preview.style.wordBreak = "break-word";
-
-    // 2-line clamp for fast scanning
-    preview.style.display = "-webkit-box";
-    preview.style.webkitBoxOrient = "vertical";
-    preview.style.webkitLineClamp = "2";
-    preview.style.overflow = "hidden";
-
-    if (rawPreview) {
-      const limit = 220;
-      preview.textContent = rawPreview.length > limit
-        ? rawPreview.slice(0, limit - 1) + "…"
-        : rawPreview;
-      preview.title = rawPreview;
-    }
+    preview.textContent = (d.rendered_text || d.description || "").slice(0, 220);
 
     row.appendChild(title);
     row.appendChild(meta);
@@ -619,10 +618,7 @@ function renderDescriptorResults(items) {
     btnText.textContent = "Insert text";
     btnText.style.padding = "0.25rem 0.6rem";
     btnText.style.fontSize = "0.9em";
-    btnText.onclick = (e) => {
-      e.stopPropagation();
-      insertDescriptorText(d);
-    };
+    btnText.onclick = (e) => { e.stopPropagation(); insertDescriptorText(d); };
 
     const btnToken = document.createElement("button");
     btnToken.type = "button";
@@ -631,10 +627,7 @@ function renderDescriptorResults(items) {
     btnToken.style.padding = "0.25rem 0.6rem";
     btnToken.style.fontSize = "0.9em";
     btnToken.title = "Insert as a descriptor reference token";
-    btnToken.onclick = (e) => {
-      e.stopPropagation();
-      insertDescriptorToken(d.id);
-    };
+    btnToken.onclick = (e) => { e.stopPropagation(); insertDescriptorToken(d.id); };
 
     actions.appendChild(btnText);
     actions.appendChild(btnToken);
@@ -644,98 +637,57 @@ function renderDescriptorResults(items) {
   });
 }
 
-
 /* ---- fetch + refresh ---- */
 
 async function fetchDescriptors(url) {
-  const res = await fetch(url, { method: "GET" });
+  const res = await fetch(url, { method: "GET", headers: { "Accept": "application/json" } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return await res.json();
 }
 
-async function fetchRelevantMerged(q) {
-  const packTypes = getRelevantPackTypes();
-  const paramsBase = new URLSearchParams();
-  if (q) paramsBase.set("q", q);
-
-  const all = [];
-  for (const t of packTypes) {
-    const params = new URLSearchParams(paramsBase);
-    params.set("pack_type", t);
-    const url = `/api/descriptors/list?${params.toString()}`;
-    try {
-      const chunk = await fetchDescriptors(url);
-      if (Array.isArray(chunk)) all.push(...chunk);
-    } catch (e) {}
-  }
-
-  const seen = new Set();
-  const deduped = [];
-  for (const item of all) {
-    if (!item || typeof item.id === "undefined") continue;
-    if (seen.has(item.id)) continue;
-    seen.add(item.id);
-    deduped.push(item);
-  }
-
-  deduped.sort((a, b) => {
-    const ap = (a.pack_type || "").toLowerCase();
-    const bp = (b.pack_type || "").toLowerCase();
-    if (ap < bp) return -1;
-    if (ap > bp) return 1;
-    const at = (a.title || "").toLowerCase();
-    const bt = (b.title || "").toLowerCase();
-    if (at < bt) return -1;
-    if (at > bt) return 1;
-    return 0;
-  });
-
-  return deduped;
-}
-
-async function refreshDescriptors(force) {
-  const q = (document.getElementById("descriptorSearch").value || "").trim();
-  const packSel = (document.getElementById("descriptorPackSelect").value || "").trim();
-
-  if (descriptorScope === "relevant" && !packSel && !q && !force) {
-    setDescriptorStatus("Pick a pack or type a search…");
-    renderDescriptorResults([]);
-    return;
-  }
+async function refreshDescriptors() {
+  const q = (document.getElementById("descriptorSearch")?.value || "").trim();
+  const packSel = (document.getElementById("descriptorPackSelect")?.value || "all").trim();
 
   setDescriptorStatus("Loading…");
 
   try {
-    let items = [];
+    const url = buildDescriptorListUrl();
+    const data = await fetchDescriptors(url);
+    const items = Array.isArray(data) ? data : [];
 
-    if (descriptorScope === "relevant" && !packSel) {
-      items = await fetchRelevantMerged(q);
-    } else {
-      const url = buildDescriptorListUrl();
-      const data = await fetchDescriptors(url);
-      items = Array.isArray(data) ? data : [];
+    // If the user picked a pack type that no longer exists, reset to all
+    if (packSel !== "all" && _descriptorTypes.length) {
+      const lower = new Set(_descriptorTypes.map(t => String(t).toLowerCase()));
+      if (!lower.has(packSel.toLowerCase())) {
+        const sel = document.getElementById("descriptorPackSelect");
+        if (sel) sel.value = "all";
+      }
     }
 
-    setDescriptorStatus(items.length ? `${items.length} found` : "No results");
+    setDescriptorStatus(items.length ? `${items.length} found` : (q ? "No results" : "No descriptors"));
     renderDescriptorResults(items);
   } catch (e) {
     setDescriptorStatus("Failed to load");
     const box = document.getElementById("descriptorResults");
-    box.innerHTML = "<div style=\"opacity:0.8; padding:0.75rem;\">Could not load descriptors. Check that <code>/api/descriptors/list</code> is available.</div>";
+    if (box) {
+      box.innerHTML = "<div style=\"opacity:0.8; padding:0.75rem;\">Could not load descriptors. Check that <code>/api/descriptors/list</code> is available.</div>";
+    }
   }
 }
 
 let _descTimer = null;
 function debouncedRefreshDescriptors() {
   clearTimeout(_descTimer);
-  _descTimer = setTimeout(() => refreshDescriptors(false), 250);
+  _descTimer = setTimeout(() => refreshDescriptors(), 250);
 }
 
-(function initDescriptorPicker() {
-  setDescriptorScope("relevant");
-  populatePackDropdown(false);
+(async function initDescriptorPicker() {
+  await loadDescriptorTypesOnce();
+  populatePackDropdown();
+  setDescriptorScope("all"); // default matches edit/create behaviour (show everything)
   renderRelevantChips();
-  setDescriptorStatus("Pick a pack or type a search…");
+  refreshDescriptors();
 })();
 </script>
 
