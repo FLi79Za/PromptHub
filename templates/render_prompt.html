@@ -18,79 +18,151 @@
 
   <input type="hidden" id="promptId" value="{{ prompt.id }}">
 
-  {% if placeholders %}
-  <div style="background:#1a1a1a; padding:1.5rem; border-radius:8px; margin-bottom:2rem; border:1px solid #333;">
-    <h4 style="margin-top:0; color:#00bfff; margin-bottom:1rem;">Variables</h4>
-    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:1rem;">
-      {% for name in placeholders %}
-      <div>
-        <label style="font-size:0.85em; text-transform:uppercase; letter-spacing:1px; opacity:0.7;">{{ name }}</label>
-        <input type="text" class="placeholder-input" data-target="{{ name }}" oninput="updateFinal()" placeholder="Value for {{ name }}..." style="width:100%;">
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
+  <form id="useForm" action="{{ url_for('refine_prompt', prompt_id=prompt.id) }}" method="POST">
+    <input type="hidden" name="use_render" value="1">
+    <input type="hidden" name="override_active" id="overrideActive" value="0">
+    <input type="hidden" name="final_override" id="finalOverride" value="">
 
-  <!-- Descriptor picker (Use-stage only) -->
-  <details id="descriptorPanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1rem; border:1px solid #333;">
-    <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem;">
-      <span style="font-weight:bold;">🧩 Insert Descriptors</span>
-      <span style="opacity:0.7; font-size:0.9em;">Click to toggle</span>
-    </summary>
+    <!-- PATCH 1: Notes panel (insert after promptId, before the form) -->
+{% if prompt.notes %}
+<details id="notesPanel" style="background:#1a1a1a; padding:1.25rem; border-radius:8px; margin:1.25rem 0 1.25rem; border:1px solid #333;">
+  <summary style="cursor:pointer; user-select:none; display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+    <h4 style="margin:0;">🗒️ Notes</h4>
+    <div style="opacity:0.7; font-size:0.95em;">Click to toggle</div>
+  </summary>
 
-    <div style="margin-top:1rem; display:flex; flex-direction:column; gap:0.75rem;">
-      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
-        <!-- Scope toggle -->
-        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-          <span style="font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Scope</span>
+  <div style="margin-top:0.9rem; white-space:pre-wrap; line-height:1.45; opacity:0.92;">{{ prompt.notes }}</div>
+</details>
+{% endif %}
 
-          <div style="display:flex; gap:0.5rem; align-items:center;">
-            <button type="button" class="btn-secondary" id="scopeRelevantBtn" onclick="setDescriptorScope('relevant')" title="Show quick filters (does not hide types)">
-              Relevant only
-            </button>
-            <button type="button" class="btn-secondary" id="scopeAllBtn" onclick="setDescriptorScope('all')" title="Show all types">
-              All
-            </button>
-          </div>
 
-          <span id="descriptorScopeHint" style="font-size:0.9em; opacity:0.7;"></span>
-        </div>
+<!-- PATCH 2: Variables block (replace your entire placeholders_meta section with this) -->
+{% if placeholders_meta %}
+<details id="variablesPanel" style="background:#1a1a1a; padding:1.25rem; border-radius:8px; margin:1.25rem 0 1.25rem; border:1px solid #333;">
+  <summary style="cursor:pointer; user-select:none; display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+    <h4 style="margin:0; color:#00bfff;">Variables</h4>
+    <div style="opacity:0.7; font-size:0.95em;">Fill placeholders with a descriptor or custom text.</div>
+  </summary>
 
-        <!-- Pack type dropdown -->
-        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-          <label style="margin:0; font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Pack</label>
-          <select id="descriptorPackSelect" onchange="refreshDescriptors()" style="min-width: 200px;">
-            <option value="all">(All packs)</option>
+  <div id="placeholderGrid" style="margin-top:1rem; display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
+    {% for ph in placeholders_meta %}
+    <div class="ph-card" data-ph-index="{{ loop.index0 }}" data-ph-key="{{ ph.key }}" data-ph-display="{{ ph.display }}" style="border:1px solid #333; border-radius:10px; background:#111; padding:0.9rem;">
+      <div style="display:flex; align-items:baseline; justify-content:space-between; gap:0.75rem;">
+        <div style="font-weight:bold;">{{ ph.display }}</div>
+        <div style="display:flex; gap:0.5rem; align-items:center;">
+          <label style="font-size:0.85em; opacity:0.75;">Mode</label>
+          <select name="ph_mode_{{ loop.index0 }}" class="ph-mode" style="min-width: 140px;">
+            <option value="text" selected>Custom</option>
+            <option value="descriptor">Descriptor</option>
           </select>
         </div>
       </div>
 
-      <!-- Relevant chips -->
-      <div id="relevantChips" style="display:flex; gap:0.5rem; flex-wrap:wrap;"></div>
+      <input type="hidden" name="ph_key_{{ loop.index0 }}" value="{{ ph.key }}">
 
-      <!-- Search -->
-      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-        <input type="text" id="descriptorSearch" placeholder="Search descriptors..." oninput="debouncedRefreshDescriptors()" style="flex:1; min-width:240px;">
-        <button type="button" class="btn-secondary" onclick="refreshDescriptors(true)">Search</button>
-        <span id="descriptorStatus" style="font-size:0.9em; opacity:0.7;"></span>
+      <div class="ph-descriptor" style="margin-top:0.75rem; display:none;">
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+            <label style="font-size:0.85em; opacity:0.75;">Pack</label>
+            <select name="ph_pack_{{ loop.index0 }}" class="ph-pack" style="min-width: 180px;">
+              <option value="all">(All packs)</option>
+            </select>
+          </div>
+
+          <button type="button" class="btn-secondary ph-clear" title="Clear this placeholder">Clear</button>
+        </div>
+
+        <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+          <input type="text" class="ph-search" placeholder="Search descriptors…" style="flex:1; min-width:200px;">
+          <button type="button" class="btn-secondary ph-search-btn">Search</button>
+        </div>
+
+        <div class="ph-results" style="margin-top:0.6rem; border:1px solid #333; border-radius:8px; max-height:220px; overflow:auto; background:#0e0e0e; padding:0.35rem;">
+          <div style="opacity:0.7; padding:0.6rem;">Search to load descriptors…</div>
+        </div>
+
+        <input type="hidden" name="ph_desc_text_{{ loop.index0 }}" class="ph-desc-text" value="">
       </div>
 
-      <!-- Results -->
-      <div id="descriptorResults"
-           style="border:1px solid #333; border-radius:8px; max-height:320px; overflow:auto; background:#111; padding:0.5rem;">
-        <div style="opacity:0.7; padding:0.75rem;">Loading descriptors…</div>
+      <div class="ph-text" style="margin-top:0.75rem; display:block;">
+        <input type="text" name="ph_text_{{ loop.index0 }}" class="ph-text-input" placeholder="Type a value…" style="width:100%;">
       </div>
 
-      <div style="font-size:0.9em; opacity:0.75;">
-        Clicking a descriptor inserts a token like <code style="opacity:0.9;">{{"{{"}}descriptor:123{{"}}"}}</code> into the editor.
+      <div style="margin-top:0.7rem;">
+        <div style="font-size:0.8em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Selected text</div>
+        <div class="ph-preview" style="margin-top:0.35rem; white-space:pre-wrap; line-height:1.35; opacity:0.92;"></div>
       </div>
     </div>
-  </details>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
 
-  <form action="{{ url_for('refine_prompt', prompt_id=prompt.id) }}" method="POST">
+<!-- Risk scan:
+- No changes inside <script>
+- No new literal template delimiters inside JS strings/comments
+- Only added/converted HTML blocks using intended Jinja tags
+-->
 
-    <div style="display:flex; justify-content:space-between; align-items:end; margin-bottom:0.5rem;">
+
+    <!-- Descriptor picker (Use-stage only, free insertion into editor) -->
+    <details id="descriptorPanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1rem; border:1px solid #333;">
+      <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+        <span style="font-weight:bold;">🧩 Insert Descriptors</span>
+        <span style="opacity:0.7; font-size:0.9em;">Click to toggle</span>
+      </summary>
+
+      <div style="margin-top:1rem; display:flex; flex-direction:column; gap:0.75rem;">
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+            <span style="font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Scope</span>
+
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <button type="button" class="btn-secondary" id="scopeRelevantBtn" onclick="setDescriptorScope('relevant')" title="Show quick filters (does not hide types)">
+                Relevant only
+              </button>
+              <button type="button" class="btn-secondary" id="scopeAllBtn" onclick="setDescriptorScope('all')" title="Show all types">
+                All
+              </button>
+            </div>
+
+            <span id="descriptorScopeHint" style="font-size:0.9em; opacity:0.7;"></span>
+          </div>
+
+          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+            <label style="margin:0; font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Pack</label>
+            <select id="descriptorPackSelect" onchange="refreshDescriptors()" style="min-width: 200px;">
+              <option value="all">(All packs)</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="relevantChips" style="display:flex; gap:0.5rem; flex-wrap:wrap;"></div>
+
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+          <input type="text" id="descriptorSearch" placeholder="Search descriptors..." oninput="debouncedRefreshDescriptors()" style="flex:1; min-width:240px;">
+          <button type="button" class="btn-secondary" onclick="refreshDescriptors(true)">Search</button>
+          <span id="descriptorStatus" style="font-size:0.9em; opacity:0.7;"></span>
+        </div>
+
+        <div id="descriptorResults"
+             style="border:1px solid #333; border-radius:8px; max-height:320px; overflow:auto; background:#111; padding:0.5rem;">
+          <div style="opacity:0.7; padding:0.75rem;">Loading descriptors…</div>
+        </div>
+
+        <div style="font-size:0.9em; opacity:0.75;">
+          Clicking a descriptor inserts rendered text into the editor. Tokens remain available in this panel for advanced workflows.
+        </div>
+      </div>
+    </details>
+
+        <div style="display:grid; grid-template-columns: 1fr; gap:0.5rem; margin: 1rem 0 1rem;">
+      <label>Template Preview (shows where placeholders appear)</label>
+      <textarea id="templatePreview" readonly style="width:100%; min-height:140px; resize:vertical; padding:0.75rem; border-radius:8px; border:1px solid #333; background:#0e0e0e; color:#e6e6e6; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; font-size:0.92em; line-height:1.35;">{{ base_text }}</textarea>
+      <div style="opacity:0.7; font-size:0.9em;">Tip: click a variable card to jump to its next occurrence in the template.</div>
+    </div>
+
+<div style="display:flex; justify-content:space-between; align-items:end; margin-bottom:0.5rem;">
       <label>Final Prompt (Editable)</label>
       <div style="display:flex; gap:0.75rem; align-items:center;">
         <span id="descriptorInsertFeedback" style="font-size:0.85em; color:#51cf66; opacity:0; transition:opacity 0.3s;">Inserted!</span>
@@ -99,7 +171,7 @@
       </div>
     </div>
 
-    <!-- Find + Replace -->
+    <!-- Find + Replace (unchanged) -->
     <details id="findReplacePanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1rem; border:1px solid #333;">
       <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem;">
         <span style="font-weight:bold;">🔎 Find & Replace</span>
@@ -138,13 +210,13 @@
       </div>
     </details>
 
-    <!-- IMPORTANT: this is the immutable base template (with placeholders). DO NOT overwrite it in JS. -->
-    <textarea id="templateSource" style="display:none;">{{ final_text or prompt.content }}</textarea>
+    <!-- Immutable base template (with placeholders). Do not overwrite it in JS. -->
+    <textarea id="templateSource" style="display:none;">{{ prompt.content }}</textarea>
 
     <textarea name="content" id="finalOutput" rows="12" style="font-family:monospace; line-height:1.5; font-size:1.1em; padding:1rem;">{{ final_text or prompt.content }}</textarea>
 
     <div class="action-bar" style="margin-top:1rem; display:flex; gap:1rem; flex-wrap:wrap;">
-      <button type="button" class="btn-primary" onclick="copyToClipboard()" style="flex:2;">Copy to Clipboard</button>
+      <button type="button" class="btn-primary" onclick="copyToClipboardServer()" style="flex:2;">Copy to Clipboard</button>
 
       <button type="submit" class="btn-secondary" style="flex:1;" title="Send this text to Ollama for refinement">✨ Refine with Ollama</button>
 
@@ -162,218 +234,360 @@
 
 <script>
 /* =========================
-   Variables: placeholder fill
+   Use Prompt: per-placeholder fills (descriptor or custom)
+   Server remains the source of truth for final output.
    ========================= */
 
-function updateFinal() {
-  // Use the immutable base template every time.
-  // Do NOT sync it back, or the placeholder disappears after the first character.
-  let text = document.getElementById("templateSource").value;
+function normalisePlaceholderName(s) {
+  if (s === null || s === undefined) return "";
+  const trimmed = String(s).trim();
+  return trimmed.replace(/\s+/g, " ").toLowerCase();
+}
 
-  const inputs = document.querySelectorAll(".placeholder-input");
-  inputs.forEach(input => {
-    const key = input.getAttribute("data-target");
-    const val = input.value;
-    if (val) {
-      const regex = new RegExp(`\\[\\[${key}\\]\\]`, "g");
-      text = text.replace(regex, val);
-    }
+function getPlaceholderCards() {
+  return Array.from(document.querySelectorAll(".ph-card"));
+}
+
+function getFillTextForCard(card) {
+  const modeEl = card.querySelector(".ph-mode");
+  const mode = modeEl ? String(modeEl.value || "text") : "text";
+
+  if (mode === "descriptor") {
+    const h = card.querySelector(".ph-desc-text");
+    return h ? String(h.value || "") : "";
+  }
+
+  const t = card.querySelector(".ph-text-input");
+  return t ? String(t.value || "") : "";
+}
+
+function buildFillsMap() {
+  const fills = {};
+  getPlaceholderCards().forEach(card => {
+    const key = normalisePlaceholderName(card.getAttribute("data-ph-key") || "");
+    if (!key) return;
+    fills[key] = getFillTextForCard(card) || "";
+  });
+  return fills;
+}
+
+function clientPreviewFinal() {
+  const template = document.getElementById("templateSource");
+  const out = document.getElementById("finalOutput");
+  if (!template || !out) return;
+
+  const fills = buildFillsMap();
+  let text = String(template.value || "");
+
+  // Replace placeholders using the same matching approach as server (normalised key lookup)
+  text = text.replace(/\[\[([\s\S]+?)\]\]/g, (full, inner) => {
+    const key = normalisePlaceholderName(inner);
+    const val = (fills[key] || "").trim();
+    return val; // empty removes unfilled placeholders
   });
 
-  document.getElementById("finalOutput").value = text;
+  // Basic whitespace tidy (keep it light; server does the canonical cleanup)
+  text = text.replace(/[ \t]{2,}/g, " ");
+  text = text.replace(/ *\n */g, "\n").trim();
+
+  if (!isUserEditingFinal()) {
+    out.value = text;
+  }
 }
 
-function copyToClipboard() {
-  const textarea = document.getElementById("finalOutput");
-  textarea.select();
-  textarea.setSelectionRange(0, 999999);
-  navigator.clipboard.writeText(textarea.value);
+function isUserEditingFinal() {
+  const flag = document.getElementById("overrideActive");
+  return flag && flag.value === "1";
+}
 
-  // Record usage history (best-effort)
+function setUserEditedFinal(active) {
+  const flag = document.getElementById("overrideActive");
+  if (flag) flag.value = active ? "1" : "0";
+}
+
+function syncFinalOverride() {
+  const out = document.getElementById("finalOutput");
+  const hidden = document.getElementById("finalOverride");
+  if (!out || !hidden) return;
+  hidden.value = String(out.value || "");
+}
+
+function updateCardModeUI(card) {
+  const modeEl = card.querySelector(".ph-mode");
+  const mode = modeEl ? String(modeEl.value || "text") : "text";
+  const d = card.querySelector(".ph-descriptor");
+  const t = card.querySelector(".ph-text");
+
+  if (d) d.style.display = (mode === "descriptor") ? "block" : "none";
+  if (t) t.style.display = (mode === "text") ? "block" : "none";
+}
+
+function setCardPreview(card, text) {
+  const box = card.querySelector(".ph-preview");
+  if (box) box.textContent = (text || "").trim();
+}
+
+async function loadDescriptorTypes() {
   try {
-    const idEl = document.getElementById("promptId");
-    const pid = idEl ? parseInt(idEl.value, 10) : null;
-    if (pid) {
-      fetch("/api/prompt/" + pid + "/usage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: textarea.value, source: "use" })
-      }).catch(() => {});
-    }
+    const res = await fetch("/api/descriptors/types", { headers: { "Accept": "application/json" } });
+    if (!res.ok) throw new Error("types");
+    const types = await res.json();
+    if (!Array.isArray(types)) return [];
+    return types.map(t => String(t).toLowerCase()).filter(Boolean);
   } catch (e) {
-    // ignore
+    return [];
   }
-
-  const feedback = document.getElementById("copyFeedback");
-  feedback.style.opacity = "1";
-  setTimeout(() => feedback.style.opacity = "0", 1500);
 }
 
-/* =========================
-   Find & Replace (Use page)
-   ========================= */
+function populateAllPlaceholderPackSelects(types) {
+  const fallback = ["generic", "character", "creature", "environment", "scene", "action", "prop", "style", "lighting", "vehicle", "other"];
+  const set = new Set((types || []).map(t => String(t).trim()).filter(Boolean));
+  fallback.forEach(t => set.add(t));
 
-let _frLastIndex = 0;
+  const list = Array.from(set).sort((a, b) => a.localeCompare(b));
 
-function frGetTextArea() {
-  return document.getElementById("finalOutput");
+  getPlaceholderCards().forEach(card => {
+    const sel = card.querySelector(".ph-pack");
+    if (!sel) return;
+    const current = sel.value || "all";
+
+    sel.innerHTML = "<option value=\"all\">(All packs)</option>";
+    list.forEach(t => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t;
+      sel.appendChild(opt);
+    });
+
+    if ([...sel.options].some(o => o.value === current)) sel.value = current;
+  });
 }
 
-function frSetStatus(msg) {
-  const el = document.getElementById("frStatus");
-  el.textContent = msg || "";
+function buildPlaceholderDescriptorListUrl(packType, q) {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (packType && packType !== "all") params.set("pack_type", packType);
+  return "/api/descriptors/list?" + params.toString();
 }
 
-function frFlash() {
-  const feedback = document.getElementById("replaceFeedback");
-  feedback.style.opacity = "1";
-  setTimeout(() => feedback.style.opacity = "0", 1500);
+
+async function fetchDescriptorList(packType, q) {
+  const url = buildPlaceholderDescriptorListUrl(packType, q);
+  const res = await fetch(url, { method: "GET", headers: { "Accept": "application/json" } });
+  if (!res.ok) throw new Error("list");
+  const data = await res.json();
+  return Array.isArray(data) ? data : [];
 }
 
-function frBuildRegex() {
-  const find = document.getElementById("frFind").value || "";
-  const matchCase = document.getElementById("frMatchCase").checked;
-  const wholeWord = document.getElementById("frWholeWord").checked;
+function renderPlaceholderResults(card, items) {
+  const box = card.querySelector(".ph-results");
+  if (!box) return;
 
-  const flags = matchCase ? "g" : "gi";
-  const escaped = find.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = wholeWord ? `\\b${escaped}\\b` : escaped;
+  box.innerHTML = "";
 
-  return { re: new RegExp(pattern, flags), find };
-}
-
-function frFindNext() {
-  const ta = frGetTextArea();
-  const text = ta.value;
-  const rebuilt = frBuildRegex();
-
-  if (!rebuilt.find) {
-    frSetStatus("Enter text to find.");
+  if (!items || !items.length) {
+    const empty = document.createElement("div");
+    empty.style.opacity = "0.7";
+    empty.style.padding = "0.6rem";
+    empty.textContent = "No descriptors found.";
+    box.appendChild(empty);
     return;
   }
 
-  rebuilt.re.lastIndex = _frLastIndex;
+  items.forEach(d => {
+    const row = document.createElement("div");
+    row.style.border = "1px solid #333";
+    row.style.borderRadius = "8px";
+    row.style.padding = "0.55rem 0.65rem";
+    row.style.margin = "0.35rem";
+    row.style.background = "#0b0b0b";
+    row.style.cursor = "pointer";
 
-  const m = rebuilt.re.exec(text);
-  if (!m) {
-    // wrap
-    _frLastIndex = 0;
-    rebuilt.re.lastIndex = 0;
-    const m2 = rebuilt.re.exec(text);
-    if (!m2) {
-      frSetStatus("No matches.");
-      return;
+    const title = document.createElement("div");
+    title.textContent = d.title || "(Untitled)";
+    title.style.fontWeight = "bold";
+    title.style.marginBottom = "0.2rem";
+
+    const meta = document.createElement("div");
+    meta.style.opacity = "0.7";
+    meta.style.fontSize = "0.85em";
+    meta.textContent = (d.pack_type || "unknown") + " • ID " + d.id;
+
+    const preview = document.createElement("div");
+    preview.style.marginTop = "0.35rem";
+    preview.style.opacity = "0.9";
+    preview.style.fontSize = "0.95em";
+    preview.style.whiteSpace = "pre-wrap";
+    preview.style.lineHeight = "1.35";
+    preview.textContent = String(d.rendered_text || d.description || "").slice(0, 220);
+
+    row.appendChild(title);
+    row.appendChild(meta);
+    if (preview.textContent) row.appendChild(preview);
+
+    row.onclick = () => {
+      const txt = String(d.rendered_text || d.description || "").trim();
+      const hidden = card.querySelector(".ph-desc-text");
+      if (hidden) hidden.value = txt;
+      setCardPreview(card, txt);
+      clientPreviewFinal();
+    };
+
+    box.appendChild(row);
+  });
+}
+
+function attachPlaceholderHandlers() {
+  getPlaceholderCards().forEach(card => {
+    updateCardModeUI(card);
+
+    const mode = card.querySelector(".ph-mode");
+    if (mode) {
+      mode.addEventListener("change", () => {
+        updateCardModeUI(card);
+        clientPreviewFinal();
+      });
     }
-    ta.focus();
-    ta.setSelectionRange(m2.index, m2.index + m2[0].length);
-    _frLastIndex = m2.index + Math.max(1, m2[0].length);
-    frSetStatus("Wrapped to start.");
-    return;
-  }
 
-  ta.focus();
-  ta.setSelectionRange(m.index, m.index + m[0].length);
-  _frLastIndex = m.index + Math.max(1, m[0].length);
-  frSetStatus("Match found.");
+    const txt = card.querySelector(".ph-text-input");
+    if (txt) {
+      txt.addEventListener("input", () => {
+        setCardPreview(card, txt.value || "");
+        clientPreviewFinal();
+      });
+    }
+
+    const pack = card.querySelector(".ph-pack");
+    const search = card.querySelector(".ph-search");
+    const btn = card.querySelector(".ph-search-btn");
+
+    const runSearch = async () => {
+      const packType = pack ? String(pack.value || "all") : "all";
+      const q = search ? String(search.value || "").trim() : "";
+      const box = card.querySelector(".ph-results");
+      if (box) box.innerHTML = "<div style=\"opacity:0.7; padding:0.6rem;\">Loading…</div>";
+
+      try {
+        const items = await fetchDescriptorList(packType, q);
+        renderPlaceholderResults(card, items);
+      } catch (e) {
+        if (box) box.innerHTML = "<div style=\"opacity:0.8; padding:0.6rem;\">Could not load descriptors.</div>";
+      }
+    };
+
+    if (btn) btn.addEventListener("click", runSearch);
+
+    let t = null;
+    if (search) {
+      search.addEventListener("input", () => {
+        clearTimeout(t);
+        t = setTimeout(runSearch, 250);
+      });
+    }
+
+    if (pack) {
+      pack.addEventListener("change", () => runSearch());
+    }
+
+    const clearBtn = card.querySelector(".ph-clear");
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => {
+        const h = card.querySelector(".ph-desc-text");
+        const ti = card.querySelector(".ph-text-input");
+        if (h) h.value = "";
+        if (ti) ti.value = "";
+        setCardPreview(card, "");
+        clientPreviewFinal();
+      });
+    }
+  });
 }
 
-function frReplaceOne() {
-  const ta = frGetTextArea();
-  const find = document.getElementById("frFind").value || "";
-  const rep = document.getElementById("frReplace").value || "";
+function attachFinalEditorHandlers() {
+  const out = document.getElementById("finalOutput");
+  if (!out) return;
 
-  if (!find) {
-    frSetStatus("Enter text to find.");
-    return;
+  out.addEventListener("input", () => {
+    setUserEditedFinal(true);
+    syncFinalOverride();
+  });
+
+  const form = document.getElementById("useForm");
+  if (form) {
+    form.addEventListener("submit", () => {
+      syncFinalOverride();
+    });
   }
-
-  // Replace current selection if it matches, else find next and replace that.
-  const sel = ta.value.substring(ta.selectionStart, ta.selectionEnd);
-  const rebuilt = frBuildRegex();
-
-  if (sel && rebuilt.re.test(sel)) {
-    const before = ta.value.substring(0, ta.selectionStart);
-    const after = ta.value.substring(ta.selectionEnd);
-    const start = ta.selectionStart;
-
-    ta.value = before + rep + after;
-    ta.focus();
-    ta.setSelectionRange(start, start + rep.length);
-
-    _frLastIndex = start + Math.max(1, rep.length);
-    frSetStatus("Replaced 1.");
-    frFlash();
-    return;
-  }
-
-  // If selection didn't match, find next match and replace it.
-  const text = ta.value;
-  rebuilt.re.lastIndex = _frLastIndex;
-
-  const m = rebuilt.re.exec(text) || (rebuilt.re.lastIndex = 0, rebuilt.re.exec(text));
-  if (!m) {
-    frSetStatus("No matches.");
-    return;
-  }
-
-  const before = text.substring(0, m.index);
-  const after = text.substring(m.index + m[0].length);
-  ta.value = before + rep + after;
-
-  ta.focus();
-  ta.setSelectionRange(m.index, m.index + rep.length);
-
-  _frLastIndex = m.index + Math.max(1, rep.length);
-  frSetStatus("Replaced 1.");
-  frFlash();
-}
-
-function frReplaceAll() {
-  const ta = frGetTextArea();
-  const rep = document.getElementById("frReplace").value || "";
-  const rebuilt = frBuildRegex();
-
-  if (!rebuilt.find) {
-    frSetStatus("Enter text to find.");
-    return;
-  }
-
-  const before = ta.value;
-  const after = before.replace(rebuilt.re, rep);
-
-  if (before === after) {
-    frSetStatus("No matches.");
-    return;
-  }
-
-  ta.value = after;
-  ta.focus();
-  _frLastIndex = 0;
-
-  const count = (before.match(rebuilt.re) || []).length;
-  frSetStatus(`Replaced ${count}.`);
-  frFlash();
 }
 
 /* =========================
-   Descriptor picker (Use-stage)
+   Server-side copy
+   ========================= */
+async function copyToClipboardServer() {
+  const form = document.getElementById("useForm");
+  const out = document.getElementById("finalOutput");
+  const pidEl = document.getElementById("promptId");
+  if (!form || !pidEl) return;
+
+  // Ensure we send the latest override value if active
+  syncFinalOverride();
+
+  const pid = parseInt(pidEl.value, 10);
+  const fd = new FormData(form);
+
+  try {
+    const res = await fetch("/api/prompt/" + pid + "/render_final", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data && data.error ? data.error : "render");
+
+    const text = String(data.text || "");
+    if (out && !isUserEditingFinal()) out.value = text;
+
+    await navigator.clipboard.writeText(text);
+
+    const feedback = document.getElementById("copyFeedback");
+    if (feedback) {
+      feedback.style.opacity = "1";
+      setTimeout(() => feedback.style.opacity = "0", 1500);
+    }
+
+    // Best-effort usage history (existing behaviour)
+    try {
+      if (pid) {
+        fetch("/api/prompt/" + pid + "/usage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: text })
+        });
+      }
+    } catch (e) {}
+
+  } catch (e) {
+    // Fallback: copy whatever is currently in the editor
+    if (out) {
+      out.select();
+      out.setSelectionRange(0, 999999);
+      await navigator.clipboard.writeText(out.value);
+    }
+  }
+}
+
+/* =========================
+   Existing descriptor panel logic (mostly unchanged)
    ========================= */
 
+const DESC_PREFERRED_ORDER = ["character","creature","environment","scene","action","prop","lighting","style","camera","clothing","pose","mood","material","vehicle","fx","other"];
 let _descriptorTypes = [];
 let _descTypesLoaded = false;
 let _descScopeUiMode = "all";
 
-const DESC_PREFERRED_ORDER = [
-  "character", "creature", "environment", "scene", "action", "camera", "lighting", "style", "prop", "vehicle"
-];
-
 function setDescriptorScope(mode) {
   _descScopeUiMode = (mode === "relevant") ? "relevant" : "all";
 
-  const btnRel = document.getElementById("scopeRelevantBtn");
-  const btnAll = document.getElementById("scopeAllBtn");
-  if (btnRel) btnRel.style.opacity = _descScopeUiMode === "relevant" ? "1" : "0.65";
-  if (btnAll) btnAll.style.opacity = _descScopeUiMode === "all" ? "1" : "0.65";
+  const relevantBtn = document.getElementById("scopeRelevantBtn");
+  const allBtn = document.getElementById("scopeAllBtn");
+  if (relevantBtn) relevantBtn.style.opacity = (_descScopeUiMode === "relevant") ? "1" : "0.65";
+  if (allBtn) allBtn.style.opacity = (_descScopeUiMode === "all") ? "1" : "0.65";
 
   const hint = document.getElementById("descriptorScopeHint");
   if (_descScopeUiMode === "relevant") {
@@ -390,15 +604,13 @@ async function loadDescriptorTypesOnce() {
 
   try {
     const res = await fetch("/api/descriptors/types", { headers: { "Accept": "application/json" } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error("types");
     const types = await res.json();
     _descriptorTypes = Array.isArray(types) ? types.filter(Boolean).map(t => String(t)) : [];
   } catch (e) {
-    // Fallback: keep UI functional even if the types endpoint is unavailable.
     _descriptorTypes = [];
   }
 
-  // Ensure we always have at least something usable
   const fallback = ["generic", "character", "creature", "environment", "scene", "action", "prop", "style", "lighting", "vehicle", "other"];
   const set = new Set(_descriptorTypes.map(t => t.trim()).filter(Boolean));
   fallback.forEach(t => set.add(t));
@@ -410,8 +622,6 @@ async function loadDescriptorTypesOnce() {
 
 function getQuickChipTypes() {
   const types = _descriptorTypes.slice();
-
-  // Keep only known / common types for chips, but do not block anything from dropdown.
   const lower = new Set(types.map(t => String(t).toLowerCase()));
   const ordered = [];
 
@@ -419,7 +629,6 @@ function getQuickChipTypes() {
     if (lower.has(t)) ordered.push(t);
   });
 
-  // Add a few more (if present) until we hit a sensible cap
   const extras = types
     .map(t => String(t).toLowerCase())
     .filter(t => !ordered.includes(t) && t !== "generic" && t !== "other")
@@ -444,7 +653,6 @@ function renderRelevantChips() {
   label.style.marginRight = "0.25rem";
   wrap.appendChild(label);
 
-  // De-dupe while keeping order
   const seen = new Set();
   types.forEach(t => {
     const key = String(t).toLowerCase();
@@ -472,10 +680,8 @@ function populatePackDropdown() {
 
   const current = select.value;
 
-  // Always include "All packs" option
   select.innerHTML = "<option value=\"all\">(All packs)</option>";
 
-  // Use the loaded types so lighting and other custom pack types appear.
   const types = _descriptorTypes.slice().map(t => String(t).toLowerCase());
   const seen = new Set();
   types.forEach(t => {
@@ -489,7 +695,6 @@ function populatePackDropdown() {
     select.appendChild(opt);
   });
 
-  // Preserve selection if still present
   if ([...select.options].some(o => o.value === current)) {
     select.value = current;
   } else {
@@ -505,15 +710,13 @@ function buildDescriptorListUrl() {
   if (q) params.set("q", q);
   if (packSel && packSel !== "all") params.set("pack_type", packSel);
 
-  return `/api/descriptors/list?${params.toString()}`;
+  return "/api/descriptors/list?" + params.toString();
 }
 
 function setDescriptorStatus(msg) {
   const el = document.getElementById("descriptorStatus");
   if (el) el.textContent = msg || "";
 }
-
-/* ---- insertion helpers ---- */
 
 function flashInserted() {
   const feedback = document.getElementById("descriptorInsertFeedback");
@@ -542,6 +745,8 @@ function insertTextAtCursor(text) {
   ta.focus();
   ta.setSelectionRange(cursorPos, cursorPos);
 
+  setUserEditedFinal(true);
+  syncFinalOverride();
   flashInserted();
 }
 
@@ -555,8 +760,6 @@ function insertDescriptorToken(id) {
   const token = String.fromCharCode(123,123) + "descriptor:" + id + String.fromCharCode(125,125);
   insertTextAtCursor(token);
 }
-
-/* ---- render results ---- */
 
 function renderDescriptorResults(items) {
   const box = document.getElementById("descriptorResults");
@@ -590,7 +793,7 @@ function renderDescriptorResults(items) {
     const meta = document.createElement("div");
     meta.style.opacity = "0.7";
     meta.style.fontSize = "0.85em";
-    meta.textContent = `${(d.pack_type || "unknown")} • ID ${d.id}`;
+    meta.textContent = (d.pack_type || "unknown") + " • ID " + d.id;
 
     const preview = document.createElement("div");
     preview.style.marginTop = "0.4rem";
@@ -637,11 +840,9 @@ function renderDescriptorResults(items) {
   });
 }
 
-/* ---- fetch + refresh ---- */
-
 async function fetchDescriptors(url) {
   const res = await fetch(url, { method: "GET", headers: { "Accept": "application/json" } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw new Error("list");
   return await res.json();
 }
 
@@ -656,7 +857,6 @@ async function refreshDescriptors() {
     const data = await fetchDescriptors(url);
     const items = Array.isArray(data) ? data : [];
 
-    // If the user picked a pack type that no longer exists, reset to all
     if (packSel !== "all" && _descriptorTypes.length) {
       const lower = new Set(_descriptorTypes.map(t => String(t).toLowerCase()));
       if (!lower.has(packSel.toLowerCase())) {
@@ -665,7 +865,7 @@ async function refreshDescriptors() {
       }
     }
 
-    setDescriptorStatus(items.length ? `${items.length} found` : (q ? "No results" : "No descriptors"));
+    setDescriptorStatus(items.length ? (items.length + " found") : (q ? "No results" : "No descriptors"));
     renderDescriptorResults(items);
   } catch (e) {
     setDescriptorStatus("Failed to load");
@@ -682,13 +882,103 @@ function debouncedRefreshDescriptors() {
   _descTimer = setTimeout(() => refreshDescriptors(), 250);
 }
 
-(async function initDescriptorPicker() {
+(async function initUsePrompt() {
+  // Placeholder picker packs
+  const types = await loadDescriptorTypes();
+  populateAllPlaceholderPackSelects(types);
+  attachPlaceholderHandlers();
+
+  // Final editor handlers
+  attachFinalEditorHandlers();
+
+  // Initial previews
+  getPlaceholderCards().forEach(card => setCardPreview(card, ""));
+  clientPreviewFinal();
+
+  // Descriptor panel (global)
   await loadDescriptorTypesOnce();
   populatePackDropdown();
-  setDescriptorScope("all"); // default matches edit/create behaviour (show everything)
+  setDescriptorScope("all");
   renderRelevantChips();
   refreshDescriptors();
 })();
+
+  // Template preview: jump to next occurrence of a placeholder when clicking its card
+  // Ensure placeholder mode toggle always works (event delegation + initial sync)
+(function () {
+  function applyModeForCard(card) {
+    if (!card) return;
+
+    const modeEl = card.querySelector(".ph-mode");
+    const mode = modeEl ? String(modeEl.value || "text") : "text";
+
+    const d = card.querySelector(".ph-descriptor");
+    const t = card.querySelector(".ph-text");
+
+    if (d) d.style.display = (mode === "descriptor") ? "block" : "none";
+    if (t) t.style.display = (mode === "text") ? "block" : "none";
+  }
+
+  // Initial sync (in case anything loads before handlers attach)
+  document.querySelectorAll(".ph-card").forEach(applyModeForCard);
+
+  // Delegated change handler (robust even if other JS runs before/after)
+  document.addEventListener("change", function (ev) {
+    const sel = ev.target && ev.target.closest ? ev.target.closest(".ph-mode") : null;
+    if (!sel) return;
+
+    const card = sel.closest(".ph-card");
+    applyModeForCard(card);
+
+    // Keep preview in sync if available
+    try {
+      if (typeof clientPreviewFinal === "function") clientPreviewFinal();
+    } catch (e) {}
+  });
+})();
+
+// Template preview: jump to next occurrence of a placeholder when clicking its card
+(function () {
+  const templateBox = document.getElementById("templatePreview");
+  if (!templateBox) return;
+
+  function selectNextOccurrence(token) {
+    const hay = templateBox.value || "";
+    if (!hay || !token) return;
+
+    const startFrom = (templateBox.selectionEnd || 0);
+    let idx = hay.indexOf(token, startFrom);
+    if (idx === -1) idx = hay.indexOf(token, 0);
+    if (idx === -1) return;
+
+    templateBox.focus();
+    templateBox.setSelectionRange(idx, idx + token.length);
+
+    const before = hay.slice(0, idx);
+    const line = before.split("\n").length - 1;
+    const approxLineHeight = 18;
+    templateBox.scrollTop = Math.max(0, (line - 2) * approxLineHeight);
+  }
+
+  document.addEventListener("click", function (ev) {
+    const t = ev.target;
+
+    // If user clicked inside an interactive control within the variable card, do NOT jump.
+    if (t && t.closest && t.closest("input, select, textarea, button, a, .ph-results")) {
+      return;
+    }
+
+    const card = t && t.closest ? t.closest(".ph-card") : null;
+    if (!card) return;
+
+    const disp = card.getAttribute("data-ph-display") || "";
+    if (!disp) return;
+
+    const token = "[[" + disp + "]]";
+    selectNextOccurrence(token);
+  });
+})();
+
 </script>
 
 {% endblock %}

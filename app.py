@@ -509,6 +509,119 @@ def find_placeholders(text: str) -> list[str]:
     matches = re.findall(r"\[\[(.+?)\]\]", text)
     return list(dict.fromkeys(matches))
 
+
+# -------------------------
+# Use Prompt rendering helpers
+# -------------------------
+
+_PLACEHOLDER_RE = re.compile(r"\[\[(.+?)\]\]")
+
+def normalise_placeholder_name(name: str) -> str:
+    """Normalise placeholder name for stable mapping.
+
+    - Strip outer whitespace
+    - Collapse internal whitespace to single spaces
+    - Casefold to handle casing differences
+    """
+    if name is None:
+        return ""
+    s = str(name)
+    s = s.strip()
+    s = re.sub(r"\s+", " ", s)
+    return s.casefold()
+
+def extract_placeholders_meta(text: str) -> list[dict]:
+    """Return unique placeholders with display + normalised key, preserving order."""
+    if not text:
+        return []
+    seen: set[str] = set()
+    out: list[dict] = []
+    for m in _PLACEHOLDER_RE.finditer(text):
+        display = m.group(1)
+        key = normalise_placeholder_name(display)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "display": display,
+            "key": key,
+        })
+    return out
+
+def cleanup_placeholder_whitespace(s: str) -> str:
+    """Tidy spaces introduced by placeholder removals while preserving newlines."""
+    if s is None:
+        return ""
+    # Trim trailing spaces per line
+    lines = [ln.rstrip() for ln in str(s).splitlines()]
+    s = "\n".join(lines)
+
+    # Collapse repeated spaces (not newlines)
+    s = re.sub(r"[ \t]{2,}", " ", s)
+
+    # Remove space before punctuation
+    s = re.sub(r"\s+([,.;:!?])", r"\1", s)
+
+    # Clean up spacing around newlines
+    s = re.sub(r" *\n *", "\n", s)
+
+    # Avoid leading/trailing whitespace
+    return s.strip()
+
+def render_use_output(base_content: str, fills: dict[str, str], final_override: str | None = None) -> str:
+    """Render the final prompt text for Use Prompt.
+
+    Order:
+    1) Expand descriptor tokens ({{descriptor:id}}) to rendered_text
+    2) Replace placeholders [[...]] using normalised placeholder key lookup
+    3) Remove any remaining placeholders (unfilled) by replacing them with ""
+    4) Clean up whitespace
+    """
+    if final_override is not None and str(final_override).strip():
+        working = str(final_override)
+    else:
+        working = str(base_content or "")
+
+    # 1) Token expansion (server-side source of truth)
+    try:
+        working = inject_descriptors(working)
+    except Exception:
+        # Keep output usable even if token expansion fails for some reason
+        pass
+
+    # 2 + 3) Placeholders
+    def _sub(m: re.Match) -> str:
+        raw = m.group(1)
+        key = normalise_placeholder_name(raw)
+        val = (fills.get(key) or "").strip()
+        return val  # empty string removes unfilled placeholders
+
+    working = _PLACEHOLDER_RE.sub(_sub, working)
+
+    # 4) Clean up
+    return cleanup_placeholder_whitespace(working)
+
+def parse_use_fills_from_form(form, placeholders_meta: list[dict]) -> dict[str, str]:
+    """Parse placeholder fill selections from the Use Prompt POST payload."""
+    fills: dict[str, str] = {}
+    for i, ph in enumerate(placeholders_meta):
+        key = ph.get("key", "")
+        if not key:
+            continue
+
+        mode = (form.get(f"ph_mode_{i}") or "text").strip().lower()
+        if mode == "descriptor":
+            val = (form.get(f"ph_desc_text_{i}") or "").strip()
+        else:
+            val = (form.get(f"ph_text_{i}") or "").strip()
+
+        if val:
+            fills[key] = val
+        else:
+            # Explicitly set to empty if present, so unfilled placeholders are removed consistently
+            fills.setdefault(key, "")
+    return fills
+
 def parse_prompt_txt(raw_text: str) -> dict:
     meta = {}
     lines = raw_text.splitlines()
@@ -1478,22 +1591,24 @@ def render_prompt(prompt_id: int):
     conn.close()
 
     content = prompt["content"]
-    placeholders = find_placeholders(content)
+    base_text = inject_descriptors(content)
+    placeholders_meta = extract_placeholders_meta(content)
     final_text = None
 
     if request.method == "POST":
-        final_text = content
-        for name in placeholders:
-            value = request.form.get(name, "").strip()
-            final_text = final_text.replace(f"[[{name}]]", value)
-        if request.form.get("final_override"):
-            final_text = request.form.get("final_override").strip()
+        fills = parse_use_fills_from_form(request.form, placeholders_meta)
+
+        override_active = (request.form.get("override_active") or "").strip() == "1"
+        override_text = (request.form.get("final_override") or "").strip() if override_active else None
+
+        final_text = render_use_output(content, fills, final_override=override_text)
 
     return render_template(
         "render_prompt.html",
         prompt=prompt,
         variants=variants,
-        placeholders=placeholders,
+        placeholders_meta=placeholders_meta,
+        base_text=base_text,
         final_text=final_text,
     )
 
@@ -2027,7 +2142,8 @@ def api_descriptor_preview():
 @app.route("/api/descriptors/list")
 def api_descriptors_list():
     """Return a lightweight list of saved descriptors for the prompt editor picker."""
-    pack_type = request.args.get("pack_type", "all")
+    # Normalise to lower-case because pack_type values in the DB are not guaranteed to be consistent.
+    pack_type = (request.args.get("pack_type", "all") or "all").strip().lower()
     q = (request.args.get("q") or "").strip().lower()
 
     db = get_db()
@@ -2035,7 +2151,7 @@ def api_descriptors_list():
     params = []
 
     if pack_type and pack_type != "all":
-        where.append("pack_type = ?")
+        where.append("LOWER(pack_type) = ?")
         params.append(pack_type)
 
     if q:
@@ -2386,7 +2502,19 @@ def refine_prompt(prompt_id: int):
         return render_template("refine_prompt.html", prompt=prompt, models=models, ollama_available=ollama_available)
 
     save_action = request.form.get("save_action")
-    current_content = request.form.get("content") or prompt["content"]
+    use_render = (request.form.get("use_render") or "").strip() == "1"
+    if use_render:
+        # Re-render from immutable base + fills to avoid relying on client-side JS.
+        base_content = prompt["content"]
+        placeholders_meta = extract_placeholders_meta(base_content)
+        fills = parse_use_fills_from_form(request.form, placeholders_meta)
+
+        override_active = (request.form.get("override_active") or "").strip() == "1"
+        override_text = (request.form.get("final_override") or "").strip() if override_active else None
+
+        current_content = render_use_output(base_content, fills, final_override=override_text)
+    else:
+        current_content = request.form.get("content") or prompt["content"]
 
     if not save_action:
         if not ollama_available:
@@ -2485,7 +2613,18 @@ def save_from_use(prompt_id: int):
         return redirect(url_for("index"))
 
     mode = request.form.get("save_mode", "overwrite")
-    content = (request.form.get("content") or "").strip()
+    use_render = (request.form.get("use_render") or "").strip() == "1"
+    if use_render:
+        base_content = prompt["content"]
+        placeholders_meta = extract_placeholders_meta(base_content)
+        fills = parse_use_fills_from_form(request.form, placeholders_meta)
+
+        override_active = (request.form.get("override_active") or "").strip() == "1"
+        override_text = (request.form.get("final_override") or "").strip() if override_active else None
+
+        content = render_use_output(base_content, fills, final_override=override_text)
+    else:
+        content = (request.form.get("content") or "").strip()
     if not content:
         flash("Nothing to save.")
         return redirect(url_for("render_prompt", prompt_id=prompt_id))
@@ -2519,6 +2658,32 @@ def save_from_use(prompt_id: int):
 
     flash("Prompt updated.")
     return redirect(url_for("render_prompt", prompt_id=prompt_id))
+
+
+@app.route("/api/prompt/<int:prompt_id>/render_final", methods=["POST"])
+def api_render_final(prompt_id: int):
+    """Server-side final renderer for Use Prompt (copy/export consistency)."""
+    init_db()
+    prompt = get_prompt(prompt_id)
+    if not prompt:
+        return jsonify({"error": "Prompt not found."}), 404
+
+    # NSFW direct access protection (match Use Prompt view)
+    if NSFW_LOCK_ENABLED_DEFAULT and not nsfw_is_unlocked():
+        with get_db() as conn:
+            if prompt_is_nsfw(conn, prompt_id):
+                return jsonify({"error": "This prompt is locked (NSFW)."}), 403
+
+    base_content = prompt["content"]
+    placeholders_meta = extract_placeholders_meta(base_content)
+    fills = parse_use_fills_from_form(request.form, placeholders_meta)
+
+    override_active = (request.form.get("override_active") or "").strip() == "1"
+    override_text = (request.form.get("final_override") or "").strip() if override_active else None
+
+    final_text = render_use_output(base_content, fills, final_override=override_text)
+    return jsonify({"text": final_text})
+
 
 @app.route("/refine_draft", methods=["POST"])
 def refine_draft():
