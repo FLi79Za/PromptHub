@@ -18,6 +18,31 @@
 
   <input type="hidden" id="promptId" value="{{ prompt.id }}">
 
+  {% if variants and variants|length > 1 %}
+  <details id="familyPanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin:1rem 0 1rem; border:1px solid #333;">
+    <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+      <span style="font-weight:bold;">📎 Prompt Family</span>
+      <span style="opacity:0.7; font-size:0.9em;">Switch between main + variants</span>
+    </summary>
+
+    <div style="margin-top:0.9rem; display:flex; flex-direction:column; gap:0.75rem;">
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+        <label style="font-size:0.85em; opacity:0.75; text-transform:uppercase; letter-spacing:0.08em;">Open</label>
+        {% for v in variants %}
+          <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=v.id) }}"
+             style="{% if v.id == prompt.id %}outline:2px solid #00bfff;{% endif %}">
+            {{ v.title }}
+          </a>
+        {% endfor %}
+      </div>
+
+      <div style="opacity:0.75; font-size:0.9em;">
+        Tip: switching variants here is for viewing/using only. To save changes or create new variants, use Edit.
+      </div>
+    </div>
+  </details>
+  {% endif %}
+
   <form id="useForm" action="{{ url_for('refine_prompt', prompt_id=prompt.id) }}" method="POST">
     <input type="hidden" name="use_render" value="1">
     <input type="hidden" name="override_active" id="overrideActive" value="0">
@@ -158,483 +183,169 @@
 
         <div style="display:grid; grid-template-columns: 1fr; gap:0.5rem; margin: 1rem 0 1rem;">
       <label>Template Preview (shows where placeholders appear)</label>
-      <textarea id="templatePreview" readonly style="width:100%; min-height:140px; resize:vertical; padding:0.75rem; border-radius:8px; border:1px solid #333; background:#0e0e0e; color:#e6e6e6; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; font-size:0.92em; line-height:1.35;">{{ base_text }}</textarea>
-      <div style="opacity:0.7; font-size:0.9em;">Tip: click a variable card to jump to its next occurrence in the template.</div>
+      <textarea id="templatePreview" readonly style="width:100%; min-height:140px; resize:vertical; padding:0.75rem; border-radius:8px; border:1px solid #333; background:#0e0e0e; color:#e6e6e6; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:0.92em; line-height:1.35;">{{ base_text }}</textarea>
     </div>
 
-<div style="display:flex; justify-content:space-between; align-items:end; margin-bottom:0.5rem;">
-      <label>Final Prompt (Editable)</label>
-      <div style="display:flex; gap:0.75rem; align-items:center;">
-        <span id="descriptorInsertFeedback" style="font-size:0.85em; color:#51cf66; opacity:0; transition:opacity 0.3s;">Inserted!</span>
-        <span id="copyFeedback" style="font-size:0.85em; color:#51cf66; opacity:0; transition:opacity 0.3s;">Copied!</span>
-        <span id="replaceFeedback" style="font-size:0.85em; color:#51cf66; opacity:0; transition:opacity 0.3s;">Replaced!</span>
-      </div>
-    </div>
-
-    <!-- Find + Replace (unchanged) -->
-    <details id="findReplacePanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1rem; border:1px solid #333;">
-      <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem;">
-        <span style="font-weight:bold;">🔎 Find & Replace</span>
-        <span style="opacity:0.7; font-size:0.9em;">Click to toggle</span>
-      </summary>
-
-      <div style="margin-top:1rem; display:flex; flex-direction:column; gap:0.75rem;">
-        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-          <input id="frFind" type="text" placeholder="Find…" style="flex:1; min-width:240px;">
-          <input id="frReplace" type="text" placeholder="Replace with…" style="flex:1; min-width:240px;">
-        </div>
-
-        <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
-          <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
-            <label style="display:flex; gap:0.4rem; align-items:center; opacity:0.85; font-size:0.95em; cursor:pointer;">
-              <input id="frMatchCase" type="checkbox">
-              Match case
-            </label>
-            <label style="display:flex; gap:0.4rem; align-items:center; opacity:0.85; font-size:0.95em; cursor:pointer;">
-              <input id="frWholeWord" type="checkbox" checked>
-              Whole word
-            </label>
-          </div>
-
-          <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-            <button type="button" class="btn-secondary" onclick="frFindNext()">Find next</button>
-            <button type="button" class="btn-secondary" onclick="frReplaceOne()">Replace</button>
-            <button type="button" class="btn-secondary" onclick="frReplaceAll()">Replace all</button>
-            <span id="frStatus" style="font-size:0.9em; opacity:0.7;"></span>
-          </div>
-        </div>
-
-        <div style="font-size:0.9em; opacity:0.75;">
-          Tip: with “Whole word” on, “he” won’t match inside “the”.
-        </div>
-      </div>
-    </details>
-
-    <!-- Immutable base template (with placeholders). Do not overwrite it in JS. -->
     <textarea id="templateSource" style="display:none;">{{ prompt.content }}</textarea>
 
-    <textarea name="content" id="finalOutput" rows="12" style="font-family:monospace; line-height:1.5; font-size:1.1em; padding:1rem;">{{ final_text or prompt.content }}</textarea>
+    <div style="display:grid; grid-template-columns: 1fr; gap:0.5rem; margin-bottom: 1rem;">
+      <label for="finalOutput">Final Prompt (editable)</label>
 
-    <div class="action-bar" style="margin-top:1rem; display:flex; gap:1rem; flex-wrap:wrap;">
-      <button type="button" class="btn-primary" onclick="copyToClipboardServer()" style="flex:2;">Copy to Clipboard</button>
+      <textarea name="content" id="finalOutput" rows="12" style="font-family:monospace; line-height:1.5; font-size:1.1em; padding:1rem;">{{ final_text or prompt.content }}</textarea>
 
-      <button type="submit" class="btn-secondary" style="flex:1;" title="Send this text to Ollama for refinement">✨ Refine with Ollama</button>
+      <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
+        <button type="button" class="btn-secondary" id="btnCopyFinal">Copy</button>
+        <button type="button" class="btn-secondary" id="btnResetFinal">Reset</button>
+      </div>
 
-      <button type="submit" class="btn-secondary" style="flex:1;" name="save_mode" value="overwrite"
-              formaction="{{ url_for('save_from_use', prompt_id=prompt.id) }}"
-              title="Overwrite the saved prompt content with the text above">💾 Save</button>
+      <!-- Find & Replace panel -->
+      <details id="findReplacePanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; border:1px solid #333; margin-top:0.75rem;">
+        <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+          <span style="font-weight:bold;">🔎 Find & Replace</span>
+          <span style="opacity:0.7; font-size:0.9em;">Works on the Final Prompt text</span>
+        </summary>
 
-      <button type="submit" class="btn-secondary" style="flex:1;" name="save_mode" value="variant"
-              formaction="{{ url_for('save_from_use', prompt_id=prompt.id) }}"
-              title="Save this as a new child variant linked to this prompt">📎 Save as Variant</button>
+        <div style="margin-top:0.9rem; display:flex; flex-direction:column; gap:0.75rem;">
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <input id="frFind" type="text" placeholder="Find…" style="flex:1; min-width:220px;">
+            <input id="frReplace" type="text" placeholder="Replace with…" style="flex:1; min-width:220px;">
+          </div>
+
+          <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+            <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
+              <label style="display:flex; gap:0.35rem; align-items:center; opacity:0.85;">
+                <input id="frMatchCase" type="checkbox"> Match case
+              </label>
+              <label style="display:flex; gap:0.35rem; align-items:center; opacity:0.85;">
+                <input id="frWholeWord" type="checkbox"> Whole word
+              </label>
+              <span id="frStatus" style="font-size:0.9em; opacity:0.7;"></span>
+            </div>
+
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+              <button type="button" class="btn-secondary" onclick="frFindNext()">Find next</button>
+              <button type="button" class="btn-secondary" onclick="frReplaceOne()">Replace</button>
+              <button type="button" class="btn-secondary" onclick="frReplaceAll()">Replace all</button>
+              <span id="replaceFeedback" style="opacity:0; transition:opacity .2s; font-size:0.9em;">✅</span>
+            </div>
+          </div>
+        </div>
+      </details>
+
     </div>
+
   </form>
 
 </section>
 
 <script>
-/* =========================
-   Use Prompt: per-placeholder fills (descriptor or custom)
-   Server remains the source of truth for final output.
-   ========================= */
+/*
+  Client-side placeholder UX:
 
-function normalisePlaceholderName(s) {
-  if (s === null || s === undefined) return "";
-  const trimmed = String(s).trim();
-  return trimmed.replace(/\s+/g, " ").toLowerCase();
-}
+  - Placeholders are [[NAME]] in the template.
+  - Descriptor tokens are Descriptor ID in stored prompt content.
+  - On this page, users can pick descriptors or custom text per placeholder.
+  - We keep "Final Prompt" editable and only overwrite it from preview if user hasn't manually edited.
+*/
 
-function getPlaceholderCards() {
-  return Array.from(document.querySelectorAll(".ph-card"));
-}
+let _descriptorTypes = [];
+let _descriptorScope = "all"; // "all" | "relevant"
+let _userEditedFinal = false;
 
-function getFillTextForCard(card) {
-  const modeEl = card.querySelector(".ph-mode");
-  const mode = modeEl ? String(modeEl.value || "text") : "text";
-
-  if (mode === "descriptor") {
-    const h = card.querySelector(".ph-desc-text");
-    return h ? String(h.value || "") : "";
-  }
-
-  const t = card.querySelector(".ph-text-input");
-  return t ? String(t.value || "") : "";
-}
-
-function buildFillsMap() {
-  const fills = {};
-  getPlaceholderCards().forEach(card => {
-    const key = normalisePlaceholderName(card.getAttribute("data-ph-key") || "");
-    if (!key) return;
-    fills[key] = getFillTextForCard(card) || "";
-  });
-  return fills;
-}
-
-function clientPreviewFinal() {
-  const template = document.getElementById("templateSource");
-  const out = document.getElementById("finalOutput");
-  if (!template || !out) return;
-
-  const fills = buildFillsMap();
-  let text = String(template.value || "");
-
-  // Replace placeholders using the same matching approach as server (normalised key lookup)
-  text = text.replace(/\[\[([\s\S]+?)\]\]/g, (full, inner) => {
-    const key = normalisePlaceholderName(inner);
-    const val = (fills[key] || "").trim();
-    return val; // empty removes unfilled placeholders
-  });
-
-  // Basic whitespace tidy (keep it light; server does the canonical cleanup)
-  text = text.replace(/[ \t]{2,}/g, " ");
-  text = text.replace(/ *\n */g, "\n").trim();
-
-  if (!isUserEditingFinal()) {
-    out.value = text;
-  }
-}
-
-function isUserEditingFinal() {
-  const flag = document.getElementById("overrideActive");
-  return flag && flag.value === "1";
-}
-
-function setUserEditedFinal(active) {
-  const flag = document.getElementById("overrideActive");
-  if (flag) flag.value = active ? "1" : "0";
+function setUserEditedFinal(v) {
+  _userEditedFinal = !!v;
+  const overrideActive = document.getElementById("overrideActive");
+  if (overrideActive) overrideActive.value = _userEditedFinal ? "1" : "0";
 }
 
 function syncFinalOverride() {
-  const out = document.getElementById("finalOutput");
+  const ta = document.getElementById("finalOutput");
   const hidden = document.getElementById("finalOverride");
-  if (!out || !hidden) return;
-  hidden.value = String(out.value || "");
+  if (ta && hidden) hidden.value = ta.value || "";
 }
 
-function updateCardModeUI(card) {
-  const modeEl = card.querySelector(".ph-mode");
-  const mode = modeEl ? String(modeEl.value || "text") : "text";
-  const d = card.querySelector(".ph-descriptor");
-  const t = card.querySelector(".ph-text");
-
-  if (d) d.style.display = (mode === "descriptor") ? "block" : "none";
-  if (t) t.style.display = (mode === "text") ? "block" : "none";
-}
-
-function setCardPreview(card, text) {
-  const box = card.querySelector(".ph-preview");
-  if (box) box.textContent = (text || "").trim();
+function normalizePackName(s) {
+  return String(s || "").trim();
 }
 
 async function loadDescriptorTypes() {
   try {
     const res = await fetch("/api/descriptors/types", { headers: { "Accept": "application/json" } });
     if (!res.ok) throw new Error("types");
-    const types = await res.json();
-    if (!Array.isArray(types)) return [];
-    return types.map(t => String(t).toLowerCase()).filter(Boolean);
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
   } catch (e) {
     return [];
   }
 }
 
-function populateAllPlaceholderPackSelects(types) {
-  const fallback = ["generic", "character", "creature", "environment", "scene", "action", "prop", "style", "lighting", "vehicle", "other"];
-  const set = new Set((types || []).map(t => String(t).trim()).filter(Boolean));
-  fallback.forEach(t => set.add(t));
+function populatePackDropdown() {
+  const sel = document.getElementById("descriptorPackSelect");
+  if (!sel) return;
 
-  const list = Array.from(set).sort((a, b) => a.localeCompare(b));
+  // Preserve current selection if possible
+  const current = sel.value || "all";
 
-  getPlaceholderCards().forEach(card => {
-    const sel = card.querySelector(".ph-pack");
-    if (!sel) return;
-    const current = sel.value || "all";
+  // Remove all but first option
+  while (sel.options.length > 1) sel.remove(1);
 
-    sel.innerHTML = "<option value=\"all\">(All packs)</option>";
-    list.forEach(t => {
-      const opt = document.createElement("option");
-      opt.value = t;
-      opt.textContent = t;
-      sel.appendChild(opt);
-    });
-
-    if ([...sel.options].some(o => o.value === current)) sel.value = current;
-  });
-}
-
-function buildPlaceholderDescriptorListUrl(packType, q) {
-  const params = new URLSearchParams();
-  if (q) params.set("q", q);
-  if (packType && packType !== "all") params.set("pack_type", packType);
-  return "/api/descriptors/list?" + params.toString();
-}
-
-
-async function fetchDescriptorList(packType, q) {
-  const url = buildPlaceholderDescriptorListUrl(packType, q);
-  const res = await fetch(url, { method: "GET", headers: { "Accept": "application/json" } });
-  if (!res.ok) throw new Error("list");
-  const data = await res.json();
-  return Array.isArray(data) ? data : [];
-}
-
-function renderPlaceholderResults(card, items) {
-  const box = card.querySelector(".ph-results");
-  if (!box) return;
-
-  box.innerHTML = "";
-
-  if (!items || !items.length) {
-    const empty = document.createElement("div");
-    empty.style.opacity = "0.7";
-    empty.style.padding = "0.6rem";
-    empty.textContent = "No descriptors found.";
-    box.appendChild(empty);
-    return;
-  }
-
-  items.forEach(d => {
-    const row = document.createElement("div");
-    row.style.border = "1px solid #333";
-    row.style.borderRadius = "8px";
-    row.style.padding = "0.55rem 0.65rem";
-    row.style.margin = "0.35rem";
-    row.style.background = "#0b0b0b";
-    row.style.cursor = "pointer";
-
-    const title = document.createElement("div");
-    title.textContent = d.title || "(Untitled)";
-    title.style.fontWeight = "bold";
-    title.style.marginBottom = "0.2rem";
-
-    const meta = document.createElement("div");
-    meta.style.opacity = "0.7";
-    meta.style.fontSize = "0.85em";
-    meta.textContent = (d.pack_type || "unknown") + " • ID " + d.id;
-
-    const preview = document.createElement("div");
-    preview.style.marginTop = "0.35rem";
-    preview.style.opacity = "0.9";
-    preview.style.fontSize = "0.95em";
-    preview.style.whiteSpace = "pre-wrap";
-    preview.style.lineHeight = "1.35";
-    preview.textContent = String(d.rendered_text || d.description || "").slice(0, 220);
-
-    row.appendChild(title);
-    row.appendChild(meta);
-    if (preview.textContent) row.appendChild(preview);
-
-    row.onclick = () => {
-      const txt = String(d.rendered_text || d.description || "").trim();
-      const hidden = card.querySelector(".ph-desc-text");
-      if (hidden) hidden.value = txt;
-      setCardPreview(card, txt);
-      clientPreviewFinal();
-    };
-
-    box.appendChild(row);
-  });
-}
-
-function attachPlaceholderHandlers() {
-  getPlaceholderCards().forEach(card => {
-    updateCardModeUI(card);
-
-    const mode = card.querySelector(".ph-mode");
-    if (mode) {
-      mode.addEventListener("change", () => {
-        updateCardModeUI(card);
-        clientPreviewFinal();
-      });
-    }
-
-    const txt = card.querySelector(".ph-text-input");
-    if (txt) {
-      txt.addEventListener("input", () => {
-        setCardPreview(card, txt.value || "");
-        clientPreviewFinal();
-      });
-    }
-
-    const pack = card.querySelector(".ph-pack");
-    const search = card.querySelector(".ph-search");
-    const btn = card.querySelector(".ph-search-btn");
-
-    const runSearch = async () => {
-      const packType = pack ? String(pack.value || "all") : "all";
-      const q = search ? String(search.value || "").trim() : "";
-      const box = card.querySelector(".ph-results");
-      if (box) box.innerHTML = "<div style=\"opacity:0.7; padding:0.6rem;\">Loading…</div>";
-
-      try {
-        const items = await fetchDescriptorList(packType, q);
-        renderPlaceholderResults(card, items);
-      } catch (e) {
-        if (box) box.innerHTML = "<div style=\"opacity:0.8; padding:0.6rem;\">Could not load descriptors.</div>";
-      }
-    };
-
-    if (btn) btn.addEventListener("click", runSearch);
-
-    let t = null;
-    if (search) {
-      search.addEventListener("input", () => {
-        clearTimeout(t);
-        t = setTimeout(runSearch, 250);
-      });
-    }
-
-    if (pack) {
-      pack.addEventListener("change", () => runSearch());
-    }
-
-    const clearBtn = card.querySelector(".ph-clear");
-    if (clearBtn) {
-      clearBtn.addEventListener("click", () => {
-        const h = card.querySelector(".ph-desc-text");
-        const ti = card.querySelector(".ph-text-input");
-        if (h) h.value = "";
-        if (ti) ti.value = "";
-        setCardPreview(card, "");
-        clientPreviewFinal();
-      });
-    }
-  });
-}
-
-function attachFinalEditorHandlers() {
-  const out = document.getElementById("finalOutput");
-  if (!out) return;
-
-  out.addEventListener("input", () => {
-    setUserEditedFinal(true);
-    syncFinalOverride();
+  _descriptorTypes.forEach(t => {
+    const opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = t;
+    sel.appendChild(opt);
   });
 
-  const form = document.getElementById("useForm");
-  if (form) {
-    form.addEventListener("submit", () => {
-      syncFinalOverride();
-    });
-  }
+  // Restore selection
+  const want = _descriptorTypes.includes(current) ? current : "all";
+  sel.value = want;
 }
 
-/* =========================
-   Server-side copy
-   ========================= */
-async function copyToClipboardServer() {
-  const form = document.getElementById("useForm");
-  const out = document.getElementById("finalOutput");
-  const pidEl = document.getElementById("promptId");
-  if (!form || !pidEl) return;
-
-  // Ensure we send the latest override value if active
-  syncFinalOverride();
-
-  const pid = parseInt(pidEl.value, 10);
-  const fd = new FormData(form);
-
-  try {
-    const res = await fetch("/api/prompt/" + pid + "/render_final", { method: "POST", body: fd });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data && data.error ? data.error : "render");
-
-    const text = String(data.text || "");
-    if (out && !isUserEditingFinal()) out.value = text;
-
-    await navigator.clipboard.writeText(text);
-
-    const feedback = document.getElementById("copyFeedback");
-    if (feedback) {
-      feedback.style.opacity = "1";
-      setTimeout(() => feedback.style.opacity = "0", 1500);
-    }
-
-    // Best-effort usage history (existing behaviour)
-    try {
-      if (pid) {
-        fetch("/api/prompt/" + pid + "/usage", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: text })
-        });
-      }
-    } catch (e) {}
-
-  } catch (e) {
-    // Fallback: copy whatever is currently in the editor
-    if (out) {
-      out.select();
-      out.setSelectionRange(0, 999999);
-      await navigator.clipboard.writeText(out.value);
-    }
-  }
+function setDescriptorStatus(msg) {
+  const el = document.getElementById("descriptorStatus");
+  if (el) el.textContent = msg || "";
 }
 
-/* =========================
-   Existing descriptor panel logic (mostly unchanged)
-   ========================= */
+function setDescriptorScope(scope) {
+  _descriptorScope = (scope === "relevant") ? "relevant" : "all";
 
-const DESC_PREFERRED_ORDER = ["character","creature","environment","scene","action","prop","lighting","style","camera","clothing","pose","mood","material","vehicle","fx","other"];
-let _descriptorTypes = [];
-let _descTypesLoaded = false;
-let _descScopeUiMode = "all";
-
-function setDescriptorScope(mode) {
-  _descScopeUiMode = (mode === "relevant") ? "relevant" : "all";
-
-  const relevantBtn = document.getElementById("scopeRelevantBtn");
-  const allBtn = document.getElementById("scopeAllBtn");
-  if (relevantBtn) relevantBtn.style.opacity = (_descScopeUiMode === "relevant") ? "1" : "0.65";
-  if (allBtn) allBtn.style.opacity = (_descScopeUiMode === "all") ? "1" : "0.65";
-
+  const b1 = document.getElementById("scopeRelevantBtn");
+  const b2 = document.getElementById("scopeAllBtn");
   const hint = document.getElementById("descriptorScopeHint");
-  if (_descScopeUiMode === "relevant") {
-    if (hint) hint.textContent = "(quick filters)";
-  } else {
-    if (hint) hint.textContent = "(all types)";
-  }
+
+  if (b1) b1.style.outline = (_descriptorScope === "relevant") ? "2px solid #00bfff" : "none";
+  if (b2) b2.style.outline = (_descriptorScope === "all") ? "2px solid #00bfff" : "none";
+  if (hint) hint.textContent = (_descriptorScope === "relevant") ? "Quick filters enabled" : "";
 
   renderRelevantChips();
+  refreshDescriptors();
 }
 
-async function loadDescriptorTypesOnce() {
-  if (_descTypesLoaded) return _descriptorTypes;
+// Determine which types are relevant by scanning placeholders in the current template.
+function getRelevantTypesFromTemplate() {
+  // Heuristic:
+  // - If placeholder label contains keywords matching descriptor types, show those chips.
+  // - Also show a short default set (style, mood, lighting, camera, lens, etc.) if present in types.
+  const template = document.getElementById("templateSource")?.value || "";
+  const placeholders = Array.from(new Set((template.match(/\[\[([^\]]+)\]\]/g) || []).map(m => m.slice(2, -2).trim().toLowerCase())));
 
-  try {
-    const res = await fetch("/api/descriptors/types", { headers: { "Accept": "application/json" } });
-    if (!res.ok) throw new Error("types");
-    const types = await res.json();
-    _descriptorTypes = Array.isArray(types) ? types.filter(Boolean).map(t => String(t)) : [];
-  } catch (e) {
-    _descriptorTypes = [];
-  }
+  const hits = new Set();
+  const typesLower = _descriptorTypes.map(t => String(t).toLowerCase());
 
-  const fallback = ["generic", "character", "creature", "environment", "scene", "action", "prop", "style", "lighting", "vehicle", "other"];
-  const set = new Set(_descriptorTypes.map(t => t.trim()).filter(Boolean));
-  fallback.forEach(t => set.add(t));
-
-  _descriptorTypes = Array.from(set).sort((a, b) => a.localeCompare(b));
-  _descTypesLoaded = true;
-  return _descriptorTypes;
-}
-
-function getQuickChipTypes() {
-  const types = _descriptorTypes.slice();
-  const lower = new Set(types.map(t => String(t).toLowerCase()));
-  const ordered = [];
-
-  DESC_PREFERRED_ORDER.forEach(t => {
-    if (lower.has(t)) ordered.push(t);
+  placeholders.forEach(ph => {
+    typesLower.forEach((t, idx) => {
+      if (ph === t || ph.includes(t) || t.includes(ph)) hits.add(_descriptorTypes[idx]);
+    });
   });
 
-  const extras = types
-    .map(t => String(t).toLowerCase())
-    .filter(t => !ordered.includes(t) && t !== "generic" && t !== "other")
-    .slice(0, 8);
+  // fallback common types if present
+  const fallback = ["style", "mood", "lighting", "camera", "lens", "environment", "character", "subject", "composition", "colour", "color"];
+  fallback.forEach(f => {
+    const idx = typesLower.indexOf(f);
+    if (idx !== -1) hits.add(_descriptorTypes[idx]);
+  });
 
-  return (_descScopeUiMode === "relevant") ? ordered.concat(extras) : types.map(t => String(t).toLowerCase());
+  return Array.from(hits);
 }
 
 function renderRelevantChips() {
@@ -642,64 +353,29 @@ function renderRelevantChips() {
   if (!wrap) return;
 
   wrap.innerHTML = "";
+  if (_descriptorScope !== "relevant") return;
 
-  const types = getQuickChipTypes();
-  if (!types.length) return;
+  const relevant = getRelevantTypesFromTemplate();
+  if (!relevant.length) {
+    wrap.innerHTML = "<div style=\"opacity:0.7;\">No relevant types detected. Use search or switch to All.</div>";
+    return;
+  }
 
-  const label = document.createElement("span");
-  label.textContent = "Quick filters:";
-  label.style.opacity = "0.7";
-  label.style.fontSize = "0.9em";
-  label.style.marginRight = "0.25rem";
-  wrap.appendChild(label);
-
-  const seen = new Set();
-  types.forEach(t => {
-    const key = String(t).toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "btn-secondary";
-    btn.textContent = key;
-    btn.style.padding = "0.25rem 0.6rem";
-    btn.style.fontSize = "0.9em";
-    btn.onclick = () => {
+  relevant.forEach(t => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "btn-secondary";
+    chip.textContent = t;
+    chip.style.padding = "0.35rem 0.6rem";
+    chip.style.borderRadius = "999px";
+    chip.onclick = () => {
+      // set pack select to that type and refresh
       const sel = document.getElementById("descriptorPackSelect");
-      if (sel) sel.value = key;
+      if (sel) sel.value = t;
       refreshDescriptors(true);
     };
-    wrap.appendChild(btn);
+    wrap.appendChild(chip);
   });
-}
-
-function populatePackDropdown() {
-  const select = document.getElementById("descriptorPackSelect");
-  if (!select) return;
-
-  const current = select.value;
-
-  select.innerHTML = "<option value=\"all\">(All packs)</option>";
-
-  const types = _descriptorTypes.slice().map(t => String(t).toLowerCase());
-  const seen = new Set();
-  types.forEach(t => {
-    const key = t.trim();
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-
-    const opt = document.createElement("option");
-    opt.value = key;
-    opt.textContent = key;
-    select.appendChild(opt);
-  });
-
-  if ([...select.options].some(o => o.value === current)) {
-    select.value = current;
-  } else {
-    select.value = "all";
-  }
 }
 
 function buildDescriptorListUrl() {
@@ -708,128 +384,399 @@ function buildDescriptorListUrl() {
 
   const params = new URLSearchParams();
   if (q) params.set("q", q);
-  if (packSel && packSel !== "all") params.set("pack_type", packSel);
+  if (packSel && packSel !== "all") params.set("type", packSel);
 
-  return "/api/descriptors/list?" + params.toString();
+  // Scope "relevant" doesn't hide types globally; it just shows chips and suggests filters.
+  // Keep endpoint unchanged.
+  const base = "/api/descriptors/list";
+  const qs = params.toString();
+  return qs ? (base + "?" + qs) : base;
 }
 
-function setDescriptorStatus(msg) {
-  const el = document.getElementById("descriptorStatus");
-  if (el) el.textContent = msg || "";
+function getPlaceholderCards() {
+  return Array.from(document.querySelectorAll(".ph-card"));
 }
 
-function flashInserted() {
-  const feedback = document.getElementById("descriptorInsertFeedback");
-  if (!feedback) return;
-  feedback.style.opacity = "1";
-  setTimeout(() => feedback.style.opacity = "0", 1500);
+function setCardPreview(card, text) {
+  const prev = card.querySelector(".ph-preview");
+  if (prev) prev.textContent = text || "";
+}
+
+function setCardSelectedDescriptorText(card, text) {
+  const hidden = card.querySelector(".ph-desc-text");
+  if (hidden) hidden.value = text || "";
+  setCardPreview(card, text || "");
+}
+
+function getModeForCard(card) {
+  const sel = card.querySelector(".ph-mode");
+  return sel ? String(sel.value || "text") : "text";
+}
+
+function getPlaceholderDisplay(card) {
+  return card.getAttribute("data-ph-display") || "";
+}
+
+function getPlaceholderKey(card) {
+  return card.getAttribute("data-ph-key") || "";
+}
+
+function getTextValue(card) {
+  const inp = card.querySelector(".ph-text-input");
+  return inp ? String(inp.value || "") : "";
+}
+
+function getDescriptorText(card) {
+  const hidden = card.querySelector(".ph-desc-text");
+  return hidden ? String(hidden.value || "") : "";
+}
+
+function applyPlaceholderToTemplate(template, display, replacement) {
+  // Replace all occurrences of [[display]] with replacement
+  const token = "[[" + display + "]]";
+  return template.split(token).join(replacement || "");
+}
+
+function clientPreviewFinal(force) {
+  const template = document.getElementById("templateSource")?.value || "";
+  let out = template;
+
+  getPlaceholderCards().forEach(card => {
+    const disp = getPlaceholderDisplay(card);
+    if (!disp) return;
+
+    const mode = getModeForCard(card);
+    const rep = (mode === "descriptor") ? getDescriptorText(card) : getTextValue(card);
+    out = applyPlaceholderToTemplate(out, disp, rep);
+  });
+
+  if (!_userEditedFinal || force) {
+    const ta = document.getElementById("finalOutput");
+    if (ta) ta.value = out;
+    syncFinalOverride();
+  }
+}
+
+async function loadDescriptorTypesOnce() {
+  if (_descriptorTypes.length) return;
+  _descriptorTypes = await loadDescriptorTypes();
+}
+
+function populateAllPlaceholderPackSelects(types) {
+  getPlaceholderCards().forEach(card => {
+    const sel = card.querySelector(".ph-pack");
+    if (!sel) return;
+
+    const current = sel.value || "all";
+    while (sel.options.length > 1) sel.remove(1);
+
+    types.forEach(t => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t;
+      sel.appendChild(opt);
+    });
+
+    sel.value = (types.includes(current)) ? current : "all";
+  });
+}
+
+function attachPlaceholderHandlers() {
+  // Mode change toggles
+  document.addEventListener("change", function (ev) {
+    const target = ev.target;
+    if (!target) return;
+
+    if (target.classList.contains("ph-mode")) {
+      const card = target.closest(".ph-card");
+      if (!card) return;
+
+      const mode = String(target.value || "text");
+      const d = card.querySelector(".ph-descriptor");
+      const t = card.querySelector(".ph-text");
+
+      if (d) d.style.display = (mode === "descriptor") ? "block" : "none";
+      if (t) t.style.display = (mode === "text") ? "block" : "none";
+
+      // Update preview to match current input
+      if (mode === "descriptor") setCardPreview(card, getDescriptorText(card));
+      else setCardPreview(card, getTextValue(card));
+
+      clientPreviewFinal();
+      return;
+    }
+
+    if (target.classList.contains("ph-pack")) {
+      // pack change doesn't automatically search, but we update results placeholder
+      const card = target.closest(".ph-card");
+      if (!card) return;
+
+      const results = card.querySelector(".ph-results");
+      if (results) results.innerHTML = "<div style=\"opacity:0.7; padding:0.6rem;\">Search to load descriptors…</div>";
+      return;
+    }
+  });
+
+  // Text input live preview
+  document.addEventListener("input", function (ev) {
+    const target = ev.target;
+    if (!target) return;
+
+    if (target.classList.contains("ph-text-input")) {
+      const card = target.closest(".ph-card");
+      if (!card) return;
+      setCardPreview(card, String(target.value || ""));
+      clientPreviewFinal();
+      return;
+    }
+  });
+
+  // Search button
+  document.addEventListener("click", async function (ev) {
+    const target = ev.target;
+    if (!target) return;
+
+    if (target.classList.contains("ph-search-btn")) {
+      const card = target.closest(".ph-card");
+      if (!card) return;
+      await placeholderSearch(card);
+      return;
+    }
+
+    if (target.classList.contains("ph-clear")) {
+      const card = target.closest(".ph-card");
+      if (!card) return;
+      clearPlaceholder(card);
+      clientPreviewFinal();
+      return;
+    }
+  });
+}
+
+function clearPlaceholder(card) {
+  const mode = getModeForCard(card);
+
+  // reset inputs
+  const txt = card.querySelector(".ph-text-input");
+  if (txt) txt.value = "";
+  const hidden = card.querySelector(".ph-desc-text");
+  if (hidden) hidden.value = "";
+
+  setCardPreview(card, "");
+  if (mode === "descriptor") {
+    const res = card.querySelector(".ph-results");
+    if (res) res.innerHTML = "<div style=\"opacity:0.7; padding:0.6rem;\">Search to load descriptors…</div>";
+  }
+}
+
+async function placeholderSearch(card) {
+  const qEl = card.querySelector(".ph-search");
+  const q = qEl ? String(qEl.value || "").trim() : "";
+  const packEl = card.querySelector(".ph-pack");
+  const pack = packEl ? String(packEl.value || "all").trim() : "all";
+  const box = card.querySelector(".ph-results");
+
+  if (!box) return;
+  if (!q) {
+    box.innerHTML = "<div style=\"opacity:0.7; padding:0.6rem;\">Type something to search.</div>";
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams();
+    params.set("q", q);
+    if (pack && pack !== "all") params.set("type", pack);
+
+    const url = "/api/descriptors/list?" + params.toString();
+    const items = await fetchDescriptors(url);
+    renderPlaceholderResults(card, Array.isArray(items) ? items : []);
+  } catch (e) {
+    box.innerHTML = "<div style=\"opacity:0.85; padding:0.6rem;\">Failed to load descriptors.</div>";
+  }
+}
+
+function renderPlaceholderResults(card, items) {
+  const box = card.querySelector(".ph-results");
+  if (!box) return;
+
+  if (!items.length) {
+    box.innerHTML = "<div style=\"opacity:0.7; padding:0.6rem;\">No results.</div>";
+    return;
+  }
+
+  box.innerHTML = "";
+
+  items.forEach(d => {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.gap = "0.5rem";
+    row.style.alignItems = "center";
+    row.style.justifyContent = "space-between";
+    row.style.borderBottom = "1px solid #222";
+    row.style.padding = "0.45rem 0.5rem";
+
+    const left = document.createElement("div");
+    left.style.flex = "1";
+    left.style.minWidth = "0";
+
+    const title = document.createElement("div");
+    title.textContent = d.name || d.id || "descriptor";
+    title.style.fontWeight = "bold";
+    title.style.whiteSpace = "nowrap";
+    title.style.overflow = "hidden";
+    title.style.textOverflow = "ellipsis";
+
+    const meta = document.createElement("div");
+    meta.textContent = (d.type ? (d.type + " • ") : "") + (d.pack || "");
+    meta.style.opacity = "0.7";
+    meta.style.fontSize = "0.85em";
+    meta.style.whiteSpace = "nowrap";
+    meta.style.overflow = "hidden";
+    meta.style.textOverflow = "ellipsis";
+
+    left.appendChild(title);
+    left.appendChild(meta);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn-secondary";
+    btn.textContent = "Use";
+    btn.onclick = () => {
+      // Prefer rendered_text if present; fallback to token
+      const txt = d.rendered_text || d.text || (d.name || "");
+      setCardSelectedDescriptorText(card, txt || "");
+      clientPreviewFinal();
+    };
+
+    row.appendChild(left);
+    row.appendChild(btn);
+
+    box.appendChild(row);
+  });
+}
+
+function attachFinalEditorHandlers() {
+  const ta = document.getElementById("finalOutput");
+  if (!ta) return;
+
+  ta.addEventListener("input", function () {
+    // As soon as user types in final prompt, we stop overwriting it.
+    setUserEditedFinal(true);
+    syncFinalOverride();
+  });
+
+  const btnCopy = document.getElementById("btnCopyFinal");
+  if (btnCopy) {
+    btnCopy.addEventListener("click", async function () {
+      try {
+        await navigator.clipboard.writeText(ta.value || "");
+        btnCopy.textContent = "Copied!";
+        setTimeout(() => { btnCopy.textContent = "Copy"; }, 800);
+      } catch (e) {
+        // fallback
+        ta.select();
+        document.execCommand("copy");
+      }
+    });
+  }
+
+  const btnReset = document.getElementById("btnResetFinal");
+  if (btnReset) {
+    btnReset.addEventListener("click", function () {
+      setUserEditedFinal(false);
+      clientPreviewFinal(true);
+    });
+  }
 }
 
 function insertTextAtCursor(text) {
   const ta = document.getElementById("finalOutput");
   if (!ta) return;
 
-  const start = ta.selectionStart;
-  const end = ta.selectionEnd;
+  const s = ta.selectionStart || 0;
+  const e = ta.selectionEnd || 0;
+  const before = ta.value.slice(0, s);
+  const after = ta.value.slice(e);
 
-  const before = ta.value.substring(0, start);
-  const after = ta.value.substring(end);
+  ta.value = before + text + after;
 
-  const needsSpaceBefore = before.length && !/\s$/.test(before);
-  const needsSpaceAfter = after.length && !/^\s/.test(after);
-
-  const insert = (needsSpaceBefore ? " " : "") + text + (needsSpaceAfter ? " " : "");
-  ta.value = before + insert + after;
-
-  const cursorPos = (before + (needsSpaceBefore ? " " : "") + text + (needsSpaceAfter ? " " : "")).length;
+  const newPos = s + text.length;
   ta.focus();
-  ta.setSelectionRange(cursorPos, cursorPos);
+  ta.setSelectionRange(newPos, newPos);
 
   setUserEditedFinal(true);
   syncFinalOverride();
-  flashInserted();
-}
-
-function insertDescriptorText(d) {
-  const text = (d && (d.rendered_text || d.description) ? (d.rendered_text || d.description) : "").trim();
-  if (!text) return;
-  insertTextAtCursor(text);
 }
 
 function insertDescriptorToken(id) {
-  const token = String.fromCharCode(123,123) + "descriptor:" + id + String.fromCharCode(125,125);
-  insertTextAtCursor(token);
+  // Insert token form Descriptor ID without typing literal Jinja braces in this template.
+  const open = String.fromCharCode(123, 123);
+  const close = String.fromCharCode(125, 125);
+  insertTextAtCursor(open + "descriptor:" + id + close);
+}
+
+function insertDescriptorText(text) {
+  insertTextAtCursor(text || "");
 }
 
 function renderDescriptorResults(items) {
   const box = document.getElementById("descriptorResults");
   if (!box) return;
 
-  box.innerHTML = "";
-
-  if (!items || !items.length) {
-    const empty = document.createElement("div");
-    empty.style.opacity = "0.7";
-    empty.style.padding = "0.75rem";
-    empty.textContent = "No descriptors found.";
-    box.appendChild(empty);
+  if (!items.length) {
+    box.innerHTML = "<div style=\"opacity:0.7; padding:0.75rem;\">No results.</div>";
     return;
   }
 
+  box.innerHTML = "";
+
   items.forEach(d => {
     const row = document.createElement("div");
-    row.style.border = "1px solid #333";
-    row.style.borderRadius = "8px";
-    row.style.padding = "0.6rem 0.75rem";
-    row.style.margin = "0.5rem";
-    row.style.background = "#0e0e0e";
-    row.style.cursor = "pointer";
+    row.style.display = "flex";
+    row.style.gap = "0.5rem";
+    row.style.alignItems = "center";
+    row.style.justifyContent = "space-between";
+    row.style.borderBottom = "1px solid #222";
+    row.style.padding = "0.55rem 0.6rem";
+
+    const left = document.createElement("div");
+    left.style.flex = "1";
+    left.style.minWidth = "0";
 
     const title = document.createElement("div");
-    title.textContent = d.title || "(Untitled)";
+    title.textContent = d.name || d.id || "descriptor";
     title.style.fontWeight = "bold";
-    title.style.marginBottom = "0.25rem";
+    title.style.whiteSpace = "nowrap";
+    title.style.overflow = "hidden";
+    title.style.textOverflow = "ellipsis";
 
     const meta = document.createElement("div");
+    meta.textContent = (d.type ? (d.type + " • ") : "") + (d.pack || "");
     meta.style.opacity = "0.7";
     meta.style.fontSize = "0.85em";
-    meta.textContent = (d.pack_type || "unknown") + " • ID " + d.id;
+    meta.style.whiteSpace = "nowrap";
+    meta.style.overflow = "hidden";
+    meta.style.textOverflow = "ellipsis";
 
-    const preview = document.createElement("div");
-    preview.style.marginTop = "0.4rem";
-    preview.style.opacity = "0.9";
-    preview.style.fontSize = "0.95em";
-    preview.style.whiteSpace = "pre-wrap";
-    preview.style.lineHeight = "1.35";
-    preview.textContent = (d.rendered_text || d.description || "").slice(0, 220);
-
-    row.appendChild(title);
-    row.appendChild(meta);
-    if (preview.textContent) row.appendChild(preview);
-
-    row.onclick = () => insertDescriptorText(d);
+    left.appendChild(title);
+    left.appendChild(meta);
 
     const actions = document.createElement("div");
-    actions.style.marginTop = "0.55rem";
     actions.style.display = "flex";
     actions.style.gap = "0.5rem";
     actions.style.flexWrap = "wrap";
+    actions.style.alignItems = "center";
 
     const btnText = document.createElement("button");
     btnText.type = "button";
     btnText.className = "btn-secondary";
     btnText.textContent = "Insert text";
-    btnText.style.padding = "0.25rem 0.6rem";
-    btnText.style.fontSize = "0.9em";
-    btnText.onclick = (e) => { e.stopPropagation(); insertDescriptorText(d); };
+    btnText.onclick = (e) => { e.stopPropagation(); insertDescriptorText(d.rendered_text || d.text || d.name || ""); };
 
     const btnToken = document.createElement("button");
     btnToken.type = "button";
     btnToken.className = "btn-secondary";
-    btnToken.textContent = "Token";
-    btnToken.style.padding = "0.25rem 0.6rem";
-    btnToken.style.fontSize = "0.9em";
-    btnToken.title = "Insert as a descriptor reference token";
+    btnToken.textContent = "Insert token";
     btnToken.onclick = (e) => { e.stopPropagation(); insertDescriptorToken(d.id); };
 
     actions.appendChild(btnText);
@@ -978,6 +925,193 @@ function debouncedRefreshDescriptors() {
     selectNextOccurrence(token);
   });
 })();
+
+// =========================
+// Find & Replace (Final Prompt textarea)
+// =========================
+let frLastNeedle = "";
+let frLastIndex = 0;
+
+function frGetTextArea() {
+  return document.getElementById("finalOutput");
+}
+
+function frEscapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function frBuildNeedleRegex(needle, wholeWord, matchCase) {
+  const safe = frEscapeRegExp(needle);
+  const body = wholeWord ? "\\b" + safe + "\\b" : safe;
+  const flags = matchCase ? "g" : "gi";
+  return new RegExp(body, flags);
+}
+
+function frShowStatus(msg) {
+  const el = document.getElementById("frStatus");
+  if (el) el.textContent = msg || "";
+}
+
+function frFlashReplaced() {
+  const el = document.getElementById("replaceFeedback");
+  if (!el) return;
+  el.style.opacity = "1";
+  setTimeout(() => { el.style.opacity = "0"; }, 700);
+}
+
+function frFindNext() {
+  const ta = frGetTextArea();
+  const findEl = document.getElementById("frFind");
+  const matchCaseEl = document.getElementById("frMatchCase");
+  const wholeWordEl = document.getElementById("frWholeWord");
+
+  if (!ta || !findEl) return;
+  const needle = String(findEl.value || "");
+  if (!needle) {
+    frShowStatus("Type something to find.");
+    return;
+  }
+
+  const matchCase = !!(matchCaseEl && matchCaseEl.checked);
+  const wholeWord = !!(wholeWordEl && wholeWordEl.checked);
+
+  const text = String(ta.value || "");
+  const rx = frBuildNeedleRegex(needle, wholeWord, matchCase);
+
+  const startFrom = (needle === frLastNeedle) ? (ta.selectionEnd || frLastIndex || 0) : 0;
+  frLastNeedle = needle;
+  frLastIndex = startFrom;
+
+  rx.lastIndex = startFrom;
+  let m = rx.exec(text);
+  if (!m) {
+    rx.lastIndex = 0;
+    m = rx.exec(text);
+  }
+
+  if (!m) {
+    frShowStatus("No matches.");
+    return;
+  }
+
+  const start = m.index;
+  const end = start + m[0].length;
+
+  ta.focus();
+  ta.setSelectionRange(start, end);
+  frLastIndex = end;
+  frShowStatus("Match selected.");
+}
+
+function frReplaceOne() {
+  const ta = frGetTextArea();
+  const findEl = document.getElementById("frFind");
+  const replEl = document.getElementById("frReplace");
+  const matchCaseEl = document.getElementById("frMatchCase");
+  const wholeWordEl = document.getElementById("frWholeWord");
+
+  if (!ta || !findEl || !replEl) return;
+  const needle = String(findEl.value || "");
+  const replacement = String(replEl.value || "");
+
+  if (!needle) {
+    frShowStatus("Type something to find.");
+    return;
+  }
+
+  const matchCase = !!(matchCaseEl && matchCaseEl.checked);
+  const wholeWord = !!(wholeWordEl && wholeWordEl.checked);
+
+  const selStart = ta.selectionStart || 0;
+  const selEnd = ta.selectionEnd || 0;
+  const selected = String(ta.value || "").slice(selStart, selEnd);
+
+  const rx = frBuildNeedleRegex(needle, wholeWord, matchCase);
+  const selectedMatches = selected && rx.test(selected) && selected.length === needle.length ? true : false;
+
+  // If the current selection doesn't match, find the next one first.
+  if (!selected || !selectedMatches) {
+    frFindNext();
+  }
+
+  const s = ta.selectionStart || 0;
+  const e = ta.selectionEnd || 0;
+  const nowSelected = String(ta.value || "").slice(s, e);
+
+  rx.lastIndex = 0;
+  if (!nowSelected || !rx.test(nowSelected) || nowSelected.length !== nowSelected.trim().length) {
+    // Fallback: strict compare (case/word handled by regex used in find)
+    // If we still didn't land on a match, stop.
+  }
+
+  if (!nowSelected) {
+    frShowStatus("No match selected.");
+    return;
+  }
+
+  // Replace the selected range.
+  const text = String(ta.value || "");
+  ta.value = text.slice(0, s) + replacement + text.slice(e);
+  const newPos = s + replacement.length;
+  ta.focus();
+  ta.setSelectionRange(newPos, newPos);
+  frLastIndex = newPos;
+  frFlashReplaced();
+  frShowStatus("Replaced one.");
+
+  // Mark as user edited so client preview doesn't overwrite.
+  if (typeof setUserEditedFinal === "function") {
+    setUserEditedFinal(true);
+  }
+  if (typeof syncFinalOverride === "function") {
+    syncFinalOverride();
+  }
+}
+
+function frReplaceAll() {
+  const ta = frGetTextArea();
+  const findEl = document.getElementById("frFind");
+  const replEl = document.getElementById("frReplace");
+  const matchCaseEl = document.getElementById("frMatchCase");
+  const wholeWordEl = document.getElementById("frWholeWord");
+
+  if (!ta || !findEl || !replEl) return;
+  const needle = String(findEl.value || "");
+  const replacement = String(replEl.value || "");
+
+  if (!needle) {
+    frShowStatus("Type something to find.");
+    return;
+  }
+
+  const matchCase = !!(matchCaseEl && matchCaseEl.checked);
+  const wholeWord = !!(wholeWordEl && wholeWordEl.checked);
+
+  const text = String(ta.value || "");
+  const rx = frBuildNeedleRegex(needle, wholeWord, matchCase);
+
+  let count = 0;
+  const out = text.replace(rx, () => {
+    count += 1;
+    return replacement;
+  });
+
+  ta.value = out;
+  ta.focus();
+  ta.setSelectionRange(0, 0);
+  frLastNeedle = needle;
+  frLastIndex = 0;
+
+  frFlashReplaced();
+  frShowStatus(count ? ("Replaced " + count + ".") : "No matches.");
+
+  if (typeof setUserEditedFinal === "function") {
+    setUserEditedFinal(true);
+  }
+  if (typeof syncFinalOverride === "function") {
+    syncFinalOverride();
+  }
+}
 
 </script>
 

@@ -1,672 +1,443 @@
 {% extends "base.html" %}
 
 {% block content %}
-<section class="page">
-  <div class="page-header" style="display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+<section class="page" style="max-width: 980px; margin: 0 auto;">
+
+  <div class="page-header" style="display:flex; justify-content:space-between; align-items:flex-end; gap:1rem; flex-wrap:wrap;">
     <div>
       <h2 style="margin:0;">
         {% if prompt and prompt.id %}Edit Prompt{% else %}New Prompt{% endif %}
       </h2>
-      {% if prompt %}
-        {% if parent %}
-           <div style="font-size:0.9rem; margin-top:0.25rem;">
-              ↳ Variant of <a href="{{ url_for('edit_prompt', prompt_id=parent.id) }}" style="color:#00bfff;">{{ parent.title }}</a>
-           </div>
-        {% endif %}
+      {% if prompt and prompt.parent_id %}
+         <div style="font-size:0.9rem; margin-top:0.25rem;">
+            ↳ Variant of <a href="{{ url_for('edit_prompt', prompt_id=prompt.parent_id) }}" style="color:#00bfff;">Prompt #{{ prompt.parent_id }}</a>
+         </div>
       {% endif %}
     </div>
 
     <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap;">
       {% if prompt and prompt.id %}
         <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}">Use</a>
-
-        <form method="post" action="{{ url_for('duplicate_prompt', prompt_id=prompt.id) }}" style="display:inline;">
-          <button class="btn-secondary" type="submit">Copy</button>
-        </form>
-
-        <button class="btn-secondary" type="submit"
-                form="mainPromptForm"
-                formaction="{{ url_for('duplicate_prompt', prompt_id=prompt.id) }}"
-                name="as_variant" value="true"
-                title="Create a child version linked to this prompt using your current edits">Make Variant</button>
+        <a class="btn-secondary" href="{{ url_for('prompt_history', prompt_id=prompt.id) }}">History</a>
       {% endif %}
       <a class="btn-secondary" href="{{ url_for('index') }}">Back</a>
     </div>
   </div>
 
-  {% if not prompt or not prompt.id %}
-    {% if ollama_models %}
-    <details style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1.5rem; border:1px solid #333;">
-        <summary style="cursor:pointer; font-weight:bold; color:#00bfff;">✨ Generate Draft Prompt from Image (Vision)</summary>
+  <form method="POST" action="{% if prompt and prompt.id %}{{ url_for('edit_prompt', prompt_id=prompt.id) }}{% else %}{{ url_for('new_prompt') }}{% endif %}"
+        enctype="multipart/form-data"
+        style="margin-top: 1rem;">
 
-        <div style="margin-top:1rem; display:grid; grid-template-columns: 1fr 1fr; gap:1.5rem;">
-
-            <div>
-                <label style="margin-bottom:0.5rem; display:block;">Reference Image</label>
-                <div id="visionDropZone" class="drop-zone" style="border:2px dashed #444; padding:2rem; text-align:center; border-radius:8px; cursor:pointer; background:#111;">
-                    <div id="visionDropText" style="color:#888;">
-                        Drag image here or click to upload
-                    </div>
-                    <input type="file" id="visionFile" accept="image/*" style="display:none;">
-                    <img id="visionPreview" style="max-width:100%; max-height:200px; margin-top:1rem; display:none; border-radius:4px;">
-                </div>
-            </div>
-
-            <div style="display:flex; flex-direction:column; gap:1rem;">
-               <div style="display:grid; grid-template-columns: 1fr 1fr; gap:1rem;">
-                   <div>
-                       <label>Vision Model</label>
-                       <select id="visionModel" style="width:100%;">
-                           {% for m in ollama_models %}
-                               <option value="{{ m }}" {% if 'llava' in m or 'vision' in m or 'qwen' in m %}selected{% endif %}>{{ m }}</option>
-                           {% endfor %}
-                       </select>
-                   </div>
-                   <div>
-                       <label>Text Model</label>
-                       <select id="textModel" style="width:100%;">
-                           {% for m in ollama_models %}
-                               <option value="{{ m }}">{{ m }}</option>
-                           {% endfor %}
-                       </select>
-                   </div>
-               </div>
-
-               <div>
-                   <label>Vision Instructions (Optional)</label>
-                   <textarea id="customVisionInstruction" rows="2" placeholder="Tell the vision model what to look for (e.g. 'Describe lighting details')" style="width:100%; font-size:0.9em;"></textarea>
-               </div>
-
-               <div>
-                   <label>Drafting Instructions (Optional)</label>
-                   <textarea id="customDraftInstruction" rows="2" placeholder="Tell the text model how to write (e.g. 'Use colourful, poetic language')" style="width:100%; font-size:0.9em;"></textarea>
-               </div>
-
-               <div id="visionStatus" style="font-size:0.9em; color:#888; min-height:1.2em;"></div>
-
-               <button type="button" id="btnGenerateDraft" class="btn-primary" style="margin-top:auto;">Generate Draft & Set Thumbnail</button>
-            </div>
-        </div>
-    </details>
-    {% endif %}
-  {% endif %}
-
-  <form method="post"
-        id="mainPromptForm"
-        {% if prompt and prompt.id %} action="{{ url_for('edit_prompt', prompt_id=prompt.id) }}"
-        {% else %} action="{{ url_for('new_prompt') }}" {% endif %}
-        enctype="multipart/form-data" class="form">
-
-    <input type="hidden" name="hidden_thumbnail_path" id="hiddenThumb">
-
-    <div class="grid-2">
-      <div>
-        <label>Title</label>
+    <div style="display:grid; grid-template-columns: 1fr; gap:0.75rem;">
+      <label>
+        Title
         <input type="text" name="title" value="{{ prompt.title if prompt else '' }}" required>
-      </div>
-      <div>
-        <label>Prompt Type</label>
-        <select name="prompt_type" required>
-          {% for pt in prompt_types %}
-            <option value="{{ pt }}" {% if prompt and prompt.prompt_type == pt %}selected{% endif %}>{{ pt }}</option>
-          {% endfor %}
-        </select>
-      </div>
-    </div>
+      </label>
 
-    <div class="grid-2">
-      <div>
-        <label>Category</label>
-        <input list="category_list" name="category" value="{{ prompt.category if prompt else '' }}" placeholder="Select or type new..." autocomplete="off" required>
-        <datalist id="category_list">
-          {% for c in categories %}
-            <option value="{{ c }}">
-          {% endfor %}
-        </datalist>
-      </div>
-      <div>
-        <label>Tool</label>
-        <input list="tool_list" name="tool" value="{{ prompt.tool if prompt else '' }}" placeholder="Select or type new..." autocomplete="off" required>
-        <datalist id="tool_list">
-          {% for t in tools %}
-            <option value="{{ t }}">
-          {% endfor %}
-        </datalist>
-      </div>
-    </div>
+      <label>
+        Category
+        <input type="text" name="category" value="{{ prompt.category if prompt else '' }}" placeholder="Optional">
+      </label>
 
-    <div>
-      <label>Tags (comma separated)</label>
-      <input type="text" name="tags" value="{{ tags_str }}" placeholder="e.g. Portrait, Realistic, Sci-Fi, Dark">
-    </div>
+      <!-- Notes -->
+      <label>
+        Notes
+        <textarea name="notes" rows="4" placeholder="Optional notes (shown on Use page)">{{ prompt.notes if prompt and prompt.notes else '' }}</textarea>
+      </label>
 
-    <div class="grid-2">
-      <div>
-        <label>Group (optional)</label>
-        <select name="group_id" style="width:100%;">
-          <option value="">No group</option>
-          {% for g in groups %}
-            <option value="{{ g.id }}" {% if prompt and prompt.group_id|string == g.id|string %}selected{% endif %}>{{ g.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label>Or create new group</label>
-        <input type="text" name="new_group_name" placeholder="Eg. My Project">
-      </div>
-    </div>
+      <label>
+        Prompt Content
+        <textarea name="content" id="contentEditor" rows="18" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">{{ prompt.content if prompt else '' }}</textarea>
+      </label>
 
-    <div>
-      <div style="display:flex; justify-content:space-between; align-items:end; margin-bottom:0.5rem; gap:0.75rem; flex-wrap:wrap;">
-          <label style="margin-bottom:0;">Prompt Content</label>
+      <details id="thumbPanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; border:1px solid #333;">
+        <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+          <span style="font-weight:bold;">🖼️ Thumbnail</span>
+          <span style="opacity:0.7; font-size:0.9em;">Upload or generate</span>
+        </summary>
 
-          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-            <button type="button" id="openDescriptorPicker" class="btn-secondary" style="padding:0.2rem 0.6rem; font-size:0.85rem;">Insert Descriptor</button>
-
-            {% if ollama_models %}
-            <div style="font-size:0.85rem; display:flex; gap:0.5rem; align-items:center;">
-                <select id="quickRefineModel" style="padding:0.2rem; max-width:150px;">
-                    {% for m in ollama_models %}
-                      <option value="{{ m }}" {% if session.get('ollama_model') == m %}selected{% endif %}>{{ m }}</option>
-                    {% endfor %}
-                </select>
-                <button type="button" id="btnToggleRefine" class="btn-secondary" style="padding:0.2rem 0.6rem; font-size:0.85rem;">✨ Enhance...</button>
+        <div style="margin-top:1rem; display:flex; flex-direction:column; gap:0.75rem;">
+          <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:flex-start;">
+            <div style="flex:0 0 220px;">
+              <div style="border:1px solid #333; border-radius:10px; background:#111; padding:0.5rem;">
+                {% if prompt and prompt.thumbnail_path %}
+                  <img id="mainThumbPreview" src="{{ url_for('static', filename=prompt.thumbnail_path) }}" alt="Thumbnail" style="width:100%; border-radius:8px;">
+                {% else %}
+                  <img id="mainThumbPreview" src="" alt="Thumbnail" style="width:100%; border-radius:8px; display:none;">
+                  <div id="mainThumbEmpty" style="opacity:0.7; padding:1rem; text-align:center;">No thumbnail</div>
+                {% endif %}
+              </div>
             </div>
-            {% endif %}
-          </div>
-      </div>
 
-      <div id="refineTools" style="display:none; background:#222; padding:0.75rem; border-radius:4px; margin-bottom:0.5rem; border:1px solid #444;">
-          <div style="display:flex; flex-direction:column; gap:0.5rem;">
+            <div style="flex:1; min-width: 260px; display:flex; flex-direction:column; gap:0.75rem;">
+              <label>
+                Upload new thumbnail (PNG/JPG/WebP)
+                <input type="file" name="thumbnail_file" accept="image/png,image/jpeg,image/webp">
+              </label>
 
-              <div>
-                  <label style="font-size:0.75em; color:#888; display:block; margin-bottom:0.2rem;">System Role (Persona)</label>
-                  <input type="text" id="quickRefineSystem" value="You are an expert prompt engineer. Output ONLY the refined prompt text." style="font-size:0.85rem; width:100%; color:#aaa; background:#111; border:1px solid #333;">
+              <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+                <button type="button" class="btn-secondary" id="btnGenerateThumb">Generate AI thumbnail</button>
+                <span id="thumbStatus" style="font-size:0.9em; opacity:0.7;"></span>
               </div>
 
-              <div>
-                   <label style="font-size:0.75em; color:#888; display:block; margin-bottom:0.2rem;">Instruction</label>
-                   <div style="display:grid; grid-template-columns: 1fr auto; gap:0.5rem;">
-                      <input type="text" id="quickRefineInstruction" placeholder="e.g. 'Add cinematic lighting' or 'Make it spooky'" style="font-size:0.9rem;">
-                      <button type="button" id="btnRunRefine" class="btn-primary" style="padding:0.4rem 1rem; font-size:0.9rem;">Run</button>
-                   </div>
+              <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+                <label style="font-size:0.85em; opacity:0.75;">Model</label>
+                <select id="thumbModel" style="min-width: 220px;">
+                  <option value="gpt-image-1">gpt-image-1</option>
+                  <option value="dall-e-3">dall-e-3</option>
+                </select>
+                <label style="font-size:0.85em; opacity:0.75;">Size</label>
+                <select id="thumbSize" style="min-width: 120px;">
+                  <option value="1024x1024">1024x1024</option>
+                  <option value="1024x768">1024x768</option>
+                  <option value="768x1024">768x1024</option>
+                </select>
               </div>
+
+              <label>
+                Thumbnail prompt (optional override)
+                <input type="text" id="thumbPrompt" placeholder="If blank, PromptHub will summarise the prompt content.">
+              </label>
+
+              <div style="opacity:0.7; font-size:0.9em;">
+                Generated thumbnails appear immediately and are saved with the prompt.
+              </div>
+            </div>
           </div>
-
-          <div style="margin-top:0.5rem; font-size:0.8em; color:#888; display:flex; justify-content:space-between;">
-             <span>Updates text below.</span>
-             <span id="refineStatus" style="color:#00bfff;"></span>
-          </div>
-      </div>
-
-      <textarea name="content" id="content" rows="10" required style="width:100%;">{{ prompt.content if prompt else '' }}</textarea>
-      <div style="margin-top:0.35rem; font-size:0.8em; color:#777;">
-        Tip: “Insert Descriptor” is optional. You can paste text or insert a token like <code>{{ '{{' }}descriptor:123{{ '}}' }}</code>.
-      </div>
-    </div>
-
-    <div>
-      <label>Notes</label>
-      <textarea name="notes" id="notes" rows="4">{{ prompt.notes if prompt and prompt.notes else '' }}</textarea>
-    </div>
-
-    <div>
-        <label id="mainThumbLabel">Thumbnail (drag & drop allowed)</label>
-        <input type="file" name="thumbnail" accept="image/*" id="mainThumbInput">
-
-        <div id="mainThumbDropZone" style="margin-top:0.75rem; padding: 0.5rem; border: 2px dashed #444; border-radius: 4px; display: inline-block; min-width: 150px; text-align: center; transition: border-color 0.2s;">
-             <img id="mainThumbPreview"
-                  src="{{ url_for('serve_thumbnail', prompt_id=prompt.id) if prompt and prompt.thumbnail else '' }}"
-                  style="max-height: 120px; border-radius: 4px; display: {% if prompt and prompt.thumbnail %}block{% else %}none{% endif %};">
-
-             <div id="mainThumbPlaceholder" style="color:#666; font-size:0.8em; padding:1rem; {% if prompt and prompt.thumbnail %}display:none;{% endif %}">
-                Drop Image Here
-             </div>
-
-             {% if prompt and prompt.thumbnail %}
-                 <label style="font-weight: normal; font-size: 0.9em; display:flex; align-items:center; margin-top: 0.5rem;">
-                   <input type="checkbox" name="remove_thumbnail" style="margin-right: 0.5rem;"> Remove
-                 </label>
-             {% endif %}
         </div>
+      </details>
+
+      <details id="descriptorPanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; border:1px solid #333;">
+        <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+          <span style="font-weight:bold;">🧩 Descriptors</span>
+          <span style="opacity:0.7; font-size:0.9em;">Insert tokens or manage types</span>
+        </summary>
+
+        <div style="margin-top:1rem; display:flex; flex-direction:column; gap:0.75rem;">
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+            <label style="font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Type</label>
+            <select id="descType" style="min-width: 220px;">
+              <option value="">(Select type)</option>
+            </select>
+
+            <label style="font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Search</label>
+            <input type="text" id="descSearch" placeholder="Search descriptors..." style="flex:1; min-width: 220px;">
+
+            <button type="button" class="btn-secondary" id="btnDescSearch">Search</button>
+            <span id="descStatus" style="font-size:0.9em; opacity:0.7;"></span>
+          </div>
+
+          <div id="descResults" style="border:1px solid #333; border-radius:8px; max-height:320px; overflow:auto; background:#111; padding:0.5rem;">
+            <div style="opacity:0.7; padding:0.75rem;">Select a type and search.</div>
+          </div>
+
+          <div style="opacity:0.7; font-size:0.9em;">
+            Clicking “Insert token” adds a token at the cursor in the Prompt Content box.
+          </div>
+        </div>
+      </details>
+
     </div>
 
-    {% if variants and variants|length > 0 %}
-      <div style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-top:1rem;">
-         <h4 style="margin-top:0;">Variants</h4>
-         <ul style="margin:0; padding-left:1.5rem;">
-           {% for v in variants %}
-             <li><a href="{{ url_for('edit_prompt', prompt_id=v.id) }}" style="color:#00bfff;">{{ v.title }}</a></li>
-           {% endfor %}
-         </ul>
-      </div>
+    {% if prompt and prompt.id %}
+      {% set root_id = prompt.parent_id if prompt.parent_id else prompt.id %}
+      <details id="variantsPanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-top:1rem; border:1px solid #333;">
+        <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+          <span style="font-weight:bold;">📎 Variants</span>
+          <span style="opacity:0.7; font-size:0.9em;">View and switch within this family</span>
+        </summary>
+
+        <div style="margin-top:0.9rem; display:flex; flex-direction:column; gap:0.75rem;">
+          <input type="hidden" id="variantsRootId" value="{{ root_id }}">
+
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="btn-secondary" id="btnLoadVariants">Load family</button>
+            <span id="variantsStatus" style="font-size:0.9em; opacity:0.7;"></span>
+          </div>
+
+          <div id="variantsContainer" style="border:1px solid #333; border-radius:8px; background:#111; padding:0.75rem; max-height:520px; overflow:auto;">
+            <div style="opacity:0.75;">Click “Load family” to show the main prompt and its variants here.</div>
+          </div>
+        </div>
+      </details>
     {% endif %}
 
     <div style="display:flex; gap:.75rem; align-items:center; flex-wrap:wrap; margin-top:1.5rem;">
       <button type="submit">Save</button>
+
       {% if prompt and prompt.id %}
-        <a class="btn-secondary" href="{{ url_for('refine_prompt', prompt_id=prompt.id) }}">Refine with Ollama</a>
+        <button type="submit" class="btn-secondary" name="save_as_variant" value="1">Save as Variant</button>
       {% endif %}
     </div>
+
   </form>
+
 </section>
 
-<!-- Descriptor Picker Modal (Optional) -->
-<div id="descriptorModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:9999;">
-  <div style="max-width:900px; margin:4vh auto; background:#111; border:1px solid #333; border-radius:12px; overflow:hidden;">
-    <div style="display:flex; justify-content:space-between; align-items:center; padding:0.75rem 1rem; background:#151515; border-bottom:1px solid #222;">
-      <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
-        <strong>Insert Descriptor</strong>
-        <input id="descSearch" type="text" placeholder="Search descriptors..." style="min-width:240px;">
-        <select id="descType">
-          <option value="all">All types</option>
-        </select>
-
-        <label style="display:flex; align-items:center; gap:0.35rem; font-size:0.9em; opacity:0.95;">
-          <input type="checkbox" id="insertAsToken">
-          Insert as token
-        </label>
-      </div>
-
-      <button type="button" class="btn-secondary" id="closeDescriptorPicker" style="padding:0.35rem 0.6rem;">Close</button>
-    </div>
-
-    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0; min-height:60vh;">
-      <div style="border-right:1px solid #222; overflow:auto; max-height:70vh;">
-        <div id="descList" style="display:flex; flex-direction:column;"></div>
-      </div>
-
-      <div style="padding:1rem; overflow:auto; max-height:70vh;">
-        <div style="opacity:0.8; font-size:0.9em; margin-bottom:0.5rem;">Preview</div>
-        <pre id="descPreview" style="white-space:pre-wrap; background:#0b0b0b; border:1px solid #222; padding:0.75rem; border-radius:10px; min-height:200px;"></pre>
-        <div style="display:flex; gap:0.5rem; margin-top:0.75rem; justify-content:flex-end;">
-          <button type="button" class="btn-primary" id="insertDescriptorNow">Insert</button>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
 <script>
-function initEditPromptPage() {
+(function () {
+  // Utilities
+  const contentEditor = document.getElementById('contentEditor');
+  function insertAtCursor(text) {
+    if (!contentEditor) return;
+    const start = contentEditor.selectionStart || 0;
+    const end = contentEditor.selectionEnd || 0;
+    const v = contentEditor.value || '';
+    contentEditor.value = v.slice(0, start) + text + v.slice(end);
+    const pos = start + text.length;
+    contentEditor.focus();
+    contentEditor.setSelectionRange(pos, pos);
+  }
 
-    // ==========================================
-    // 0. DESCRIPTOR PICKER (Optional)
-    // ==========================================
-    const openDescBtn = document.getElementById('openDescriptorPicker');
-    const descModal = document.getElementById('descriptorModal');
-    const closeDescBtn = document.getElementById('closeDescriptorPicker');
+  // Descriptors
+  const descType = document.getElementById('descType');
+  const descSearch = document.getElementById('descSearch');
+  const btnDescSearch = document.getElementById('btnDescSearch');
+  const descResults = document.getElementById('descResults');
+  const descStatus = document.getElementById('descStatus');
 
-    const descSearch = document.getElementById('descSearch');
-    const descType = document.getElementById('descType');
-    const descList = document.getElementById('descList');
-    const descPreview = document.getElementById('descPreview');
-    const insertDescBtn = document.getElementById('insertDescriptorNow');
-    const insertAsToken = document.getElementById('insertAsToken');
+  let descTypesLoaded = false;
 
-    let selectedDescriptor = null;
+  // ==========================================
+  // 0.1 VARIANTS (Prompt family) - template only
+  // ==========================================
+  const variantsRoot = document.getElementById('variantsRootId');
+  const variantsBtn = document.getElementById('btnLoadVariants');
+  const variantsContainer = document.getElementById('variantsContainer');
+  const variantsStatus = document.getElementById('variantsStatus');
 
-    let descTypesLoaded = false;
+  async function loadPromptFamily() {
+    if (!variantsRoot || !variantsContainer) return;
+    const rootId = String(variantsRoot.value || '').trim();
+    if (!rootId) return;
 
-    async function loadDescriptorTypes() {
-      if (!descType) return;
-      try {
-        const res = await fetch('/api/descriptors/types', { headers: { 'Accept': 'application/json' } });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const types = await res.json();
-        const current = descType.value || 'all';
+    if (variantsStatus) variantsStatus.textContent = 'Loading…';
+    variantsContainer.innerHTML = '<div style="opacity:0.75; padding:0.75rem;">Loading…</div>';
 
-        descType.innerHTML = '';
-        const optAll = document.createElement('option');
-        optAll.value = 'all';
-        optAll.textContent = 'All types';
-        descType.appendChild(optAll);
-
-        (Array.isArray(types) ? types : []).forEach(t => {
-          const opt = document.createElement('option');
-          opt.value = t;
-          opt.textContent = t;
-          descType.appendChild(opt);
-        });
-
-        descType.value = (Array.isArray(types) && types.includes(current)) ? current : 'all';
-      } catch (e) {
-        console.error('Failed to load descriptor types', e);
-        // Leave dropdown as-is (at least "All types")
-      }
-    }
-
-
-    function getPromptTextarea() {
-      return document.getElementById('content') || document.querySelector('textarea[name="content"]') || document.querySelector('textarea');
-    }
-
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, (c) => ({
-        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-      }[c]));
-    }
-
-    function debounce(fn, ms) {
-      let t;
-      return function(...args) {
-        clearTimeout(t);
-        t = setTimeout(() => fn.apply(this, args), ms);
-      };
-    }
-
-    function showDescriptorModal(on) {
-      if (!descModal) return;
-      descModal.style.display = on ? 'block' : 'none';
-
-      if (on) {
-        selectedDescriptor = null;
-        if (descPreview) descPreview.textContent = '';
-        if (descSearch) descSearch.value = '';
-        if (!descTypesLoaded) {
-          loadDescriptorTypes().finally(() => { descTypesLoaded = true; fetchDescriptors(); });
-        } else {
-          fetchDescriptors();
-        }
-        setTimeout(() => { if (descSearch) descSearch.focus(); }, 50);
-      }
-    }
-
-    async function fetchDescriptors() {
-      if (!descList) return;
-
-      const q = (descSearch?.value || '').trim();
-      const packType = (descType?.value || 'all').trim();
-
+    try {
       const params = new URLSearchParams();
-      if (q) params.set('q', q);
-      if (packType) params.set('pack_type', packType);
+      params.set('view_family', rootId);
+      params.set('per_page', '60');
+      params.set('page', '1');
+      params.set('sort_by', 'created_at');
+      params.set('sort_dir', 'asc');
 
-      try {
-        const res = await fetch(`/api/descriptors/list?${params.toString()}`, { headers: { 'Accept': 'application/json' } });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+      const res = await fetch('/api/prompts?' + params.toString(), { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
 
-        if (!Array.isArray(data) || data.length === 0) {
-          descList.innerHTML = `<div style="padding:1rem; opacity:0.85;">No descriptors found.</div>`;
-          return;
-        }
-
-        descList.innerHTML = '';
-        data.forEach(item => {
-          const row = document.createElement('button');
-          row.type = 'button';
-          row.className = 'btn-secondary';
-          row.style.cssText = 'display:block; text-align:left; border-radius:0; border:0; border-bottom:1px solid #222; padding:0.75rem 1rem; background:#111;';
-          row.innerHTML = `
-            <div style="display:flex; justify-content:space-between; gap:0.75rem;">
-              <div style="min-width:0;">
-                <div style="font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(item.title || ('Descriptor #' + item.id))}</div>
-                <div style="opacity:0.7; font-size:0.85em;">${escapeHtml(item.pack_type || '')}</div>
-              </div>
-              <div style="opacity:0.6; font-size:0.8em;">#${item.id}</div>
-            </div>
-          `;
-
-row.addEventListener('click', () => {
-  selectedDescriptor = item;
-  if (descPreview) descPreview.textContent = item.rendered_text || item.description || '';
-  [...descList.querySelectorAll('button')].forEach(b => b.style.outline = 'none');
-  row.style.outline = '2px solid #00bfff';
-});
-
-          descList.appendChild(row);
-        });
-      } catch (err) {
-        console.error(err);
-        descList.innerHTML = `<div style="padding:1rem; opacity:0.85;">Failed to load descriptors.</div>`;
+      if (data && typeof data.html === 'string' && data.html.trim()) {
+        variantsContainer.innerHTML = data.html;
+        if (variantsStatus) variantsStatus.textContent = 'Loaded.';
+      } else {
+        variantsContainer.innerHTML = '<div style="opacity:0.75; padding:0.75rem;">No family items found.</div>';
+        if (variantsStatus) variantsStatus.textContent = '';
       }
+    } catch (e) {
+      console.error('Failed to load family', e);
+      variantsContainer.innerHTML = '<div style="opacity:0.75; padding:0.75rem;">Failed to load family.</div>';
+      if (variantsStatus) variantsStatus.textContent = '';
     }
+  }
 
-    function insertAtCursor(textToInsert) {
-      const ta = getPromptTextarea();
-      if (!ta) { alert('Could not find the prompt textarea to insert into.'); return; }
+  if (variantsBtn) {
+    variantsBtn.addEventListener('click', loadPromptFamily);
+  }
 
-      const start = (typeof ta.selectionStart === 'number') ? ta.selectionStart : ta.value.length;
-      const end = (typeof ta.selectionEnd === 'number') ? ta.selectionEnd : ta.value.length;
+  async function loadDescriptorTypes() {
+    if (descTypesLoaded) return;
+    if (!descType) return;
+    try {
+      const res = await fetch('/api/descriptors/types', { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) throw new Error('types');
+      const types = await res.json();
+      if (!Array.isArray(types)) return;
 
-      ta.value = ta.value.slice(0, start) + textToInsert + ta.value.slice(end);
-      const newPos = start + textToInsert.length;
-      ta.selectionStart = ta.selectionEnd = newPos;
-      ta.focus();
-    }
-
-    if (openDescBtn) openDescBtn.addEventListener('click', () => showDescriptorModal(true));
-    if (closeDescBtn) closeDescBtn.addEventListener('click', () => showDescriptorModal(false));
-
-    if (descModal) {
-      descModal.addEventListener('click', (e) => { if (e.target === descModal) showDescriptorModal(false); });
-      document.addEventListener('keydown', (e) => {
-        if (descModal.style.display === 'block' && e.key === 'Escape') showDescriptorModal(false);
+      types.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t;
+        opt.textContent = t;
+        descType.appendChild(opt);
       });
+
+      descTypesLoaded = true;
+    } catch (e) {
+      console.error('Failed to load descriptor types', e);
     }
-    if (descSearch) descSearch.addEventListener('input', debounce(fetchDescriptors, 200));
-    if (descType) descType.addEventListener('change', fetchDescriptors);
+  }
 
-    if (insertDescBtn) insertDescBtn.addEventListener('click', () => {
-      if (!selectedDescriptor) { alert('Select a descriptor first.'); return; }
+  function setDescStatus(msg) {
+    if (descStatus) descStatus.textContent = msg || '';
+  }
 
-      const asToken = !!insertAsToken?.checked;
+  function renderDescriptorResults(items) {
+    if (!descResults) return;
+    if (!items.length) {
+      descResults.innerHTML = '<div style="opacity:0.7; padding:0.75rem;">No results.</div>';
+      return;
+    }
 
-      // IMPORTANT: don't write a literal token using double-curly braces in this template,
-      // because Jinja will try to parse it and throw TemplateSyntaxError.
-      const token = '{' + '{' + 'descriptor:' + selectedDescriptor.id + '}' + '}';
+    descResults.innerHTML = '';
+    items.forEach(d => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.gap = '0.5rem';
+      row.style.alignItems = 'center';
+      row.style.justifyContent = 'space-between';
+      row.style.borderBottom = '1px solid #222';
+      row.style.padding = '0.55rem 0.6rem';
 
-      const payload = asToken ? token : (selectedDescriptor.rendered_text || '');
-      insertAtCursor(payload);
-      showDescriptorModal(false);
+      const left = document.createElement('div');
+      left.style.flex = '1';
+      left.style.minWidth = '0';
+
+      const title = document.createElement('div');
+      title.textContent = d.name || d.id || 'descriptor';
+      title.style.fontWeight = 'bold';
+      title.style.whiteSpace = 'nowrap';
+      title.style.overflow = 'hidden';
+      title.style.textOverflow = 'ellipsis';
+
+      const meta = document.createElement('div');
+      meta.textContent = (d.type ? (d.type + ' • ') : '') + (d.pack || '');
+      meta.style.opacity = '0.7';
+      meta.style.fontSize = '0.85em';
+      meta.style.whiteSpace = 'nowrap';
+      meta.style.overflow = 'hidden';
+      meta.style.textOverflow = 'ellipsis';
+
+      left.appendChild(title);
+      left.appendChild(meta);
+
+      const actions = document.createElement('div');
+      actions.style.display = 'flex';
+      actions.style.gap = '0.5rem';
+      actions.style.flexWrap = 'wrap';
+      actions.style.alignItems = 'center';
+
+      const btnToken = document.createElement('button');
+      btnToken.type = 'button';
+      btnToken.className = 'btn-secondary';
+      btnToken.textContent = 'Insert token';
+      btnToken.onclick = () => {
+        // Insert token form Descriptor ID without typing literal braces in template text.
+        const open = String.fromCharCode(123, 123);
+        const close = String.fromCharCode(125, 125);
+        insertAtCursor(open + 'descriptor:' + d.id + close);
+      };
+
+      const btnText = document.createElement('button');
+      btnText.type = 'button';
+      btnText.className = 'btn-secondary';
+      btnText.textContent = 'Insert text';
+      btnText.onclick = () => {
+        insertAtCursor(d.rendered_text || d.text || d.name || '');
+      };
+
+      actions.appendChild(btnToken);
+      actions.appendChild(btnText);
+
+      row.appendChild(left);
+      row.appendChild(actions);
+
+      descResults.appendChild(row);
     });
+  }
 
+  async function searchDescriptors() {
+    if (!descType || !descResults) return;
 
-    // ==========================================
-    // 1. VISION / IMAGE UPLOAD LOGIC (Independent)
-    // ==========================================
-    const dropZone = document.getElementById('visionDropZone');
-    if (dropZone) {
-        const fileInput = document.getElementById('visionFile');
-        const preview = document.getElementById('visionPreview');
-        const dropText = document.getElementById('visionDropText');
-        const btn = document.getElementById('btnGenerateDraft');
-        const statusDiv = document.getElementById('visionStatus');
-        const contentBox = document.getElementById('content');
+    const type = String(descType.value || '').trim();
+    const q = String(descSearch?.value || '').trim();
 
-        dropZone.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', (e) => {
-            if(fileInput.files.length) showPreview(fileInput.files[0]);
-        });
-        dropZone.addEventListener('dragover', (e) => {
-            e.preventDefault(); dropZone.style.borderColor = '#00bfff';
-        });
-        dropZone.addEventListener('dragleave', (e) => {
-            e.preventDefault(); dropZone.style.borderColor = '#444';
-        });
-        dropZone.addEventListener('drop', (e) => {
-            e.preventDefault(); dropZone.style.borderColor = '#444';
-            if (e.dataTransfer.files.length) {
-                fileInput.files = e.dataTransfer.files;
-                showPreview(e.dataTransfer.files[0]);
-            }
-        });
+    if (!type) {
+      setDescStatus('Select a type.');
+      return;
+    }
 
-        function showPreview(file) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                preview.src = e.target.result;
-                preview.style.display = 'block';
-                dropText.style.display = 'none';
-            };
-            reader.readAsDataURL(file);
+    setDescStatus('Loading…');
+    descResults.innerHTML = '<div style="opacity:0.7; padding:0.75rem;">Loading…</div>';
+
+    try {
+      const params = new URLSearchParams();
+      params.set('type', type);
+      if (q) params.set('q', q);
+
+      const res = await fetch('/api/descriptors/list?' + params.toString(), { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) throw new Error('list');
+      const data = await res.json();
+      const items = Array.isArray(data) ? data : [];
+
+      setDescStatus(items.length ? (items.length + ' found') : 'No results');
+      renderDescriptorResults(items);
+    } catch (e) {
+      console.error('Failed to search descriptors', e);
+      setDescStatus('Failed to load');
+      descResults.innerHTML = '<div style="opacity:0.8; padding:0.75rem;">Could not load descriptors.</div>';
+    }
+  }
+
+  if (btnDescSearch) {
+    btnDescSearch.addEventListener('click', searchDescriptors);
+  }
+
+  // Thumbnail generation (existing behaviour)
+  const btnGenerateThumb = document.getElementById('btnGenerateThumb');
+  const thumbStatus = document.getElementById('thumbStatus');
+  const thumbModel = document.getElementById('thumbModel');
+  const thumbSize = document.getElementById('thumbSize');
+  const thumbPrompt = document.getElementById('thumbPrompt');
+  const mainThumbPreview = document.getElementById('mainThumbPreview');
+  const mainThumbEmpty = document.getElementById('mainThumbEmpty');
+
+  async function generateThumbnail() {
+    if (!btnGenerateThumb) return;
+    btnGenerateThumb.disabled = true;
+    if (thumbStatus) thumbStatus.textContent = 'Generating…';
+
+    try {
+      const payload = {
+        prompt_id: {{ prompt.id if prompt and prompt.id else 'null' }},
+        model: thumbModel ? thumbModel.value : 'gpt-image-1',
+        size: thumbSize ? thumbSize.value : '1024x1024',
+        prompt_override: thumbPrompt ? thumbPrompt.value : ''
+      };
+
+      const res = await fetch('/api/prompts/generate_thumbnail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) throw new Error('thumb ' + res.status);
+      const data = await res.json();
+
+      if (data && data.thumbnail_path) {
+        if (mainThumbEmpty) mainThumbEmpty.style.display = 'none';
+        if (mainThumbPreview) {
+          mainThumbPreview.style.display = 'block';
+          mainThumbPreview.src = "{{ url_for('static', filename='') }}" + data.thumbnail_path;
         }
-
-        btn.addEventListener('click', async () => {
-            if (!fileInput.files.length) { alert("Select an image first."); return; }
-            btn.disabled = true; btn.textContent = "Processing...";
-            statusDiv.textContent = "Analyzing Image...";
-
-            const formData = new FormData();
-            formData.append('image', fileInput.files[0]);
-            formData.append('vision_model', document.getElementById('visionModel').value);
-            formData.append('text_model', document.getElementById('textModel').value);
-            formData.append('custom_vision_instruction', document.getElementById('customVisionInstruction').value);
-            formData.append('custom_draft_instruction', document.getElementById('customDraftInstruction').value);
-
-            try {
-                const response = await fetch('/api/generate_draft_from_image', { method: 'POST', body: formData });
-                const data = await response.json();
-                if (data.error) {
-                    statusDiv.textContent = "Error: " + data.error;
-                } else {
-                    statusDiv.textContent = "Success!";
-                    if (contentBox) contentBox.value = data.draft_prompt;
-
-                    if(data.thumbnail_path) {
-                        const hiddenInput = document.getElementById('hiddenThumb');
-                        if(hiddenInput) hiddenInput.value = data.thumbnail_path;
-                        const mainThumbPreview = document.getElementById('mainThumbPreview');
-                        if(mainThumbPreview) {
-                            if (data.thumbnail_url) {
-                                mainThumbPreview.src = data.thumbnail_url + '?t=' + new Date().getTime();
-                            } else {
-                                // fallback
-                                mainThumbPreview.src = "{{ url_for('static', filename='') }}" + data.thumbnail_path;
-                            }
-                            mainThumbPreview.style.display = 'block';
-                            const mainPlaceholder = document.getElementById('mainThumbPlaceholder');
-                            if(mainPlaceholder) mainPlaceholder.style.display = 'none';
-                        }
-                    }
-                }
-            } catch (e) { alert("Error: " + e); }
-            finally { btn.disabled = false; btn.textContent = "Generate Draft"; }
-        });
+        if (thumbStatus) thumbStatus.textContent = 'Saved.';
+      } else {
+        if (thumbStatus) thumbStatus.textContent = 'No image returned.';
+      }
+    } catch (e) {
+      console.error('Thumbnail generation failed', e);
+      if (thumbStatus) thumbStatus.textContent = 'Failed.';
+    } finally {
+      btnGenerateThumb.disabled = false;
     }
+  }
 
-    // ==========================================
-    // 2. QUICK ENHANCE LOGIC (Independent)
-    // ==========================================
-    const btnToggle = document.getElementById('btnToggleRefine');
+  if (btnGenerateThumb) {
+    btnGenerateThumb.addEventListener('click', generateThumbnail);
+  }
 
-    if (btnToggle) {
-        const refineTools = document.getElementById('refineTools');
-        const btnRun = document.getElementById('btnRunRefine');
-        const contentArea = document.getElementById('content');
-        const refineStatus = document.getElementById('refineStatus');
+  // Init
+  loadDescriptorTypes();
 
-        btnToggle.addEventListener('click', () => {
-            if (refineTools.style.display === 'none') {
-                refineTools.style.display = 'block';
-            } else {
-                refineTools.style.display = 'none';
-            }
-        });
-
-        btnRun.addEventListener('click', async () => {
-            const originalText = contentArea.value.trim();
-            if (!originalText) {
-                alert("Please enter some text to refine first.");
-                return;
-            }
-
-            btnRun.disabled = true;
-            btnRun.textContent = "Running...";
-            refineStatus.textContent = "Sending to Ollama...";
-
-            try {
-                const response = await fetch('/api/generate_refinement', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        content: originalText,
-                        model: document.getElementById('quickRefineModel').value,
-                        instruction: document.getElementById('quickRefineInstruction').value,
-                        system_role: document.getElementById('quickRefineSystem').value
-                    })
-                });
-
-                const data = await response.json();
-
-                if (data.error) {
-                    refineStatus.textContent = "Error: " + data.error;
-                } else {
-                    refineStatus.textContent = "Success!";
-                    contentArea.value = data.content;
-                }
-            } catch (e) {
-                refineStatus.textContent = "Network Error.";
-                console.error(e);
-            } finally {
-                btnRun.disabled = false;
-                btnRun.textContent = "Run";
-            }
-        });
-    }
-
-    // ==========================================
-    // 3. MAIN THUMBNAIL DRAG & DROP
-    // ==========================================
-    const mainDropZone = document.getElementById('mainThumbDropZone');
-    const mainInput = document.getElementById('mainThumbInput');
-    const mainPreview = document.getElementById('mainThumbPreview');
-    const mainPlaceholder = document.getElementById('mainThumbPlaceholder');
-    const hiddenThumbPath = document.getElementById('hiddenThumb');
-    const currentPromptId = {{ prompt.id if prompt and prompt.id else 'null' }};
-
-    if (mainDropZone) {
-        mainDropZone.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            mainDropZone.style.borderColor = '#00bfff';
-        });
-
-        mainDropZone.addEventListener('dragleave', (e) => {
-            e.preventDefault();
-            mainDropZone.style.borderColor = '#444';
-        });
-
-        mainDropZone.addEventListener('drop', (e) => {
-            e.preventDefault();
-            mainDropZone.style.borderColor = '#444';
-
-            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                const file = e.dataTransfer.files[0];
-                if (!file.type.startsWith('image/')) { alert("Not an image file"); return; }
-
-                if (currentPromptId) {
-                    const formData = new FormData();
-                    formData.append('file', file);
-                    fetch(`/api/prompt/${currentPromptId}/upload_thumb`, { method: 'POST', body: formData })
-                        .then(r => r.json())
-                        .then(data => {
-                            if(data.success) {
-                                mainPreview.src = data.thumbnail_url;
-                                mainPreview.style.display = 'block';
-                                if(mainPlaceholder) mainPlaceholder.style.display = 'none';
-                                if(hiddenThumbPath) hiddenThumbPath.value = data.thumbnail_path;
-                            } else { alert(data.error); }
-                        }).catch(e => console.error(e));
-                } else {
-                    mainInput.files = e.dataTransfer.files;
-                    const reader = new FileReader();
-                    reader.onload = (ev) => {
-                        mainPreview.src = ev.target.result;
-                        mainPreview.style.display = 'block';
-                        if(mainPlaceholder) mainPlaceholder.style.display = 'none';
-                    };
-                    reader.readAsDataURL(file);
-                }
-            }
-        });
-    }
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', initEditPromptPage);
-} else {
-  initEditPromptPage();
-}
+})();
 </script>
+
 {% endblock %}
