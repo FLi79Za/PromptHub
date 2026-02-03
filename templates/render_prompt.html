@@ -1,3 +1,4 @@
+<!-- templates/render_prompt.html -->
 {% extends "base.html" %}
 
 {% block content %}
@@ -37,7 +38,7 @@
       </div>
 
       <div style="opacity:0.75; font-size:0.9em;">
-        Tip: switching variants here is for viewing/using only. To save changes or create new variants, use Edit.
+        Tip: open a different family member to use it, or compare outputs side-by-side.
       </div>
     </div>
   </details>
@@ -48,89 +49,78 @@
     <input type="hidden" name="override_active" id="overrideActive" value="0">
     <input type="hidden" name="final_override" id="finalOverride" value="">
 
-    <!-- PATCH 1: Notes panel (insert after promptId, before the form) -->
-{% if prompt.notes %}
-<details id="notesPanel" style="background:#1a1a1a; padding:1.25rem; border-radius:8px; margin:1.25rem 0 1.25rem; border:1px solid #333;">
-  <summary style="cursor:pointer; user-select:none; display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
-    <h4 style="margin:0;">🗒️ Notes</h4>
-    <div style="opacity:0.7; font-size:0.95em;">Click to toggle</div>
-  </summary>
+    {% if prompt.notes %}
+    <details id="notesPanel" style="background:#1a1a1a; padding:1.25rem; border-radius:8px; margin:1.25rem 0 1.25rem; border:1px solid #333;">
+      <summary style="cursor:pointer; user-select:none; display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+        <h4 style="margin:0;">🗒️ Notes</h4>
+        <div style="opacity:0.7; font-size:0.95em;">Click to toggle</div>
+      </summary>
 
-  <div style="margin-top:0.9rem; white-space:pre-wrap; line-height:1.45; opacity:0.92;">{{ prompt.notes }}</div>
-</details>
-{% endif %}
+      <div style="margin-top:0.9rem; white-space:pre-wrap; line-height:1.45; opacity:0.92;">{{ prompt.notes }}</div>
+    </details>
+    {% endif %}
 
+    {% if placeholders_meta %}
+    <details id="variablesPanel" style="background:#1a1a1a; padding:1.25rem; border-radius:8px; margin:1.25rem 0 1.25rem; border:1px solid #333;">
+      <summary style="cursor:pointer; user-select:none; display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
+        <h4 style="margin:0; color:#00bfff;">Variables</h4>
+        <div style="opacity:0.7; font-size:0.95em;">Fill placeholders with a descriptor or custom text.</div>
+      </summary>
 
-<!-- PATCH 2: Variables block (replace your entire placeholders_meta section with this) -->
-{% if placeholders_meta %}
-<details id="variablesPanel" style="background:#1a1a1a; padding:1.25rem; border-radius:8px; margin:1.25rem 0 1.25rem; border:1px solid #333;">
-  <summary style="cursor:pointer; user-select:none; display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
-    <h4 style="margin:0; color:#00bfff;">Variables</h4>
-    <div style="opacity:0.7; font-size:0.95em;">Fill placeholders with a descriptor or custom text.</div>
-  </summary>
-
-  <div id="placeholderGrid" style="margin-top:1rem; display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
-    {% for ph in placeholders_meta %}
-    <div class="ph-card" data-ph-index="{{ loop.index0 }}" data-ph-key="{{ ph.key }}" data-ph-display="{{ ph.display }}" style="border:1px solid #333; border-radius:10px; background:#111; padding:0.9rem;">
-      <div style="display:flex; align-items:baseline; justify-content:space-between; gap:0.75rem;">
-        <div style="font-weight:bold;">{{ ph.display }}</div>
-        <div style="display:flex; gap:0.5rem; align-items:center;">
-          <label style="font-size:0.85em; opacity:0.75;">Mode</label>
-          <select name="ph_mode_{{ loop.index0 }}" class="ph-mode" style="min-width: 140px;">
-            <option value="text" selected>Custom</option>
-            <option value="descriptor">Descriptor</option>
-          </select>
-        </div>
-      </div>
-
-      <input type="hidden" name="ph_key_{{ loop.index0 }}" value="{{ ph.key }}">
-
-      <div class="ph-descriptor" style="margin-top:0.75rem; display:none;">
-        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
-          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-            <label style="font-size:0.85em; opacity:0.75;">Pack</label>
-            <select name="ph_pack_{{ loop.index0 }}" class="ph-pack" style="min-width: 180px;">
-              <option value="all">(All packs)</option>
-            </select>
+      <div id="placeholderGrid" style="margin-top:1rem; display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:1rem;">
+        {% for ph in placeholders_meta %}
+        <div class="ph-card" data-ph-index="{{ loop.index0 }}" data-ph-key="{{ ph.key }}" data-ph-display="{{ ph.display }}" style="border:1px solid #333; border-radius:10px; background:#111; padding:0.9rem;">
+          <div style="display:flex; align-items:baseline; justify-content:space-between; gap:0.75rem;">
+            <div style="font-weight:bold;">{{ ph.display }}</div>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <label style="font-size:0.85em; opacity:0.75;">Mode</label>
+              <select name="ph_mode_{{ loop.index0 }}" class="ph-mode" style="min-width: 140px;">
+                <option value="text" selected>Custom</option>
+                <option value="descriptor">Descriptor</option>
+              </select>
+            </div>
           </div>
 
-          <button type="button" class="btn-secondary ph-clear" title="Clear this placeholder">Clear</button>
+          <input type="hidden" name="ph_key_{{ loop.index0 }}" value="{{ ph.key }}">
+
+          <div class="ph-descriptor" style="margin-top:0.75rem; display:none;">
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+              <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                <label style="font-size:0.85em; opacity:0.75;">Pack</label>
+                <select name="ph_pack_{{ loop.index0 }}" class="ph-pack" style="min-width: 180px;">
+                  <option value="all">(All packs)</option>
+                </select>
+              </div>
+
+              <button type="button" class="btn-secondary ph-clear" title="Clear this placeholder">Clear</button>
+            </div>
+
+            <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+              <input type="text" class="ph-search" placeholder="Search descriptors…" style="flex:1; min-width:200px;">
+              <button type="button" class="btn-secondary ph-search-btn">Search</button>
+            </div>
+
+            <div class="ph-results" style="margin-top:0.6rem; border:1px solid #333; border-radius:8px; max-height:220px; overflow:auto; background:#0e0e0e; padding:0.35rem;">
+              <div style="opacity:0.7; padding:0.6rem;">Search to load descriptors…</div>
+            </div>
+
+            <input type="hidden" name="ph_desc_text_{{ loop.index0 }}" class="ph-desc-text" value="">
+          </div>
+
+          <div class="ph-text" style="margin-top:0.75rem; display:block;">
+            <input type="text" name="ph_text_{{ loop.index0 }}" class="ph-text-input" placeholder="Type a value…" style="width:100%;">
+          </div>
+
+          <div style="margin-top:0.7rem;">
+            <div style="font-size:0.8em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Selected text</div>
+            <div class="ph-preview" style="margin-top:0.35rem; white-space:pre-wrap; line-height:1.35; opacity:0.92;"></div>
+          </div>
         </div>
-
-        <div style="margin-top:0.5rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-          <input type="text" class="ph-search" placeholder="Search descriptors…" style="flex:1; min-width:200px;">
-          <button type="button" class="btn-secondary ph-search-btn">Search</button>
-        </div>
-
-        <div class="ph-results" style="margin-top:0.6rem; border:1px solid #333; border-radius:8px; max-height:220px; overflow:auto; background:#0e0e0e; padding:0.35rem;">
-          <div style="opacity:0.7; padding:0.6rem;">Search to load descriptors…</div>
-        </div>
-
-        <input type="hidden" name="ph_desc_text_{{ loop.index0 }}" class="ph-desc-text" value="">
+        {% endfor %}
       </div>
+    </details>
+    {% endif %}
 
-      <div class="ph-text" style="margin-top:0.75rem; display:block;">
-        <input type="text" name="ph_text_{{ loop.index0 }}" class="ph-text-input" placeholder="Type a value…" style="width:100%;">
-      </div>
-
-      <div style="margin-top:0.7rem;">
-        <div style="font-size:0.8em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Selected text</div>
-        <div class="ph-preview" style="margin-top:0.35rem; white-space:pre-wrap; line-height:1.35; opacity:0.92;"></div>
-      </div>
-    </div>
-    {% endfor %}
-  </div>
-</details>
-{% endif %}
-
-<!-- Risk scan:
-- No changes inside <script>
-- No new literal template delimiters inside JS strings/comments
-- Only added/converted HTML blocks using intended Jinja tags
--->
-
-
-    <!-- Descriptor picker (Use-stage only, free insertion into editor) -->
     <details id="descriptorPanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1rem; border:1px solid #333;">
       <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem;">
         <span style="font-weight:bold;">🧩 Insert Descriptors</span>
@@ -181,9 +171,9 @@
       </div>
     </details>
 
-        <div style="display:grid; grid-template-columns: 1fr; gap:0.5rem; margin: 1rem 0 1rem;">
+    <div style="display:grid; grid-template-columns: 1fr; gap:0.5rem; margin: 1rem 0 1rem;">
       <label>Template Preview (shows where placeholders appear)</label>
-      <textarea id="templatePreview" readonly style="width:100%; min-height:140px; resize:vertical; padding:0.75rem; border-radius:8px; border:1px solid #333; background:#0e0e0e; color:#e6e6e6; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:0.92em; line-height:1.35;">{{ base_text }}</textarea>
+      <textarea id="templatePreview" readonly style="width:100%; min-height:140px; resize:vertical; padding:0.75rem; border-radius:8px; border:1px solid #333; background:#0e0e0e; color:#e6e6e6; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, &quot;Liberation Mono&quot;, &quot;Courier New&quot;, monospace; font-size:0.92em; line-height:1.35;">{{ base_text }}</textarea>
     </div>
 
     <textarea id="templateSource" style="display:none;">{{ prompt.content }}</textarea>
@@ -193,12 +183,26 @@
 
       <textarea name="content" id="finalOutput" rows="12" style="font-family:monospace; line-height:1.5; font-size:1.1em; padding:1rem;">{{ final_text or prompt.content }}</textarea>
 
-      <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
-        <button type="button" class="btn-secondary" id="btnCopyFinal">Copy</button>
-        <button type="button" class="btn-secondary" id="btnResetFinal">Reset</button>
+      <div style="display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+          <button type="button" class="btn-secondary" id="btnCopyFinal">Copy</button>
+          <button type="button" class="btn-secondary" id="btnResetFinal">Reset</button>
+        </div>
+
+        {% if ollama_models %}
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+          <select name="model" style="min-width: 220px;">
+            {% for m in ollama_models %}
+              <option value="{{ m }}" {% if session.get('ollama_model') == m %}selected{% endif %}>{{ m }}</option>
+            {% endfor %}
+          </select>
+          <input type="text" name="instruction" placeholder="Refine instruction (optional)" style="min-width: 240px;">
+          <input type="hidden" name="mode" value="refine">
+          <button type="submit" class="btn-secondary" title="Send current output to Ollama refinement">✨ Refine with Ollama</button>
+        </div>
+        {% endif %}
       </div>
 
-      <!-- Find & Replace panel -->
       <details id="findReplacePanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; border:1px solid #333; margin-top:0.75rem;">
         <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
           <span style="font-weight:bold;">🔎 Find & Replace</span>
@@ -283,10 +287,7 @@ function populatePackDropdown() {
   const sel = document.getElementById("descriptorPackSelect");
   if (!sel) return;
 
-  // Preserve current selection if possible
   const current = sel.value || "all";
-
-  // Remove all but first option
   while (sel.options.length > 1) sel.remove(1);
 
   _descriptorTypes.forEach(t => {
@@ -296,7 +297,6 @@ function populatePackDropdown() {
     sel.appendChild(opt);
   });
 
-  // Restore selection
   const want = _descriptorTypes.includes(current) ? current : "all";
   sel.value = want;
 }
@@ -321,11 +321,7 @@ function setDescriptorScope(scope) {
   refreshDescriptors();
 }
 
-// Determine which types are relevant by scanning placeholders in the current template.
 function getRelevantTypesFromTemplate() {
-  // Heuristic:
-  // - If placeholder label contains keywords matching descriptor types, show those chips.
-  // - Also show a short default set (style, mood, lighting, camera, lens, etc.) if present in types.
   const template = document.getElementById("templateSource")?.value || "";
   const placeholders = Array.from(new Set((template.match(/\[\[([^\]]+)\]\]/g) || []).map(m => m.slice(2, -2).trim().toLowerCase())));
 
@@ -338,7 +334,6 @@ function getRelevantTypesFromTemplate() {
     });
   });
 
-  // fallback common types if present
   const fallback = ["style", "mood", "lighting", "camera", "lens", "environment", "character", "subject", "composition", "colour", "color"];
   fallback.forEach(f => {
     const idx = typesLower.indexOf(f);
@@ -369,7 +364,6 @@ function renderRelevantChips() {
     chip.style.padding = "0.35rem 0.6rem";
     chip.style.borderRadius = "999px";
     chip.onclick = () => {
-      // set pack select to that type and refresh
       const sel = document.getElementById("descriptorPackSelect");
       if (sel) sel.value = t;
       refreshDescriptors(true);
@@ -386,8 +380,6 @@ function buildDescriptorListUrl() {
   if (q) params.set("q", q);
   if (packSel && packSel !== "all") params.set("type", packSel);
 
-  // Scope "relevant" doesn't hide types globally; it just shows chips and suggests filters.
-  // Keep endpoint unchanged.
   const base = "/api/descriptors/list";
   const qs = params.toString();
   return qs ? (base + "?" + qs) : base;
@@ -417,10 +409,6 @@ function getPlaceholderDisplay(card) {
   return card.getAttribute("data-ph-display") || "";
 }
 
-function getPlaceholderKey(card) {
-  return card.getAttribute("data-ph-key") || "";
-}
-
 function getTextValue(card) {
   const inp = card.querySelector(".ph-text-input");
   return inp ? String(inp.value || "") : "";
@@ -432,7 +420,6 @@ function getDescriptorText(card) {
 }
 
 function applyPlaceholderToTemplate(template, display, replacement) {
-  // Replace all occurrences of [[display]] with replacement
   const token = "[[" + display + "]]";
   return template.split(token).join(replacement || "");
 }
@@ -482,7 +469,6 @@ function populateAllPlaceholderPackSelects(types) {
 }
 
 function attachPlaceholderHandlers() {
-  // Mode change toggles
   document.addEventListener("change", function (ev) {
     const target = ev.target;
     if (!target) return;
@@ -498,7 +484,6 @@ function attachPlaceholderHandlers() {
       if (d) d.style.display = (mode === "descriptor") ? "block" : "none";
       if (t) t.style.display = (mode === "text") ? "block" : "none";
 
-      // Update preview to match current input
       if (mode === "descriptor") setCardPreview(card, getDescriptorText(card));
       else setCardPreview(card, getTextValue(card));
 
@@ -507,7 +492,6 @@ function attachPlaceholderHandlers() {
     }
 
     if (target.classList.contains("ph-pack")) {
-      // pack change doesn't automatically search, but we update results placeholder
       const card = target.closest(".ph-card");
       if (!card) return;
 
@@ -517,7 +501,6 @@ function attachPlaceholderHandlers() {
     }
   });
 
-  // Text input live preview
   document.addEventListener("input", function (ev) {
     const target = ev.target;
     if (!target) return;
@@ -531,7 +514,6 @@ function attachPlaceholderHandlers() {
     }
   });
 
-  // Search button
   document.addEventListener("click", async function (ev) {
     const target = ev.target;
     if (!target) return;
@@ -554,19 +536,14 @@ function attachPlaceholderHandlers() {
 }
 
 function clearPlaceholder(card) {
-  const mode = getModeForCard(card);
-
-  // reset inputs
   const txt = card.querySelector(".ph-text-input");
   if (txt) txt.value = "";
   const hidden = card.querySelector(".ph-desc-text");
   if (hidden) hidden.value = "";
 
   setCardPreview(card, "");
-  if (mode === "descriptor") {
-    const res = card.querySelector(".ph-results");
-    if (res) res.innerHTML = "<div style=\"opacity:0.7; padding:0.6rem;\">Search to load descriptors…</div>";
-  }
+  const res = card.querySelector(".ph-results");
+  if (res) res.innerHTML = "<div style=\"opacity:0.7; padding:0.6rem;\">Search to load descriptors…</div>";
 }
 
 async function placeholderSearch(card) {
@@ -642,7 +619,6 @@ function renderPlaceholderResults(card, items) {
     btn.className = "btn-secondary";
     btn.textContent = "Use";
     btn.onclick = () => {
-      // Prefer rendered_text if present; fallback to token
       const txt = d.rendered_text || d.text || (d.name || "");
       setCardSelectedDescriptorText(card, txt || "");
       clientPreviewFinal();
@@ -660,7 +636,6 @@ function attachFinalEditorHandlers() {
   if (!ta) return;
 
   ta.addEventListener("input", function () {
-    // As soon as user types in final prompt, we stop overwriting it.
     setUserEditedFinal(true);
     syncFinalOverride();
   });
@@ -673,7 +648,6 @@ function attachFinalEditorHandlers() {
         btnCopy.textContent = "Copied!";
         setTimeout(() => { btnCopy.textContent = "Copy"; }, 800);
       } catch (e) {
-        // fallback
         ta.select();
         document.execCommand("copy");
       }
@@ -709,7 +683,6 @@ function insertTextAtCursor(text) {
 }
 
 function insertDescriptorToken(id) {
-  // Insert token form Descriptor ID without typing literal Jinja braces in this template.
   const open = String.fromCharCode(123, 123);
   const close = String.fromCharCode(125, 125);
   insertTextAtCursor(open + "descriptor:" + id + close);
@@ -830,19 +803,15 @@ function debouncedRefreshDescriptors() {
 }
 
 (async function initUsePrompt() {
-  // Placeholder picker packs
   const types = await loadDescriptorTypes();
   populateAllPlaceholderPackSelects(types);
   attachPlaceholderHandlers();
 
-  // Final editor handlers
   attachFinalEditorHandlers();
 
-  // Initial previews
   getPlaceholderCards().forEach(card => setCardPreview(card, ""));
   clientPreviewFinal();
 
-  // Descriptor panel (global)
   await loadDescriptorTypesOnce();
   populatePackDropdown();
   setDescriptorScope("all");
@@ -850,8 +819,6 @@ function debouncedRefreshDescriptors() {
   refreshDescriptors();
 })();
 
-  // Template preview: jump to next occurrence of a placeholder when clicking its card
-  // Ensure placeholder mode toggle always works (event delegation + initial sync)
 (function () {
   function applyModeForCard(card) {
     if (!card) return;
@@ -866,10 +833,8 @@ function debouncedRefreshDescriptors() {
     if (t) t.style.display = (mode === "text") ? "block" : "none";
   }
 
-  // Initial sync (in case anything loads before handlers attach)
   document.querySelectorAll(".ph-card").forEach(applyModeForCard);
 
-  // Delegated change handler (robust even if other JS runs before/after)
   document.addEventListener("change", function (ev) {
     const sel = ev.target && ev.target.closest ? ev.target.closest(".ph-mode") : null;
     if (!sel) return;
@@ -877,14 +842,12 @@ function debouncedRefreshDescriptors() {
     const card = sel.closest(".ph-card");
     applyModeForCard(card);
 
-    // Keep preview in sync if available
     try {
       if (typeof clientPreviewFinal === "function") clientPreviewFinal();
     } catch (e) {}
   });
 })();
 
-// Template preview: jump to next occurrence of a placeholder when clicking its card
 (function () {
   const templateBox = document.getElementById("templatePreview");
   if (!templateBox) return;
@@ -910,7 +873,6 @@ function debouncedRefreshDescriptors() {
   document.addEventListener("click", function (ev) {
     const t = ev.target;
 
-    // If user clicked inside an interactive control within the variable card, do NOT jump.
     if (t && t.closest && t.closest("input, select, textarea, button, a, .ph-results")) {
       return;
     }
@@ -1027,9 +989,8 @@ function frReplaceOne() {
   const selected = String(ta.value || "").slice(selStart, selEnd);
 
   const rx = frBuildNeedleRegex(needle, wholeWord, matchCase);
-  const selectedMatches = selected && rx.test(selected) && selected.length === needle.length ? true : false;
+  const selectedMatches = !!(selected && rx.test(selected));
 
-  // If the current selection doesn't match, find the next one first.
   if (!selected || !selectedMatches) {
     frFindNext();
   }
@@ -1038,18 +999,11 @@ function frReplaceOne() {
   const e = ta.selectionEnd || 0;
   const nowSelected = String(ta.value || "").slice(s, e);
 
-  rx.lastIndex = 0;
-  if (!nowSelected || !rx.test(nowSelected) || nowSelected.length !== nowSelected.trim().length) {
-    // Fallback: strict compare (case/word handled by regex used in find)
-    // If we still didn't land on a match, stop.
-  }
-
   if (!nowSelected) {
     frShowStatus("No match selected.");
     return;
   }
 
-  // Replace the selected range.
   const text = String(ta.value || "");
   ta.value = text.slice(0, s) + replacement + text.slice(e);
   const newPos = s + replacement.length;
@@ -1059,13 +1013,8 @@ function frReplaceOne() {
   frFlashReplaced();
   frShowStatus("Replaced one.");
 
-  // Mark as user edited so client preview doesn't overwrite.
-  if (typeof setUserEditedFinal === "function") {
-    setUserEditedFinal(true);
-  }
-  if (typeof syncFinalOverride === "function") {
-    syncFinalOverride();
-  }
+  if (typeof setUserEditedFinal === "function") setUserEditedFinal(true);
+  if (typeof syncFinalOverride === "function") syncFinalOverride();
 }
 
 function frReplaceAll() {
@@ -1105,12 +1054,8 @@ function frReplaceAll() {
   frFlashReplaced();
   frShowStatus(count ? ("Replaced " + count + ".") : "No matches.");
 
-  if (typeof setUserEditedFinal === "function") {
-    setUserEditedFinal(true);
-  }
-  if (typeof syncFinalOverride === "function") {
-    syncFinalOverride();
-  }
+  if (typeof setUserEditedFinal === "function") setUserEditedFinal(true);
+  if (typeof syncFinalOverride === "function") syncFinalOverride();
 }
 
 </script>
