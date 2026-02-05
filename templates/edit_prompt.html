@@ -264,6 +264,15 @@
       reader.readAsDataURL(file);
     }
 
+    async function readResponseAsJsonOrText(resp) {
+      const ct = (resp.headers && resp.headers.get) ? (resp.headers.get("content-type") || "") : "";
+      if (ct.toLowerCase().indexOf("application/json") !== -1) {
+        return { kind: "json", data: await resp.json() };
+      }
+      const txt = await resp.text();
+      return { kind: "text", data: txt };
+    }
+
     if (dz && fileInput) {
       dz.addEventListener("click", function () { fileInput.click(); });
 
@@ -309,6 +318,7 @@
       try {
         const formData = new FormData();
         formData.append("image", f);
+        formData.append("file", f);
         formData.append("vision_model", (document.getElementById("visionModel") || {}).value || "");
         formData.append("text_model", (document.getElementById("textModel") || {}).value || "");
         formData.append("vision_instruction", (document.getElementById("customVisionInstruction") || {}).value || "");
@@ -319,7 +329,27 @@
           body: formData
         });
 
-        const data = await r.json();
+        const parsed = await readResponseAsJsonOrText(r);
+
+        if (!r.ok) {
+          if (parsed.kind === "json" && parsed.data && parsed.data.error) {
+            setStatus("Error (" + r.status + "): " + parsed.data.error);
+          } else if (parsed.kind === "json") {
+            setStatus("Error (" + r.status + "): Request failed.");
+          } else {
+            const snippet = (parsed.data || "").toString().replace(/\s+/g, " ").slice(0, 180);
+            setStatus("Error (" + r.status + "): " + snippet);
+          }
+          return;
+        }
+
+        if (parsed.kind !== "json") {
+          const snippet2 = (parsed.data || "").toString().replace(/\s+/g, " ").slice(0, 180);
+          setStatus("Error: Non-JSON response: " + snippet2);
+          return;
+        }
+
+        const data = parsed.data;
 
         if (data && data.error) {
           setStatus("Error: " + data.error);
@@ -341,7 +371,7 @@
           }
         }
       } catch (e) {
-        setStatus("Network Error.");
+        setStatus("Network Error: " + (e && e.message ? e.message : "Request failed"));
         console.error(e);
       } finally {
         btnGenerateDraft.disabled = false;

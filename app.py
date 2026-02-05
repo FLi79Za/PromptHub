@@ -2727,13 +2727,18 @@ def refine_draft():
     except Exception as e:
         return render_template("edit_prompt.html", prompt=prompt_like, categories=categories, tools=tools, prompt_types=PROMPT_TYPES, refine_error=str(e), ollama_available=True, tags_str="")
 
+# Vision → draft prompt (image) endpoint (updated for template compatibility)
 @app.route("/api/generate_draft_from_image", methods=["POST"])
 def generate_draft_from_image():
-    f = request.files.get("image")
-    vision_model = request.form.get("vision_model")
-    text_model = request.form.get("text_model")
-    custom_vision_instruction = request.form.get("custom_vision_instruction", "").strip()
-    custom_draft_instruction = request.form.get("custom_draft_instruction", "").strip()
+    # Accept either key just in case
+    f = request.files.get("image") or request.files.get("file")
+
+    vision_model = (request.form.get("vision_model") or "").strip()
+    text_model = (request.form.get("text_model") or "").strip()
+
+    # Match the field names used by the current edit_prompt.html
+    vision_instruction = (request.form.get("vision_instruction") or "").strip()
+    draft_instruction = (request.form.get("draft_instruction") or "").strip()
 
     if not f or not vision_model or not text_model:
         return jsonify({"error": "Missing image or model selection."}), 400
@@ -2742,36 +2747,66 @@ def generate_draft_from_image():
         thumbnail_path = save_thumbnail(f)
         saved_file_path = BASE_DIR / "static" / thumbnail_path
         with open(saved_file_path, "rb") as image_file:
-            img_b64 = base64.b64encode(image_file.read()).decode('utf-8')
+            img_b64 = base64.b64encode(image_file.read()).decode("utf-8")
     except Exception as e:
         return jsonify({"error": f"Image processing failed: {str(e)}"}), 400
 
-    vision_sys = "You are a visual analysis model. Describe the contents of the provided image clearly and factually. Focus on Subject, Appearance, Environment, Composition, Lighting, Mood."
+    vision_sys = (
+        "You are a visual analysis model. Describe the contents of the provided image clearly and factually. "
+        "Focus on Subject, Appearance, Environment, Composition, Lighting, Mood."
+    )
+
     vision_prompt = "Describe this image."
-    if custom_vision_instruction:
-        vision_prompt += f" {custom_vision_instruction}"
+    if vision_instruction:
+        vision_prompt += " " + vision_instruction
 
     try:
-        vision_response = ollama_generate(prompt=vision_prompt, model=vision_model, system=vision_sys, images=[img_b64])
+        vision_response = ollama_generate(
+            prompt=vision_prompt,
+            model=vision_model,
+            system=vision_sys,
+            images=[img_b64],
+        )
     except Exception as e:
         return jsonify({"error": f"Vision model failed: {str(e)}"}), 500
 
-    draft_sys = "You are assisting with AI prompt creation. Based on the visual description, generate a draft AI image prompt suitable for models like Flux or Stable Diffusion. Output a single paragraph."
-    draft_user_prompt = f"Visual description:\n{vision_response}"
-    if custom_draft_instruction:
-        draft_user_prompt += f"\n\nAdditional Instructions:\n{custom_draft_instruction}"
+    draft_sys = (
+        "You are assisting with AI prompt creation. Based on the visual description, generate a draft AI image prompt "
+        "suitable for models like Flux or Stable Diffusion. Output a single paragraph."
+    )
+
+    draft_user_prompt = "Visual description:\n" + str(vision_response)
+    if draft_instruction:
+        draft_user_prompt += "\n\nAdditional Instructions:\n" + draft_instruction
 
     try:
-        draft_response = ollama_generate(prompt=draft_user_prompt, model=text_model, system=draft_sys)
+        draft_response = ollama_generate(
+            prompt=draft_user_prompt,
+            model=text_model,
+            system=draft_sys,
+        )
     except Exception as e:
         return jsonify({"error": f"Text model failed: {str(e)}"}), 500
 
+    # Return keys that the current edit_prompt.html expects:
+    # - content: goes into the main prompt textarea
+    # - thumbnail_url: updates the thumbnail preview
+    # - thumbnail_path: stored in hidden field for later save
     return jsonify({
         "success": True,
         "description": vision_response,
         "draft_prompt": draft_response,
-        "thumbnail_path": thumbnail_path
+        "content": draft_response,
+        "thumbnail_path": thumbnail_path,
+        "thumbnail_url": url_for("static", filename=thumbnail_path),
     })
+
+
+# Backwards-compatible alias for older/newer templates
+@app.route("/api/generate_prompt_from_image", methods=["POST"])
+def generate_prompt_from_image_alias():
+    return generate_draft_from_image()
+
 
 @app.route("/prompt/<int:prompt_id>/raw", methods=["GET"])
 def prompt_raw(prompt_id: int):
