@@ -62,7 +62,8 @@
 
     <div class="quick-actions" style="display:flex; gap:0.5rem; flex-wrap:wrap;">
       <button type="button" class="btn-secondary" onclick="togglePreview({{ p.id }})">Preview</button>
-      <button type="button" class="btn-secondary" onclick="copyPrompt({{ p.id }})">Copy</button>
+      <!-- Updated to pass event context -->
+      <button type="button" class="btn-secondary" onclick="copyPrompt(event, {{ p.id }})">Copy</button>
       <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
       <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
 

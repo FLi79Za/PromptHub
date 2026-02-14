@@ -234,12 +234,283 @@
     </div>
 
   </form>
+
+  <!-- Descriptor Picker Modal (Edit/New Prompt) -->
+  <div id="descriptorModalBackdrop" style="position:fixed; inset:0; background:rgba(0,0,0,0.55); display:none; z-index:9998;"></div>
+
+  <div id="descriptorModal" style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); width:min(980px, calc(100vw - 2rem)); max-height:calc(100vh - 2rem); background:#111; border:1px solid #333; border-radius:10px; display:none; z-index:9999; overflow:hidden;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem; padding:0.75rem 0.9rem; border-bottom:1px solid #222; background:#0e0e0e;">
+      <div style="display:flex; flex-direction:column; gap:0.15rem;">
+        <div style="font-weight:bold;">Insert Descriptor</div>
+        <div style="opacity:0.7; font-size:0.9em;">Insert descriptor text or a token into the prompt content.</div>
+      </div>
+      <button type="button" class="btn-secondary" id="descriptorModalClose" title="Close">Close</button>
+    </div>
+
+    <div style="padding:0.9rem; display:flex; flex-direction:column; gap:0.75rem;">
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+          <label style="margin:0; font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Pack</label>
+          <select id="descriptorModalPack" style="min-width: 220px;">
+            <option value="all">(All packs)</option>
+          </select>
+        </div>
+
+        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+          <input type="text" id="descriptorModalSearch" placeholder="Search descriptors..." style="min-width:280px; flex:1;">
+          <button type="button" class="btn-secondary" id="descriptorModalSearchBtn">Search</button>
+          <span id="descriptorModalStatus" style="font-size:0.9em; opacity:0.7;"></span>
+        </div>
+      </div>
+
+      <div id="descriptorModalResults" style="border:1px solid #333; border-radius:8px; background:#0e0e0e; max-height:56vh; overflow:auto; padding:0.5rem;">
+        <div style="opacity:0.7; padding:0.75rem;">Loading descriptors…</div>
+      </div>
+
+      <div style="font-size:0.9em; opacity:0.75;">
+        Tip: use “Insert token” if you want to keep the prompt content compact and resolve it later.
+      </div>
+    </div>
+  </div>
+
 </section>
 
 <script>
 (function () {
   const btnGenerateDraft = document.getElementById("btnGenerateDraft");
 
+  // =========================
+  // Descriptor Picker (Edit/New Prompt)
+  // =========================
+  const openBtn = document.getElementById("openDescriptorPicker");
+  const modal = document.getElementById("descriptorModal");
+  const backdrop = document.getElementById("descriptorModalBackdrop");
+  const closeBtn = document.getElementById("descriptorModalClose");
+
+  const packSel = document.getElementById("descriptorModalPack");
+  const searchEl = document.getElementById("descriptorModalSearch");
+  const searchBtn = document.getElementById("descriptorModalSearchBtn");
+  const statusEl = document.getElementById("descriptorModalStatus");
+  const resultsEl = document.getElementById("descriptorModalResults");
+  const contentTa = document.getElementById("content");
+
+  let _modalTypesLoaded = false;
+  let _modalTimer = null;
+
+  function setModalStatus(msg) {
+    if (statusEl) statusEl.textContent = msg || "";
+  }
+
+  function showModal() {
+    if (modal) modal.style.display = "block";
+    if (backdrop) backdrop.style.display = "block";
+    setModalStatus("");
+    if (!_modalTypesLoaded) {
+      loadModalTypesAndPopulate().then(() => {
+        refreshModalDescriptors();
+      }).catch(() => {
+        refreshModalDescriptors();
+      });
+    } else {
+      refreshModalDescriptors();
+    }
+    if (searchEl) searchEl.focus();
+  }
+
+  function hideModal() {
+    if (modal) modal.style.display = "none";
+    if (backdrop) backdrop.style.display = "none";
+    setModalStatus("");
+  }
+
+  function insertTextAtCursor(text) {
+    if (!contentTa) return;
+    const t = String(text || "");
+    const s = contentTa.selectionStart || 0;
+    const e = contentTa.selectionEnd || 0;
+    const before = contentTa.value.slice(0, s);
+    const after = contentTa.value.slice(e);
+    contentTa.value = before + t + after;
+    const newPos = s + t.length;
+    contentTa.focus();
+    contentTa.setSelectionRange(newPos, newPos);
+  }
+
+  function buildTokenForId(id) {
+    const open = String.fromCharCode(123, 123);
+    const close = String.fromCharCode(125, 125);
+    return open + "descriptor:" + String(id || "") + close;
+  }
+
+  async function fetchJson(url) {
+    const res = await fetch(url, { method: "GET", headers: { "Accept": "application/json" } });
+    if (!res.ok) throw new Error("fetch");
+    return await res.json();
+  }
+
+  async function loadModalTypesAndPopulate() {
+    if (!packSel) return;
+    const data = await fetchJson("/api/descriptors/types");
+    const types = Array.isArray(data) ? data : [];
+    while (packSel.options.length > 1) packSel.remove(1);
+    types.forEach(t => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t;
+      packSel.appendChild(opt);
+    });
+    _modalTypesLoaded = true;
+  }
+
+  function buildModalListUrl() {
+    const q = (searchEl && searchEl.value ? String(searchEl.value) : "").trim();
+    const pack = (packSel && packSel.value ? String(packSel.value) : "all").trim();
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (pack && pack !== "all") params.set("pack_type", pack);
+    const base = "/api/descriptors/list";
+    const qs = params.toString();
+    return qs ? (base + "?" + qs) : base;
+  }
+
+  function renderModalDescriptors(items) {
+    if (!resultsEl) return;
+
+    const list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      resultsEl.innerHTML = "<div style=\"opacity:0.7; padding:0.75rem;\">No results.</div>";
+      return;
+    }
+
+    resultsEl.innerHTML = "";
+
+    list.forEach(d => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.gap = "0.75rem";
+      row.style.alignItems = "flex-start";
+      row.style.justifyContent = "space-between";
+      row.style.borderBottom = "1px solid #222";
+      row.style.padding = "0.65rem 0.6rem";
+
+      const left = document.createElement("div");
+      left.style.flex = "1";
+      left.style.minWidth = "0";
+
+      const title = document.createElement("div");
+      title.textContent = d.title || d.name || d.id || "descriptor";
+      title.style.fontWeight = "bold";
+      title.style.whiteSpace = "nowrap";
+      title.style.overflow = "hidden";
+      title.style.textOverflow = "ellipsis";
+
+      const meta = document.createElement("div");
+      meta.textContent = d.pack_type || "";
+      meta.style.opacity = "0.7";
+      meta.style.fontSize = "0.85em";
+      meta.style.whiteSpace = "nowrap";
+      meta.style.overflow = "hidden";
+      meta.style.textOverflow = "ellipsis";
+
+      const body = document.createElement("div");
+      const bodyText = String(d.rendered_text || d.text || "");
+      body.textContent = bodyText || "(No descriptor text returned by API)";
+      body.style.marginTop = "0.35rem";
+      body.style.opacity = "0.9";
+      body.style.fontSize = "0.95em";
+      body.style.whiteSpace = "pre-wrap";
+      body.style.lineHeight = "1.35";
+      body.style.maxHeight = "4.2em";
+      body.style.overflow = "hidden";
+
+      left.appendChild(title);
+      left.appendChild(meta);
+      left.appendChild(body);
+
+      const actions = document.createElement("div");
+      actions.style.display = "flex";
+      actions.style.gap = "0.5rem";
+      actions.style.flexWrap = "wrap";
+      actions.style.alignItems = "center";
+      actions.style.paddingTop = "0.05rem";
+
+      const btnText = document.createElement("button");
+      btnText.type = "button";
+      btnText.className = "btn-secondary";
+      btnText.textContent = "Insert text";
+      btnText.onclick = (e) => {
+        e.stopPropagation();
+        insertTextAtCursor(d.rendered_text || d.text || d.title || "");
+      };
+
+      const btnToken = document.createElement("button");
+      btnToken.type = "button";
+      btnToken.className = "btn-secondary";
+      btnToken.textContent = "Insert token";
+      btnToken.onclick = (e) => {
+        e.stopPropagation();
+        insertTextAtCursor(buildTokenForId(d.id));
+      };
+
+      actions.appendChild(btnText);
+      actions.appendChild(btnToken);
+
+      row.appendChild(left);
+      row.appendChild(actions);
+
+      resultsEl.appendChild(row);
+    });
+  }
+
+  async function refreshModalDescriptors() {
+    if (!resultsEl) return;
+
+    setModalStatus("Loading…");
+    resultsEl.innerHTML = "<div style=\"opacity:0.7; padding:0.75rem;\">Loading descriptors…</div>";
+
+    try {
+      const url = buildModalListUrl();
+      const data = await fetchJson(url);
+      const items = Array.isArray(data) ? data : [];
+      setModalStatus(items.length ? (items.length + " found") : "No results");
+      renderModalDescriptors(items);
+    } catch (e) {
+      setModalStatus("Failed to load");
+      resultsEl.innerHTML = "<div style=\"opacity:0.8; padding:0.75rem;\">Could not load descriptors. Check that <code>/api/descriptors/list</code> is available.</div>";
+    }
+  }
+
+  function debouncedModalRefresh() {
+    clearTimeout(_modalTimer);
+    _modalTimer = setTimeout(() => refreshModalDescriptors(), 250);
+  }
+
+  if (openBtn) openBtn.addEventListener("click", function () { showModal(); });
+  if (closeBtn) closeBtn.addEventListener("click", function () { hideModal(); });
+  if (backdrop) backdrop.addEventListener("click", function () { hideModal(); });
+
+  document.addEventListener("keydown", function (e) {
+    if (!modal || modal.style.display !== "block") return;
+    if (e.key === "Escape") hideModal();
+  });
+
+  if (packSel) packSel.addEventListener("change", function () { refreshModalDescriptors(); });
+
+  if (searchEl) {
+    searchEl.addEventListener("input", function () { debouncedModalRefresh(); });
+    searchEl.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        refreshModalDescriptors();
+      }
+    });
+  }
+
+  if (searchBtn) searchBtn.addEventListener("click", function () { refreshModalDescriptors(); });
+
+  // =========================
+  // Existing Vision Draft + Enhance + Thumbnail logic
+  // =========================
   if (btnGenerateDraft) {
     const dz = document.getElementById("visionDropZone");
     const fileInput = document.getElementById("visionFile");

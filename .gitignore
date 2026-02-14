@@ -18,3 +18,5 @@ static/uploads/
 
 #backed up app file
 app - Copy.py
+prompts.db-shm
+prompts.db-wal

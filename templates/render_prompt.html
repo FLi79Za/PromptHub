@@ -130,29 +130,12 @@
       <div style="margin-top:1rem; display:flex; flex-direction:column; gap:0.75rem;">
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; justify-content:space-between;">
           <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-            <span style="font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Scope</span>
-
-            <div style="display:flex; gap:0.5rem; align-items:center;">
-              <button type="button" class="btn-secondary" id="scopeRelevantBtn" onclick="setDescriptorScope('relevant')" title="Show quick filters (does not hide types)">
-                Relevant only
-              </button>
-              <button type="button" class="btn-secondary" id="scopeAllBtn" onclick="setDescriptorScope('all')" title="Show all types">
-                All
-              </button>
-            </div>
-
-            <span id="descriptorScopeHint" style="font-size:0.9em; opacity:0.7;"></span>
-          </div>
-
-          <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-            <label style="margin:0; font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Pack</label>
+            <span style="font-size:0.85em; opacity:0.7; text-transform:uppercase; letter-spacing:0.08em;">Pack</span>
             <select id="descriptorPackSelect" onchange="refreshDescriptors()" style="min-width: 200px;">
               <option value="all">(All packs)</option>
             </select>
           </div>
         </div>
-
-        <div id="relevantChips" style="display:flex; gap:0.5rem; flex-wrap:wrap;"></div>
 
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
           <input type="text" id="descriptorSearch" placeholder="Search descriptors..." oninput="debouncedRefreshDescriptors()" style="flex:1; min-width:240px;">
@@ -166,7 +149,7 @@
         </div>
 
         <div style="font-size:0.9em; opacity:0.75;">
-          Clicking a descriptor inserts rendered text into the editor. Tokens remain available in this panel for advanced workflows.
+          Descriptors show their actual text below the name. Use “Insert text” to paste it, or “Insert token” for advanced workflows.
         </div>
       </div>
     </details>
@@ -243,17 +226,7 @@
 </section>
 
 <script>
-/*
-  Client-side placeholder UX:
-
-  - Placeholders are [[NAME]] in the template.
-  - Descriptor tokens are Descriptor ID in stored prompt content.
-  - On this page, users can pick descriptors or custom text per placeholder.
-  - We keep "Final Prompt" editable and only overwrite it from preview if user hasn't manually edited.
-*/
-
 let _descriptorTypes = [];
-let _descriptorScope = "all"; // "all" | "relevant"
 let _userEditedFinal = false;
 
 function setUserEditedFinal(v) {
@@ -266,10 +239,6 @@ function syncFinalOverride() {
   const ta = document.getElementById("finalOutput");
   const hidden = document.getElementById("finalOverride");
   if (ta && hidden) hidden.value = ta.value || "";
-}
-
-function normalizePackName(s) {
-  return String(s || "").trim();
 }
 
 async function loadDescriptorTypes() {
@@ -306,79 +275,13 @@ function setDescriptorStatus(msg) {
   if (el) el.textContent = msg || "";
 }
 
-function setDescriptorScope(scope) {
-  _descriptorScope = (scope === "relevant") ? "relevant" : "all";
-
-  const b1 = document.getElementById("scopeRelevantBtn");
-  const b2 = document.getElementById("scopeAllBtn");
-  const hint = document.getElementById("descriptorScopeHint");
-
-  if (b1) b1.style.outline = (_descriptorScope === "relevant") ? "2px solid #00bfff" : "none";
-  if (b2) b2.style.outline = (_descriptorScope === "all") ? "2px solid #00bfff" : "none";
-  if (hint) hint.textContent = (_descriptorScope === "relevant") ? "Quick filters enabled" : "";
-
-  renderRelevantChips();
-  refreshDescriptors();
-}
-
-function getRelevantTypesFromTemplate() {
-  const template = document.getElementById("templateSource")?.value || "";
-  const placeholders = Array.from(new Set((template.match(/\[\[([^\]]+)\]\]/g) || []).map(m => m.slice(2, -2).trim().toLowerCase())));
-
-  const hits = new Set();
-  const typesLower = _descriptorTypes.map(t => String(t).toLowerCase());
-
-  placeholders.forEach(ph => {
-    typesLower.forEach((t, idx) => {
-      if (ph === t || ph.includes(t) || t.includes(ph)) hits.add(_descriptorTypes[idx]);
-    });
-  });
-
-  const fallback = ["style", "mood", "lighting", "camera", "lens", "environment", "character", "subject", "composition", "colour", "color"];
-  fallback.forEach(f => {
-    const idx = typesLower.indexOf(f);
-    if (idx !== -1) hits.add(_descriptorTypes[idx]);
-  });
-
-  return Array.from(hits);
-}
-
-function renderRelevantChips() {
-  const wrap = document.getElementById("relevantChips");
-  if (!wrap) return;
-
-  wrap.innerHTML = "";
-  if (_descriptorScope !== "relevant") return;
-
-  const relevant = getRelevantTypesFromTemplate();
-  if (!relevant.length) {
-    wrap.innerHTML = "<div style=\"opacity:0.7;\">No relevant types detected. Use search or switch to All.</div>";
-    return;
-  }
-
-  relevant.forEach(t => {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "btn-secondary";
-    chip.textContent = t;
-    chip.style.padding = "0.35rem 0.6rem";
-    chip.style.borderRadius = "999px";
-    chip.onclick = () => {
-      const sel = document.getElementById("descriptorPackSelect");
-      if (sel) sel.value = t;
-      refreshDescriptors(true);
-    };
-    wrap.appendChild(chip);
-  });
-}
-
 function buildDescriptorListUrl() {
   const q = (document.getElementById("descriptorSearch")?.value || "").trim();
   const packSel = (document.getElementById("descriptorPackSelect")?.value || "all").trim();
 
   const params = new URLSearchParams();
   if (q) params.set("q", q);
-  if (packSel && packSel !== "all") params.set("type", packSel);
+  if (packSel && packSel !== "all") params.set("pack_type", packSel);
 
   const base = "/api/descriptors/list";
   const qs = params.toString();
@@ -442,11 +345,6 @@ function clientPreviewFinal(force) {
     if (ta) ta.value = out;
     syncFinalOverride();
   }
-}
-
-async function loadDescriptorTypesOnce() {
-  if (_descriptorTypes.length) return;
-  _descriptorTypes = await loadDescriptorTypes();
 }
 
 function populateAllPlaceholderPackSelects(types) {
@@ -562,7 +460,7 @@ async function placeholderSearch(card) {
   try {
     const params = new URLSearchParams();
     params.set("q", q);
-    if (pack && pack !== "all") params.set("type", pack);
+    if (pack && pack !== "all") params.set("pack_type", pack);
 
     const url = "/api/descriptors/list?" + params.toString();
     const items = await fetchDescriptors(url);
@@ -597,14 +495,14 @@ function renderPlaceholderResults(card, items) {
     left.style.minWidth = "0";
 
     const title = document.createElement("div");
-    title.textContent = d.name || d.id || "descriptor";
+    title.textContent = d.title || d.name || d.id || "descriptor";
     title.style.fontWeight = "bold";
     title.style.whiteSpace = "nowrap";
     title.style.overflow = "hidden";
     title.style.textOverflow = "ellipsis";
 
     const meta = document.createElement("div");
-    meta.textContent = (d.type ? (d.type + " • ") : "") + (d.pack || "");
+    meta.textContent = d.pack_type || "";
     meta.style.opacity = "0.7";
     meta.style.fontSize = "0.85em";
     meta.style.whiteSpace = "nowrap";
@@ -619,7 +517,7 @@ function renderPlaceholderResults(card, items) {
     btn.className = "btn-secondary";
     btn.textContent = "Use";
     btn.onclick = () => {
-      const txt = d.rendered_text || d.text || (d.name || "");
+      const txt = d.rendered_text || d.text || d.title || d.name || "";
       setCardSelectedDescriptorText(card, txt || "");
       clientPreviewFinal();
     };
@@ -644,9 +542,19 @@ function attachFinalEditorHandlers() {
   if (btnCopy) {
     btnCopy.addEventListener("click", async function () {
       try {
-        await navigator.clipboard.writeText(ta.value || "");
+        const textToCopy = ta.value || "";
+        await navigator.clipboard.writeText(textToCopy);
         btnCopy.textContent = "Copied!";
         setTimeout(() => { btnCopy.textContent = "Copy"; }, 800);
+
+        const pId = document.getElementById("promptId")?.value;
+        if (pId) {
+          fetch("/api/prompt/" + pId + "/usage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content: textToCopy, source: "render" })
+          }).catch(() => {});
+        }
       } catch (e) {
         ta.select();
         document.execCommand("copy");
@@ -706,45 +614,61 @@ function renderDescriptorResults(items) {
   items.forEach(d => {
     const row = document.createElement("div");
     row.style.display = "flex";
-    row.style.gap = "0.5rem";
-    row.style.alignItems = "center";
+    row.style.gap = "0.75rem";
+    row.style.alignItems = "flex-start";
     row.style.justifyContent = "space-between";
     row.style.borderBottom = "1px solid #222";
-    row.style.padding = "0.55rem 0.6rem";
+    row.style.padding = "0.65rem 0.6rem";
 
     const left = document.createElement("div");
     left.style.flex = "1";
     left.style.minWidth = "0";
 
     const title = document.createElement("div");
-    title.textContent = d.name || d.id || "descriptor";
+    title.textContent = d.title || d.name || d.id || "descriptor";
     title.style.fontWeight = "bold";
     title.style.whiteSpace = "nowrap";
     title.style.overflow = "hidden";
     title.style.textOverflow = "ellipsis";
 
     const meta = document.createElement("div");
-    meta.textContent = (d.type ? (d.type + " • ") : "") + (d.pack || "");
+    meta.textContent = d.pack_type || "";
     meta.style.opacity = "0.7";
     meta.style.fontSize = "0.85em";
     meta.style.whiteSpace = "nowrap";
     meta.style.overflow = "hidden";
     meta.style.textOverflow = "ellipsis";
 
+    const body = document.createElement("div");
+    const bodyText = String(d.rendered_text || d.text || "");
+    body.textContent = bodyText || "(No descriptor text returned by API)";
+    body.style.marginTop = "0.35rem";
+    body.style.opacity = "0.9";
+    body.style.fontSize = "0.95em";
+    body.style.whiteSpace = "pre-wrap";
+    body.style.lineHeight = "1.35";
+    body.style.maxHeight = "3.8em";
+    body.style.overflow = "hidden";
+
     left.appendChild(title);
     left.appendChild(meta);
+    left.appendChild(body);
 
     const actions = document.createElement("div");
     actions.style.display = "flex";
     actions.style.gap = "0.5rem";
     actions.style.flexWrap = "wrap";
     actions.style.alignItems = "center";
+    actions.style.paddingTop = "0.05rem";
 
     const btnText = document.createElement("button");
     btnText.type = "button";
     btnText.className = "btn-secondary";
     btnText.textContent = "Insert text";
-    btnText.onclick = (e) => { e.stopPropagation(); insertDescriptorText(d.rendered_text || d.text || d.name || ""); };
+    btnText.onclick = (e) => {
+      e.stopPropagation();
+      insertDescriptorText(d.rendered_text || d.text || d.title || d.name || "");
+    };
 
     const btnToken = document.createElement("button");
     btnToken.type = "button";
@@ -754,6 +678,8 @@ function renderDescriptorResults(items) {
 
     actions.appendChild(btnText);
     actions.appendChild(btnToken);
+
+    row.appendChild(left);
     row.appendChild(actions);
 
     box.appendChild(row);
@@ -804,7 +730,9 @@ function debouncedRefreshDescriptors() {
 
 (async function initUsePrompt() {
   const types = await loadDescriptorTypes();
-  populateAllPlaceholderPackSelects(types);
+  _descriptorTypes = Array.isArray(types) ? types : [];
+
+  populateAllPlaceholderPackSelects(_descriptorTypes);
   attachPlaceholderHandlers();
 
   attachFinalEditorHandlers();
@@ -812,10 +740,7 @@ function debouncedRefreshDescriptors() {
   getPlaceholderCards().forEach(card => setCardPreview(card, ""));
   clientPreviewFinal();
 
-  await loadDescriptorTypesOnce();
   populatePackDropdown();
-  setDescriptorScope("all");
-  renderRelevantChips();
   refreshDescriptors();
 })();
 
@@ -1057,7 +982,6 @@ function frReplaceAll() {
   if (typeof setUserEditedFinal === "function") setUserEditedFinal(true);
   if (typeof syncFinalOverride === "function") syncFinalOverride();
 }
-
 </script>
 
 {% endblock %}

@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageSequence
 
-from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session, g, jsonify
 from werkzeug.utils import secure_filename
 
 
@@ -64,6 +64,8 @@ def inject_global_flags():
     # Keep nav/visibility logic out of templates as much as possible.
     # ollama_ready is a hard gate for Remix.
     return {
+        "total_pages": 1,
+        "page": 1,
         "nsfw_unlocked": nsfw_is_unlocked(),
         "ollama_ready": ollama_is_ready_cached(),
         "ollama_models": ollama_models_cached(),
@@ -141,23 +143,82 @@ def prompt_is_nsfw(conn: sqlite3.Connection, prompt_id: int) -> bool:
 # -------------------------
 # DB helpers
 # -------------------------
-def get_db(path=DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(path)
+class ClosingConnection(sqlite3.Connection):
+    """sqlite3.Connection that closes automatically when used as a context manager."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                self.commit()
+            else:
+                self.rollback()
+        finally:
+            try:
+                self.close()
+            except Exception:
+                pass
+        return False
+
+
+def get_db():
+    """DB helper: always returns a fresh connection.
+
+    - Supports `with get_db() as conn:` (auto commit/rollback + close).
+    - For non-context usage, callers should call conn.close().
+    """
+    conn = sqlite3.connect(
+        DB_PATH,
+        timeout=20,
+        check_same_thread=False,
+        factory=ClosingConnection,
+    )
     conn.row_factory = sqlite3.Row
-    # ensure FK constraints (for ON DELETE CASCADE etc.)
     try:
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
     except Exception:
         pass
     return conn
+
+@app.teardown_appcontext
+def close_db(exception=None):
+    conn = g.pop("db", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
 
 def column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
     cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return any(c["name"] == column for c in cols)
 
-def init_db() -> None:
-    conn = get_db()
 
+
+def init_db() -> None:
+    conn = sqlite3.connect(DB_PATH, timeout=20)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA journal_mode=WAL;")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA synchronous=NORMAL;")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA busy_timeout=20000;")
+    except Exception:
+        pass
+    try:
+        conn.execute("PRAGMA foreign_keys=ON;")
+    except Exception:
+        pass
     conn.execute("CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
     conn.execute("CREATE TABLE IF NOT EXISTS tools (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
 
@@ -270,9 +331,16 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_prompt_uses_prompt_id_created_at
         ON prompt_uses(prompt_id, created_at DESC)
     """)
+    # --- migration: ensure prompt_uses.source exists ---
+    if not column_exists(conn, "prompt_uses", "source"):
+        try:
+            conn.execute("ALTER TABLE prompt_uses ADD COLUMN source TEXT;")
+        except Exception:
+            pass
 
-#conn.commit()
- #   conn.close()
+    conn.commit()
+    conn.close()
+
 
 def get_categories() -> list[str]:
     with get_db() as conn:
@@ -2938,5 +3006,8 @@ def prompt_history(prompt_id):
 
 # --- MAIN BLOCK MUST BE LAST ---
 if __name__ == "__main__":
-    init_db()
-    app.run(debug=True)
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True
+    )

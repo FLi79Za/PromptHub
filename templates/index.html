@@ -210,15 +210,19 @@ function togglePreview(id){
   if(el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
-function copyPrompt(id){
+function copyPrompt(event, id){
   const el = document.querySelector(`#preview-${id} pre`);
   if(el) {
       const text = el.innerText;
       navigator.clipboard.writeText(text);
-      const btn = event.target;
-      const originalText = btn.textContent;
-      btn.textContent = "Copied!";
-      setTimeout(() => btn.textContent = originalText, 1500);
+      
+      // Fixed: explicitly use the event target for UI feedback
+      const btn = event ? event.target : null;
+      if (btn) {
+        const originalText = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(() => btn.textContent = originalText, 1500);
+      }
 
       fetch("/api/prompt/" + id + "/usage", {
         method: "POST",
