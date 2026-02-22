@@ -2,9 +2,27 @@
 
 A local, self-hosted web application for storing, organising, refining, and reusing AI prompts.
 
-Prompt Hub is designed for **real-world AI workflows**, not toy examples. It supports full-length prompts, instruction-based editing, iterative refinement, visual context, and structured organisation — all running **entirely locally**.
+Prompt Hub is built for real-world AI workflows — not toy examples. It supports full-length prompts, instruction-based editing, iterative refinement, visual context, and structured organisation.
+
+Everything runs entirely locally.
 
 No cloud services required.
+
+---
+
+## Why Prompt Hub?
+
+As prompt libraries grow, they become messy, duplicated, and hard to search.
+
+Prompt Hub helps you:
+
+- Organise complex prompts
+- Maintain structured experimentation
+- Iterate safely with variants
+- Keep visual and contextual references
+- Run optional local LLM refinement via Ollama
+
+It is designed for serious AI users managing real prompt systems.
 
 ---
 
@@ -32,6 +50,7 @@ python app.py
 ```
 
 Open in your browser:
+
 http://127.0.0.1:5000
 
 ---
@@ -50,23 +69,29 @@ http://127.0.0.1:5000
 ## 🚀 Key Features
 
 ### Core Prompt Management
+
 - Create, edit, delete, duplicate prompts
 - Full-text search across title, content, notes, category, tool, and tags
 - Free-form Categories and Tools
 - Notes field for context and usage tips
 
 ### Prompt Variants
+
 - Linked variants for experimentation
 - Variants hidden in browsing, visible in search and family views
+- Clean parent-child relationships
 
 ### Groups
+
 - Optional single-group assignment per prompt
 - Bulk group assignment
 - Group-based filtering
 
 ### Tags & Saved Views
+
 - Free-form tagging (many-to-many)
 - Saved sidebar views using query strings
+- Fast filtering without complex setup
 
 ---
 
@@ -74,24 +99,29 @@ http://127.0.0.1:5000
 
 - Image-to-prompt drafting using local vision models
 - Auto-thumbnail assignment
-- Custom instructions per draft
+- Custom drafting instructions per image
+- Fully local via Ollama-supported models
 
 ---
 
 ## ✏️ Using a Prompt
 
-- Use screen supports editing and saving
+The Use screen supports:
+
+- Editing before execution
+- Saving refined versions
 - Placeholder replacement
 - Local LLM refinement
-- Variant creation from Use view
+- Creating new variants directly from the Use view
 
 ---
 
 ## ♾ Infinite Scroll
 
 - IntersectionObserver-based loading
-- Pagination disabled automatically
+- Automatic pagination handling
 - Organise mode preserved across loads
+- Smooth browsing of large libraries
 
 ---
 
@@ -100,6 +130,7 @@ http://127.0.0.1:5000
 - CSS variable-based theme system
 - No JS frameworks
 - Theme persistence via localStorage
+- Easily extendable
 
 ---
 
@@ -109,7 +140,13 @@ http://127.0.0.1:5000
 - Flask
 - Pillow
 - requests
-- Ollama (optional)
+- Ollama (optional for AI-assisted features)
+
+Install dependencies with:
+
+```bash
+pip install -r requirements.txt
+```
 
 ---
 
@@ -127,6 +164,34 @@ http://127.0.0.1:5000
 
 ---
 
-## 🔐 Security Notes
+## 🔐 Security & Privacy
 
-This app is intended for local use only.
+Prompt Hub is intended for local use.
+
+- No telemetry
+- No external API calls unless explicitly configured
+- No background cloud dependencies
+- All data stored locally
+
+If exposing externally, proper security configuration is your responsibility.
+
+---
+
+## Contributing
+
+Contributions, improvements, and feature suggestions are welcome.
+
+To contribute:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Open a Pull Request
+
+Clear, focused improvements are preferred over large architectural rewrites.
+
+---
+
+## License
+
+This project is licensed under the MIT License — see the LICENSE file for details.
