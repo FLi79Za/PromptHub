@@ -13,9 +13,9 @@ import base64
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageSequence
-
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session, g, jsonify
 from werkzeug.utils import secure_filename
+from flask_cors import CORS
 
 
 # -------------------------
@@ -57,6 +57,7 @@ def inject_descriptors(text_value: str) -> str:
     return DESCRIPTOR_TOKEN_RE.sub(repl, text_value)
 
 app = Flask(__name__)
+CORS(app)
 app.secret_key = "change-me-to-something-random"
 
 @app.context_processor
@@ -3003,6 +3004,38 @@ def prompt_history(prompt_id):
         uses=rows,
     )
 
+# -------------------------
+# Browser Extension API Endpoints
+# -------------------------
+@app.route("/api/ext/prompts", methods=["GET"])
+def ext_get_prompts():
+    """JSON endpoint for the browser extension to fetch the latest prompts"""
+    with get_db() as conn:
+        # Fetching the 100 most recently updated prompts
+        rows = conn.execute(
+            "SELECT id, title, content FROM prompts ORDER BY updated_at DESC LIMIT 100"
+        ).fetchall()
+        return jsonify([{"id": r["id"], "title": r["title"], "content": r["content"]} for r in rows])
+
+@app.route("/api/ext/prompt", methods=["POST"])
+def ext_save_prompt():
+    """JSON endpoint for the browser extension to save a highlighted prompt"""
+    data = request.get_json(silent=True) or {}
+    title = data.get("title", f"Web Snippet - {datetime.now().strftime('%Y-%m-%d')}")
+    content = data.get("content", "").strip()
+    
+    if not content:
+        return jsonify({"error": "No content provided"}), 400
+        
+    now = datetime.utcnow().isoformat()
+    with get_db() as conn:
+        conn.execute(
+            """INSERT INTO prompts (title, category, tool, prompt_type, content, created_at, updated_at) 
+               VALUES (?, 'Other', 'Generic', 'Instruction', ?, ?, ?)""",
+            (title, content, now, now)
+        )
+        conn.commit()
+    return jsonify({"success": True})
 
 # --- MAIN BLOCK MUST BE LAST ---
 if __name__ == "__main__":
