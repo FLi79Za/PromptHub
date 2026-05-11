@@ -945,6 +945,181 @@ def export_selected():
     return send_file(zip_buffer, mimetype="application/zip", as_attachment=True, download_name=f"prompts_export_{ts}.zip")
 
 
+# -------------------------
+# PromptHub JSON import/export bridge (iOS/Desktop)
+# -------------------------
+PROMPTHUB_JSON_FORMAT = "PromptHubExport"
+PROMPTHUB_JSON_VERSION = 1
+
+
+def _normalise_json_list(values):
+    seen = set()
+    out = []
+    for value in values or []:
+        cleaned = str(value or "").strip()
+        key = cleaned.lower()
+        if cleaned and key not in seen:
+            seen.add(key)
+            out.append(cleaned)
+    return out
+
+
+def build_prompthub_json_export(conn: sqlite3.Connection) -> dict:
+    """Builds the shared JSON format used by PromptHub iOS and desktop."""
+    categories = [r["name"] for r in conn.execute("SELECT name FROM categories ORDER BY name COLLATE NOCASE").fetchall()]
+    tools = [r["name"] for r in conn.execute("SELECT name FROM tools ORDER BY name COLLATE NOCASE").fetchall()]
+
+    prompt_rows = conn.execute("""
+        SELECT id, title, category, tool, prompt_type, content, notes, created_at, updated_at
+        FROM prompts
+        ORDER BY updated_at DESC, title COLLATE NOCASE ASC
+    """).fetchall()
+
+    prompts = []
+    for row in prompt_rows:
+        prompts.append({
+            "title": row["title"] or "",
+            "category": row["category"] or "Other",
+            "tool": row["tool"] or "Generic",
+            "prompt_type": row["prompt_type"] or "Generation",
+            "content": row["content"] or "",
+            "notes": row["notes"] or "",
+            "tags": get_tags_for_prompt(conn, row["id"]),
+            "created_at": row["created_at"] or "",
+            "updated_at": row["updated_at"] or "",
+        })
+
+    return {
+        "format": PROMPTHUB_JSON_FORMAT,
+        "version": PROMPTHUB_JSON_VERSION,
+        "exported_at": datetime.utcnow().isoformat(),
+        "categories": _normalise_json_list(categories),
+        "tools": _normalise_json_list(tools),
+        "prompts": prompts,
+    }
+
+
+def import_prompthub_json_snapshot(conn: sqlite3.Connection, snapshot: dict) -> dict:
+    """Imports shared PromptHub JSON. Duplicate handling: skip same title + content."""
+    if not isinstance(snapshot, dict):
+        raise ValueError("Invalid JSON import: expected a JSON object.")
+
+    if snapshot.get("format") != PROMPTHUB_JSON_FORMAT:
+        raise ValueError("Unsupported JSON import format.")
+
+    if int(snapshot.get("version", 0)) != PROMPTHUB_JSON_VERSION:
+        raise ValueError(f"Unsupported PromptHub export version: {snapshot.get('version')}")
+
+    imported = 0
+    skipped = 0
+    categories_added = 0
+    tools_added = 0
+
+    categories = _normalise_json_list(snapshot.get("categories", []))
+    tools = _normalise_json_list(snapshot.get("tools", []))
+    prompts = snapshot.get("prompts", []) or []
+
+    for category in categories:
+        before = conn.total_changes
+        conn.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category,))
+        if conn.total_changes > before:
+            categories_added += 1
+
+    for tool in tools:
+        before = conn.total_changes
+        conn.execute("INSERT OR IGNORE INTO tools (name) VALUES (?)", (tool,))
+        if conn.total_changes > before:
+            tools_added += 1
+
+    for item in prompts:
+        if not isinstance(item, dict):
+            skipped += 1
+            continue
+
+        title = str(item.get("title") or "Imported Prompt").strip() or "Imported Prompt"
+        category = str(item.get("category") or "Other").strip() or "Other"
+        tool = str(item.get("tool") or "Generic").strip() or "Generic"
+        prompt_type = str(item.get("prompt_type") or "Generation").strip() or "Generation"
+        content = str(item.get("content") or "")
+        notes = str(item.get("notes") or "")
+        created_at = str(item.get("created_at") or "").strip() or datetime.utcnow().isoformat()
+        updated_at = str(item.get("updated_at") or "").strip() or datetime.utcnow().isoformat()
+        tags = _normalise_json_list(item.get("tags", []))
+
+        duplicate = conn.execute(
+            "SELECT id FROM prompts WHERE title = ? AND content = ? LIMIT 1",
+            (title, content),
+        ).fetchone()
+        if duplicate:
+            skipped += 1
+            continue
+
+        conn.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category,))
+        conn.execute("INSERT OR IGNORE INTO tools (name) VALUES (?)", (tool,))
+
+        cur = conn.execute(
+            """
+            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
+            """,
+            (title, category, tool, prompt_type, content, notes or None, created_at, updated_at),
+        )
+        new_prompt_id = cur.lastrowid
+        save_tags(conn, new_prompt_id, ", ".join(tags))
+        imported += 1
+
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "categories_added": categories_added,
+        "tools_added": tools_added,
+    }
+
+
+@app.route("/json-sync", methods=["GET", "POST"])
+def json_sync_page():
+    if request.method == "GET":
+        return render_template("json_sync.html")
+
+    f = request.files.get("json_file")
+    if not f:
+        flash("Choose a PromptHub JSON file first.")
+        return redirect(url_for("json_sync_page"))
+
+    try:
+        data = json.load(f.stream)
+    except Exception as e:
+        flash(f"Could not read JSON file: {e}")
+        return redirect(url_for("json_sync_page"))
+
+    try:
+        with get_db() as conn:
+            result = import_prompthub_json_snapshot(conn, data)
+        flash(
+            f"JSON import complete. Imported {result['imported']} prompt(s), "
+            f"skipped {result['skipped']} duplicate/invalid item(s). "
+            f"Added {result['categories_added']} categor(ies) and {result['tools_added']} tool(s)."
+        )
+    except Exception as e:
+        flash(f"JSON import failed: {e}")
+
+    return redirect(url_for("json_sync_page"))
+
+
+@app.route("/export/json", methods=["GET"])
+def export_json():
+    with get_db() as conn:
+        snapshot = build_prompthub_json_export(conn)
+
+    payload = json.dumps(snapshot, indent=2, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return send_file(
+        io.BytesIO(payload),
+        mimetype="application/json",
+        as_attachment=True,
+        download_name=f"prompthub_export_{ts}.json",
+    )
+
 @app.route("/import/db", methods=["GET", "POST"])
 def import_db_page():
     if request.method == "GET":

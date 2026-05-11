@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="page" style="max-width: 850px; margin: 0 auto;">
+  <div class="page-header" style="margin-bottom: 2rem; display:flex; justify-content:space-between; align-items:center; gap:1rem;">
+    <div>
+      <h2 style="margin-bottom:0.25rem;">PromptHub JSON Sync</h2>
+      <p style="margin:0; opacity:0.75;">Import or export the shared JSON format used by the iOS and desktop versions.</p>
+    </div>
+    <a class="btn-secondary" href="{{ url_for('index') }}">Back to Library</a>
+  </div>
+
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:1.25rem;">
+    <div style="background:#1a1a1a; padding:1.5rem; border-radius:10px; border:1px solid #333;">
+      <h3 style="margin-top:0;">Export JSON</h3>
+      <p style="color:#ccc; line-height:1.5;">
+        Export all prompts, categories, tools, and tags to a portable <code>prompthub_export.json</code> file.
+        This file can be imported into the iOS version.
+      </p>
+      <a class="btn-primary" href="{{ url_for('export_json') }}">Export PromptHub JSON</a>
+    </div>
+
+    <div style="background:#1a1a1a; padding:1.5rem; border-radius:10px; border:1px solid #333;">
+      <h3 style="margin-top:0;">Import JSON</h3>
+      <p style="color:#ccc; line-height:1.5;">
+        Import a JSON export from iOS or desktop. Existing prompts with the same title and content are skipped.
+      </p>
+
+      <form method="post" enctype="multipart/form-data" action="{{ url_for('json_sync_page') }}">
+        <input type="file" name="json_file" accept=".json,application/json" required
+               style="margin-bottom:1rem; padding:0.85rem; border:2px dashed #444; border-radius:6px; width:100%; box-sizing:border-box;">
+        <button type="submit" class="btn-primary">Import PromptHub JSON</button>
+      </form>
+    </div>
+  </div>
+
+  <div style="margin-top:1.5rem; background:#111; padding:1rem 1.25rem; border-radius:8px; border:1px solid #2a2a2a; color:#bbb;">
+    <strong>Format:</strong> PromptHubExport v1<br>
+    <strong>Duplicate rule:</strong> same title + same content = skipped<br>
+    <strong>Included:</strong> prompts, categories, tools, tags, notes, prompt type, created/updated timestamps<br>
+    <strong>Not included yet:</strong> thumbnails, groups, descriptor packs, usage history
+  </div>
+</section>
+{% endblock %}

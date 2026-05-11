@@ -15,6 +15,7 @@
         <a href="{{ url_for('index') }}">All Prompts</a>
         <a href="{{ url_for('new_prompt') }}">New Prompt</a>
         <a href="{{ url_for('import_prompt') }}">Import</a>
+        <a href="{{ url_for('json_sync_page') }}">JSON Sync</a>
         <a href="{{ url_for('manage') }}">Manage</a>
 
         {% if ollama_ready %}
