@@ -32,7 +32,7 @@ It is designed for serious AI users managing real prompt systems.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/<your-username>/<repo-name>.git
+git clone https://github.com/Fli79Za/PromptHub.git
 cd <repo-name>
 
 # 2. Create a virtual environment
