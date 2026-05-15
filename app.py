@@ -3182,35 +3182,214 @@ def prompt_history(prompt_id):
 # -------------------------
 # Browser Extension API Endpoints
 # -------------------------
+
+def _ext_clean_text(value, default: str = "", max_len: int | None = None) -> str:
+    """Small helper for browser-extension JSON payloads."""
+    cleaned = str(value or default).strip()
+    if max_len and len(cleaned) > max_len:
+        cleaned = cleaned[:max_len].rstrip()
+    return cleaned
+
+def _ext_clean_tags(value) -> str:
+    """Accept tags as either a comma-separated string or a JSON array."""
+    if isinstance(value, list):
+        raw_tags = [str(v or "").strip() for v in value]
+    else:
+        raw_tags = [t.strip() for t in str(value or "").split(",")]
+
+    seen = set()
+    out = []
+    for tag in raw_tags:
+        if not tag:
+            continue
+        key = tag.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(tag)
+
+    return ", ".join(out)
+
+def _ext_append_source_notes(notes: str, data: dict) -> str:
+    """Preserve capture/source context from the extension without adding new DB columns."""
+    source_bits = []
+
+    source_title = _ext_clean_text(data.get("source_title"), max_len=500)
+    source_url = _ext_clean_text(data.get("source_url"), max_len=1000)
+    captured_at = _ext_clean_text(data.get("captured_at"), max_len=100)
+
+    if source_title:
+        source_bits.append(f"Source title: {source_title}")
+    if source_url:
+        source_bits.append(f"Source URL: {source_url}")
+    if captured_at:
+        source_bits.append(f"Captured at: {captured_at}")
+
+    source_block = "\n".join(source_bits).strip()
+    if not source_block:
+        return notes
+
+    if notes:
+        return f"{notes}\n\n--- Browser Capture ---\n{source_block}"
+    return f"--- Browser Capture ---\n{source_block}"
+
+@app.route("/api/ext/categories", methods=["GET"])
+def ext_get_categories():
+    """JSON endpoint for extension datalist suggestions."""
+    return jsonify([{"name": name} for name in get_categories()])
+
+@app.route("/api/ext/tools", methods=["GET"])
+def ext_get_tools():
+    """JSON endpoint for extension datalist suggestions."""
+    return jsonify([{"name": name} for name in get_tools()])
+
+@app.route("/api/ext/groups", methods=["GET"])
+def ext_get_groups():
+    """JSON endpoint for extension datalist suggestions."""
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, description FROM prompt_groups ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+        return jsonify([dict(r) for r in rows])
+
 @app.route("/api/ext/prompts", methods=["GET"])
 def ext_get_prompts():
-    """JSON endpoint for the browser extension to fetch the latest prompts"""
+    """JSON endpoint for the browser extension to fetch prompts with metadata."""
+    try:
+        limit = max(1, min(500, int(request.args.get("limit", 100))))
+    except Exception:
+        limit = 100
+
+    q = _ext_clean_text(request.args.get("q"), max_len=200)
+
     with get_db() as conn:
-        # Fetching the 100 most recently updated prompts
+        params = []
+        where = " WHERE 1=1"
+
+        if q:
+            like = f"%{q.lower()}%"
+            where += """
+                AND (
+                    LOWER(p.title) LIKE ?
+                    OR LOWER(p.content) LIKE ?
+                    OR LOWER(COALESCE(p.notes, '')) LIKE ?
+                    OR LOWER(p.category) LIKE ?
+                    OR LOWER(p.tool) LIKE ?
+                    OR LOWER(p.prompt_type) LIKE ?
+                    OR EXISTS (
+                        SELECT 1
+                        FROM prompt_tags pt
+                        JOIN tags t ON t.id = pt.tag_id
+                        WHERE pt.prompt_id = p.id
+                          AND LOWER(t.name) LIKE ?
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM prompt_groups pg
+                        WHERE pg.id = p.group_id
+                          AND LOWER(pg.name) LIKE ?
+                    )
+                )
+            """
+            params.extend([like, like, like, like, like, like, like, like])
+
+        where, params = apply_nsfw_filter(where, params)
+
         rows = conn.execute(
-            "SELECT id, title, content FROM prompts ORDER BY updated_at DESC LIMIT 100"
+            f"""
+            SELECT p.id, p.title, p.content, p.category, p.tool, p.prompt_type,
+                   p.notes, p.group_id, pg.name AS group_name, p.updated_at
+            FROM prompts p
+            LEFT JOIN prompt_groups pg ON pg.id = p.group_id
+            {where}
+            ORDER BY p.updated_at DESC
+            LIMIT ?
+            """,
+            params + [limit],
         ).fetchall()
-        return jsonify([{"id": r["id"], "title": r["title"], "content": r["content"]} for r in rows])
+
+        prompts = [dict(r) for r in rows]
+        tag_map = get_tags_for_prompts(conn, [p["id"] for p in prompts])
+
+        for item in prompts:
+            item["tags"] = tag_map.get(item["id"], [])
+            item["group"] = item.get("group_name")
+
+        return jsonify(prompts)
 
 @app.route("/api/ext/prompt", methods=["POST"])
 def ext_save_prompt():
-    """JSON endpoint for the browser extension to save a highlighted prompt"""
+    """
+    JSON endpoint for the browser extension to save a highlighted prompt.
+
+    Accepts the v1.1 extension payload:
+    title/name, content, category, tool, prompt_type/type, group, tags, notes,
+    source_url, source_title, captured_at.
+    """
     data = request.get_json(silent=True) or {}
-    title = data.get("title", f"Web Snippet - {datetime.now().strftime('%Y-%m-%d')}")
-    content = data.get("content", "").strip()
-    
+
+    title = _ext_clean_text(
+        data.get("title") or data.get("name"),
+        default=f"Web Snippet - {datetime.now().strftime('%Y-%m-%d')}",
+        max_len=300,
+    )
+    content = _ext_clean_text(data.get("content"))
+
     if not content:
-        return jsonify({"error": "No content provided"}), 400
-        
+        return jsonify({"success": False, "error": "No content provided"}), 400
+
+    category = _ext_clean_text(data.get("category"), default="Other", max_len=120) or "Other"
+    tool = _ext_clean_text(data.get("tool"), default="Generic", max_len=120) or "Generic"
+    prompt_type = _ext_clean_text(data.get("prompt_type") or data.get("type"), default="Instruction", max_len=120) or "Instruction"
+    notes = _ext_clean_text(data.get("notes"), max_len=10000)
+    notes = _ext_append_source_notes(notes, data)
+    tags_str = _ext_clean_tags(data.get("tags"))
+
+    group_name = _ext_clean_text(data.get("group") or data.get("group_name") or data.get("project"), max_len=200)
+
     now = datetime.utcnow().isoformat()
     with get_db() as conn:
-        conn.execute(
-            """INSERT INTO prompts (title, category, tool, prompt_type, content, created_at, updated_at) 
-               VALUES (?, 'Other', 'Generic', 'Instruction', ?, ?, ?)""",
-            (title, content, now, now)
+        conn.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category,))
+        conn.execute("INSERT OR IGNORE INTO tools (name) VALUES (?)", (tool,))
+
+        group_id = None
+        if group_name:
+            try:
+                conn.execute(
+                    "INSERT INTO prompt_groups (name, description, created_at) VALUES (?, NULL, ?)",
+                    (group_name, now),
+                )
+            except sqlite3.IntegrityError:
+                pass
+            row = conn.execute("SELECT id FROM prompt_groups WHERE name = ?", (group_name,)).fetchone()
+            group_id = int(row["id"]) if row else None
+
+        cur = conn.execute(
+            """
+            INSERT INTO prompts
+                (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
+            VALUES
+                (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+            """,
+            (title, category, tool, prompt_type, content, notes or None, group_id, now, now),
         )
+        prompt_id = cur.lastrowid
+
+        if tags_str:
+            save_tags(conn, prompt_id, tags_str)
+
         conn.commit()
-    return jsonify({"success": True})
+
+    return jsonify({
+        "success": True,
+        "id": prompt_id,
+        "title": title,
+        "category": category,
+        "tool": tool,
+        "prompt_type": prompt_type,
+        "group": group_name,
+        "tags": [t.strip() for t in tags_str.split(",") if t.strip()],
+    })
 
 # --- MAIN BLOCK MUST BE LAST ---
 if __name__ == "__main__":
