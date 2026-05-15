@@ -3392,9 +3392,30 @@ def ext_save_prompt():
     })
 
 # --- MAIN BLOCK MUST BE LAST ---
+import os
+import socket
+
+PREFERRED_PORTS = [8080, 5000, 5173, 3000]
+
+def port_is_free(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.2)
+        return s.connect_ex(("127.0.0.1", port)) != 0
+
+def find_free_port():
+    for port in PREFERRED_PORTS:
+        if port_is_free(port):
+            return port
+    return 8080
+
 if __name__ == "__main__":
+    port = int(os.environ.get("PROMPTHUB_PORT", find_free_port()))
+
+    print(f"Starting PromptHub on http://127.0.0.1:{port}")
+
     app.run(
-        host="0.0.0.0",
-        port=5000,
-        debug=True
+        host="127.0.0.1",
+        port=port,
+        debug=False,
+        use_reloader=False
     )
