@@ -63,13 +63,48 @@
     </div>
     {% endif %}
 
-    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; margin-bottom:1rem;">
-      <h2 style="margin:0;">Library</h2>
-      <div style="display:flex; gap:0.5rem;">
-         <a class="btn-secondary" href="{{ url_for('new_prompt') }}">New Prompt</a>
-         <a class="btn-secondary" href="{{ url_for('import_prompt') }}">Import</a>
-         <a class="btn-secondary" href="{{ url_for('import_db_page') }}">Merge DB</a>
-         <button type="button" class="btn-secondary" id="toggleOrganise">Select / Export</button>
+    <div class="library-hero">
+      <div>
+        <h1>Prompt Library</h1>
+        <p>{{ total_items }} matching prompts. Pins stay at the top across every sort mode.</p>
+      </div>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
+        <div class="view-switcher" aria-label="Library view">
+          <button type="button" id="gridViewButton" title="Grid view">▦</button>
+          <button type="button" id="compactViewButton" title="Compact view">☰</button>
+        </div>
+        <a class="btn-primary" href="{{ url_for('new_prompt') }}">+ New Prompt</a>
+        <a class="btn-secondary" href="{{ url_for('import_prompt') }}">Import</a>
+        <button type="button" class="btn-secondary" id="toggleOrganise">Organise</button>
+      </div>
+    </div>
+
+    <div class="stats-strip">
+      <div class="stat-card"><strong>{{ library_stats.total }}</strong><span>Total prompts</span></div>
+      <div class="stat-card"><strong>{{ library_stats.pinned }}</strong><span>Pinned</span></div>
+      <div class="stat-card"><strong>{{ library_stats.used }}</strong><span>Used at least once</span></div>
+      <div class="stat-card"><strong>{{ library_stats.categories }}</strong><span>Categories</span></div>
+    </div>
+
+    <div class="random-category-panel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1rem; border:1px solid #2b2b2b; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+      <div>
+        <strong>Random prompt by category</strong>
+        <div style="opacity:0.68; font-size:0.88em; margin-top:0.15rem;">This ignores the current search/filter view and picks from the selected category only.</div>
+      </div>
+
+      <form method="get" action="{{ url_for('random_prompt_redirect') }}" style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; margin:0;">
+        <select name="category" aria-label="Random prompt category">
+          {% for c in categories %}
+            <option value="{{ c }}" {% if (active_category == c) or (active_category == 'all' and loop.first) %}selected{% endif %}>Random {{ c }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Open Random</button>
+      </form>
+
+      <div class="random-category-buttons" style="display:flex; gap:0.4rem; flex-wrap:wrap; width:100%;">
+        {% for c in categories %}
+          <a class="btn-secondary" href="{{ url_for('random_prompt_redirect', category=c) }}" style="font-size:0.9em; text-decoration:none;">Random {{ c }}</a>
+        {% endfor %}
       </div>
     </div>
 
@@ -110,13 +145,19 @@
           {% endfor %}
         </select>
 
+        <select name="sort_by" title="Library order" onchange="this.form.submit();">
+          <option value="updated_at" {% if sort_by == "updated_at" %}selected{% endif %}>Original order: latest capture / edit / thumbnail update</option>
+          <option value="recently_used" {% if sort_by == "recently_used" %}selected{% endif %}>Most recently used</option>
+          <option value="frequently_used" {% if sort_by == "frequently_used" %}selected{% endif %}>Most frequently used</option>
+        </select>
+        <input type="hidden" name="sort_dir" value="desc">
+
+        <label class="pin-filter"><input type="checkbox" name="pinned" value="1" {% if pinned_only %}checked{% endif %}> Pinned only</label>
         <button type="submit">Filter</button>
-        {% if q or q_not or active_category!='all' or active_tool!='all' or active_group!='all' or active_tag!='all' %}
+        {% if q or q_not or active_category!='all' or active_tool!='all' or active_group!='all' or active_tag!='all' or pinned_only or sort_by != 'updated_at' or sort_dir != 'desc' %}
           <a href="{{ url_for('index') }}" style="align-self:center; font-size:0.9em; margin-left:0.5rem;">Clear</a>
         {% endif %}
       </div>
-      <input type="hidden" name="sort_by" value="{{ sort_by|default('updated_at') }}">
-      <input type="hidden" name="sort_dir" value="{{ sort_dir|default('desc') }}">
     </form>
 
     <div id="organisePanel" style="display:none; margin-bottom:1.5rem; padding:1rem; border:1px solid #333; border-radius:10px;">
@@ -202,6 +243,8 @@
   .thumb-placeholder { width: 100%; height: 160px; background: #222; display: flex; align-items: center; justify-content: center; font-size: 3rem; color: #444; }
   .card-thumb-area { position: relative; height: 160px; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; }
   .card-thumb-area img { width: 100%; height: 100%; object-fit: contain; }
+  .usage-pill { background:#263238; color:#cfd8dc; font-size:0.72em; padding:2px 7px; border-radius:999px; white-space:nowrap; }
+  .usage-muted { opacity:0.62; font-size:0.78em; white-space:nowrap; }
 </style>
 
 <script>
@@ -210,11 +253,39 @@ function togglePreview(id){
   if(el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
+function formatUsageTimestamps(root=document) {
+  root.querySelectorAll(".usage-ts").forEach(el => {
+    if (el.dataset.formatted === "1") return;
+    let raw = el.getAttribute("data-ts");
+    if (!raw) return;
+
+    // PromptHub stores UTC-ish ISO strings without a timezone marker.
+    if (!raw.endsWith("Z") && !raw.includes("+")) raw = raw + "Z";
+
+    const d = new Date(raw);
+    if (isNaN(d)) {
+      el.textContent = el.getAttribute("data-ts");
+      el.dataset.formatted = "1";
+      return;
+    }
+
+    el.textContent = d.toLocaleString(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+    el.dataset.formatted = "1";
+  });
+}
+
 function copyPrompt(event, id){
   const el = document.querySelector(`#preview-${id} pre`);
   if(el) {
       const text = el.innerText;
       navigator.clipboard.writeText(text);
+      showToast("Prompt copied");
       
       // Fixed: explicitly use the event target for UI feedback
       const btn = event ? event.target : null;
@@ -234,7 +305,50 @@ function copyPrompt(event, id){
   }
 }
 
+async function togglePin(event, id) {
+  event.stopPropagation();
+  const button = event.currentTarget;
+  const card = button.closest('.prompt-card');
+  try {
+    const response = await fetch(`/api/prompt/${id}/pin`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Pin update failed');
+    button.classList.toggle('pinned', data.pinned);
+    card.classList.toggle('is-pinned', data.pinned);
+    button.title = data.pinned ? 'Unpin prompt' : 'Pin prompt';
+    showToast(data.pinned ? 'Prompt pinned' : 'Prompt unpinned');
+    if (data.pinned) {
+      const list = document.getElementById('promptList');
+      if (list && card) list.prepend(card);
+    }
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
+    const promptListView = document.getElementById('promptList');
+    const gridButton = document.getElementById('gridViewButton');
+    const compactButton = document.getElementById('compactViewButton');
+    const savedView = localStorage.getItem('prompthub-library-view') || 'grid';
+    function applyLibraryView(mode) {
+      if (!promptListView) return;
+      promptListView.classList.toggle('compact', mode === 'compact');
+      gridButton?.classList.toggle('active', mode === 'grid');
+      compactButton?.classList.toggle('active', mode === 'compact');
+      localStorage.setItem('prompthub-library-view', mode);
+    }
+    gridButton?.addEventListener('click', () => applyLibraryView('grid'));
+    compactButton?.addEventListener('click', () => applyLibraryView('compact'));
+    applyLibraryView(savedView);
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === '/' && !['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName)) {
+        event.preventDefault();
+        document.querySelector('input[name="q"]')?.focus();
+      }
+    });
+
     const toggle = document.getElementById('toggleOrganise');
     const panel = document.getElementById('organisePanel');
     const btnAll = document.getElementById('selectAll');
@@ -378,6 +492,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (html) {
             promptList.insertAdjacentHTML('beforeend', html);
             bindDropZones(promptList);
+            formatUsageTimestamps(promptList);
 
             // KEY FIX: when new cards are appended, ensure organise mode applies to them too
             applyOrganiseMode();
@@ -408,6 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Ensure initial state is consistent (especially if server rendered organise panel visible/hidden)
     applyOrganiseMode();
+    formatUsageTimestamps(document);
 });
 </script>
 

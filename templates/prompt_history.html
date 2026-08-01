@@ -7,7 +7,10 @@
     <div>
       <h2 style="margin:0;">Prompt History</h2>
       <h3 style="margin:0; opacity: 0.6; font-weight: normal;">{{ prompt.title }}</h3>
-      <div style="margin-top:0.25rem; font-size:0.9em; opacity:0.7;">Saved snapshots appear when you copy from the Use page.</div>
+      <div style="margin-top:0.25rem; font-size:0.9em; opacity:0.7;">Usage snapshots are saved when you copy, render, or access a prompt through the helper endpoints.</div>
+      {% if uses %}
+        <div style="margin-top:0.35rem; font-size:0.85em; opacity:0.65;">{{ uses|length }} recorded usage entr{{ 'y' if uses|length == 1 else 'ies' }}</div>
+      {% endif %}
     </div>
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
       <a class="btn-secondary" href="{{ url_for('render_prompt', prompt_id=prompt.id) }}" style="text-decoration:none;">Back to Use</a>
@@ -17,7 +20,7 @@
 
   {% if not uses or uses|length == 0 %}
     <div style="background:var(--surface-2); border:1px solid var(--border); border-radius:8px; padding:1rem;">
-      No history yet. Open the prompt, tweak it, and click Copy to Clipboard.
+      No history yet. Open the prompt, use it, copy it, or access it through the raw/helper endpoints to start building usage history.
     </div>
   {% else %}
 
@@ -25,7 +28,10 @@
       <div style="border:1px solid var(--border); border-radius:8px; padding:1rem; background:var(--surface-2); margin-bottom:1rem;">
         <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; align-items:center; margin-bottom:0.75rem;">
           <div style="font-size:0.9em; opacity:0.75;">
-            <span class="usage-ts" data-ts="{{ u['created_at'] }}"></span>{% if u['source'] %} · {{ u['source'] }}{% endif %}
+            <span class="usage-ts" data-ts="{{ u['created_at'] }}"></span>
+            {% if u['source'] %}
+              · <span style="background:#263238; color:#cfd8dc; padding:2px 7px; border-radius:999px; font-size:0.85em;">{{ u['source'] }}</span>
+            {% endif %}
           </div>
           <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
             <button type="button" class="btn-secondary" onclick="copyHistoryText('h{{ u['id'] }}')">Copy</button>

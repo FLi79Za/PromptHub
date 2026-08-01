@@ -13,8 +13,13 @@
     <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
       <a class="btn-secondary" href="{{ url_for('prompt_history', prompt_id=prompt.id) }}">History</a>
       <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=prompt.id) }}">Edit</a>
-      <a class="btn-secondary" href="{{ url_for('index') }}">Back</a>
+      <a class="btn-secondary" href="{{ url_for('index', category=prompt.category, sort_by='recently_used') }}">Back to {{ prompt.category }}</a>
+      <a class="btn-secondary" href="{{ url_for('index') }}">Library</a>
     </div>
+  </div>
+
+  <div style="margin-top:0.75rem; opacity:0.72; font-size:0.9em;">
+    Using or copying this prompt records a usage entry, which helps Recently Used and Frequently Used sorting work better on the library page. Random prompt selection now lives on the Library index, where you choose a category first.
   </div>
 
   <input type="hidden" id="promptId" value="{{ prompt.id }}">

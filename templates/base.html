@@ -1,136 +1,56 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Prompt Hub</title>
-  <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}PromptHub{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='prompthub-modern.css') }}">
 </head>
 <body>
-
-  <header class="app-header">
-    <div class="nav-inner">
-      <h1>Prompt Hub</h1>
-      <nav>
-        <a href="{{ url_for('index') }}">All Prompts</a>
-        <a href="{{ url_for('new_prompt') }}">New Prompt</a>
-        <a href="{{ url_for('import_prompt') }}">Import</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="{{ url_for('index') }}">
+        <span class="brand-mark">P</span>
+        <span><strong>PromptHub</strong><small>Creative prompt library</small></span>
+      </a>
+      <nav class="topnav" aria-label="Primary navigation">
+        <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Library</a>
+        <a href="{{ url_for('new_prompt') }}">New</a>
+        <a href="{{ url_for('descriptors') }}">Builders</a>
         <a href="{{ url_for('json_sync_page') }}">JSON Sync</a>
         <a href="{{ url_for('manage') }}">Manage</a>
-
-        {% if ollama_ready %}
-          <a href="{{ url_for('descriptor_remix') }}">Remix</a>
-        {% endif %}
-
-        {# Subtle content visibility toggle #}
-        {% if nsfw_unlocked %}
-          <form action="{{ url_for('nsfw_lock') }}" method="post" style="display:inline;">
-            <button
-              class="btn-secondary"
-              type="submit"
-              title="Content filter is disabled. Click to enable filtering."
-              style="margin-left:1rem; opacity:0.85;"
-            >
-              Unfiltered
-            </button>
-          </form>
-        {% else %}
-          <form action="{{ url_for('nsfw_unlock') }}" method="post" style="display:inline;">
-            <button
-              class="btn-secondary"
-              type="submit"
-              title="Content filter is enabled. Click to show all content."
-              style="margin-left:1rem; opacity:0.65;"
-            >
-              Filtered
-            </button>
-          </form>
-        {% endif %}
-
-        <button
-          id="themeToggle"
-          class="btn-secondary"
-          type="button"
-          title="Change theme"
-          style="margin-left:0.5rem;"
-        >
-          🎨 Theme
-        </button>
       </nav>
-    </div>
-  </header>
+      <div class="top-actions">
+        {% if nsfw_unlocked %}
+          <form method="post" action="{{ url_for('nsfw_lock') }}"><button class="icon-button" title="Lock NSFW prompts">◉</button></form>
+        {% else %}
+          <form method="post" action="{{ url_for('nsfw_unlock') }}"><button class="icon-button" title="Unlock NSFW prompts">○</button></form>
+        {% endif %}
+      </div>
+    </header>
 
-  {% with messages = get_flashed_messages() %}
-    {% if messages %}
-      <ul class="flash">
-        {% for msg in messages %}
-          <li>{{ msg }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-  {% endwith %}
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="flash-stack">
+          {% for message in messages %}<div class="flash-message">{{ message }}</div>{% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
 
-  <main>
-    {% block content %}{% endblock %}
-  </main>
-
+    <main class="page-container">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  <div id="globalToast" class="global-toast" role="status" aria-live="polite"></div>
   <script>
-  (function () {
-    const themes = [
-      "dark",
-      "slate",
-      "scorpio",
-      "terminal",
-      "paper",
-      "cyber",
-      "nord"
-    ];
-
-    const labels = {
-      dark: "🌙 Dark",
-      slate: "🪨 Slate",
-      scorpio: "🟣 Scorpio",
-      terminal: "🟢 Terminal",
-      paper: "📜 Paper",
-      cyber: "🔷 Cyber",
-      nord: "❄️ Nord"
+    window.showToast = function(message) {
+      const toast = document.getElementById('globalToast');
+      if (!toast) return;
+      toast.textContent = message;
+      toast.classList.add('show');
+      clearTimeout(window.__phToastTimer);
+      window.__phToastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
     };
-
-    const storageKey = "prompthub-theme";
-
-    function applyTheme(theme) {
-      if (theme === "dark") {
-        document.body.removeAttribute("data-theme");
-      } else {
-        document.body.setAttribute("data-theme", theme);
-      }
-
-      localStorage.setItem(storageKey, theme);
-
-      const btn = document.getElementById("themeToggle");
-      if (btn) {
-        btn.textContent = labels[theme] || "🎨 Theme";
-      }
-    }
-
-    function nextTheme(current) {
-      const idx = themes.indexOf(current);
-      return themes[(idx + 1) % themes.length];
-    }
-
-    const saved = localStorage.getItem(storageKey) || "dark";
-    applyTheme(saved);
-
-    const btn = document.getElementById("themeToggle");
-    if (btn) {
-      btn.addEventListener("click", () => {
-        const current = document.body.getAttribute("data-theme") || "dark";
-        const next = nextTheme(current);
-        applyTheme(next);
-      });
-    }
-  })();
   </script>
-
 </body>
 </html>

@@ -10,6 +10,7 @@ import math
 import time
 import json
 import base64
+import random
 from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageSequence
@@ -309,6 +310,21 @@ def init_db() -> None:
     if not column_exists(conn, "prompts", "parent_id"):
         conn.execute("ALTER TABLE prompts ADD COLUMN parent_id INTEGER")
 
+    # Pinned prompts are a lightweight, backward-compatible desktop enhancement.
+    if not column_exists(conn, "prompts", "pinned_at"):
+        conn.execute("ALTER TABLE prompts ADD COLUMN pinned_at TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prompts_pinned_at ON prompts(pinned_at DESC)")
+
+    # Shared iOS/Desktop sync identity. Existing desktop rows are backfilled once.
+    if not column_exists(conn, "prompts", "sync_id"):
+        conn.execute("ALTER TABLE prompts ADD COLUMN sync_id TEXT")
+
+    rows_missing_sync = conn.execute("SELECT id FROM prompts WHERE sync_id IS NULL OR TRIM(sync_id) = ''").fetchall()
+    for r in rows_missing_sync:
+        conn.execute("UPDATE prompts SET sync_id = ? WHERE id = ?", (str(uuid.uuid4()).upper(), r["id"]))
+
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompts_sync_id ON prompts(sync_id)")
+
     if conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0:
         for c in ["Image", "Video", "Music", "Other"]:
             conn.execute("INSERT INTO categories (name) VALUES (?)", (c,))
@@ -331,6 +347,14 @@ def init_db() -> None:
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_prompt_uses_prompt_id_created_at
         ON prompt_uses(prompt_id, created_at DESC)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_prompt_uses_created_at
+        ON prompt_uses(created_at DESC)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_prompts_category_parent
+        ON prompts(category, parent_id)
     """)
     # --- migration: ensure prompt_uses.source exists ---
     if not column_exists(conn, "prompt_uses", "source"):
@@ -387,6 +411,92 @@ def get_saved_views():
 def get_prompt(prompt_id: int):
     with get_db() as conn:
         return conn.execute("SELECT * FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+
+
+def build_prompt_usage_select() -> str:
+    """Reusable usage summary columns for prompt listing queries."""
+    return """
+        (SELECT MAX(pu.created_at) FROM prompt_uses pu WHERE pu.prompt_id = p.id) AS last_used_at,
+        (SELECT COUNT(*) FROM prompt_uses pu WHERE pu.prompt_id = p.id) AS use_count
+    """
+
+
+def build_prompt_order_clause(sort_by: str, sort_dir: str) -> str:
+    """Return a safe ORDER BY clause for prompt indexes and APIs.
+
+    Special sorts:
+    - updated_at: original PromptHub library order, newest capture/edit/thumbnail update first.
+    - recently_used: prompts with usage float to the top, newest use first, then updated prompts.
+    - frequently_used: highest usage count first, then most recently used, then updated prompts.
+    """
+    direction = "ASC" if sort_dir == "asc" else "DESC"
+
+    if sort_by == "recently_used":
+        if direction == "ASC":
+            return "ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END ASC, p.pinned_at DESC, CASE WHEN last_used_at IS NULL THEN 1 ELSE 0 END ASC, last_used_at ASC, p.updated_at ASC, p.id ASC"
+        return "ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END ASC, p.pinned_at DESC, CASE WHEN last_used_at IS NULL THEN 1 ELSE 0 END ASC, last_used_at DESC, p.updated_at DESC, p.id DESC"
+
+    if sort_by == "frequently_used":
+        if direction == "ASC":
+            return "ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END ASC, p.pinned_at DESC, use_count ASC, CASE WHEN last_used_at IS NULL THEN 1 ELSE 0 END ASC, last_used_at ASC, p.updated_at ASC, p.id ASC"
+        return "ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END ASC, p.pinned_at DESC, use_count DESC, CASE WHEN last_used_at IS NULL THEN 1 ELSE 0 END ASC, last_used_at DESC, p.updated_at DESC, p.id DESC"
+
+    allowed = {"updated_at", "created_at", "title", "category", "tool", "prompt_type"}
+    if sort_by not in allowed:
+        sort_by = "updated_at"
+    return f"ORDER BY CASE WHEN p.pinned_at IS NULL THEN 1 ELSE 0 END ASC, p.pinned_at DESC, p.{sort_by} {direction}, p.id {direction}"
+
+
+def record_prompt_use(conn: sqlite3.Connection, prompt_id: int, content: str | None = None, source: str = "use") -> bool:
+    """Record a prompt usage event, deduping the immediately previous identical entry."""
+    if content is None:
+        row = conn.execute("SELECT content FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+        content = (row["content"] if row else "") or ""
+
+    content = (content or "").strip()
+    source = (source or "use").strip()[:120]
+    if not content:
+        return False
+
+    last = conn.execute(
+        "SELECT content, source FROM prompt_uses WHERE prompt_id = ? ORDER BY created_at DESC LIMIT 1",
+        (prompt_id,),
+    ).fetchone()
+    if last and (last["content"] or "") == content and (last["source"] or "") == source:
+        return False
+
+    now = datetime.utcnow().isoformat(timespec="seconds")
+    conn.execute(
+        "INSERT INTO prompt_uses (prompt_id, content, created_at, source) VALUES (?,?,?,?)",
+        (prompt_id, content, now, source),
+    )
+    conn.execute(
+        """
+        DELETE FROM prompt_uses
+        WHERE id IN (
+            SELECT id FROM prompt_uses
+            WHERE prompt_id = ?
+            ORDER BY created_at DESC
+            LIMIT -1 OFFSET 250
+        )
+        """,
+        (prompt_id,),
+    )
+    return True
+
+
+def enrich_prompt_rows(conn: sqlite3.Connection, rows) -> list[dict]:
+    """Attach tags, group names, and rendered descriptor content to prompt row dictionaries."""
+    prompts = [dict(r) for r in rows]
+    ids = [p["id"] for p in prompts]
+    tag_map = get_tags_for_prompts(conn, ids)
+    group_name_map = get_group_name_map(conn, [p.get("group_id") for p in prompts])
+    for p in prompts:
+        p["tags"] = tag_map.get(p["id"], [])
+        p["group_name"] = group_name_map.get(p.get("group_id"))
+        p["content"] = inject_descriptors(p.get("content") or "")
+        p["use_count"] = int(p.get("use_count") or 0)
+    return prompts
 
 
 # -------------------------
@@ -949,7 +1059,8 @@ def export_selected():
 # PromptHub JSON import/export bridge (iOS/Desktop)
 # -------------------------
 PROMPTHUB_JSON_FORMAT = "PromptHubExport"
-PROMPTHUB_JSON_VERSION = 1
+PROMPTHUB_JSON_VERSION = 2
+PROMPTHUB_JSON_SUPPORTED_VERSIONS = {1, 2}
 
 
 def _normalise_json_list(values):
@@ -964,20 +1075,89 @@ def _normalise_json_list(values):
     return out
 
 
+def _ensure_prompt_sync_id(conn: sqlite3.Connection, prompt_id: int, existing: str | None = None) -> str:
+    """Return a stable sync_id for a prompt, creating one for older desktop rows if needed."""
+    sync_id = (existing or "").strip()
+    if sync_id:
+        return sync_id
+
+    sync_id = str(uuid.uuid4()).upper()
+    try:
+        conn.execute("UPDATE prompts SET sync_id = ? WHERE id = ?", (sync_id, prompt_id))
+    except sqlite3.OperationalError:
+        # In case init_db has not run yet for an older install.
+        if not column_exists(conn, "prompts", "sync_id"):
+            conn.execute("ALTER TABLE prompts ADD COLUMN sync_id TEXT")
+        conn.execute("UPDATE prompts SET sync_id = ? WHERE id = ?", (sync_id, prompt_id))
+    return sync_id
+
+
+def _usage_summary_for_prompt(conn: sqlite3.Connection, prompt_id: int) -> tuple[int, str | None]:
+    row = conn.execute(
+        "SELECT COUNT(*) AS use_count, MAX(created_at) AS last_used_at FROM prompt_uses WHERE prompt_id = ?",
+        (prompt_id,),
+    ).fetchone()
+    if not row:
+        return 0, None
+    return int(row["use_count"] or 0), row["last_used_at"]
+
+
+def _merge_usage_metrics(conn: sqlite3.Connection, prompt_id: int, remote_use_count, remote_last_used_at, content: str = "") -> int:
+    """Merge aggregate usage metrics from iOS JSON into desktop prompt_uses.
+
+    We do not know each original iOS usage event, only the aggregate count and last-used timestamp.
+    So we add synthetic usage rows only when the remote count is higher than the local count.
+    """
+    try:
+        remote_count = int(remote_use_count or 0)
+    except Exception:
+        remote_count = 0
+    if remote_count <= 0:
+        return 0
+
+    local_row = conn.execute(
+        "SELECT COUNT(*) AS use_count FROM prompt_uses WHERE prompt_id = ?",
+        (prompt_id,),
+    ).fetchone()
+    local_count = int(local_row["use_count"] or 0) if local_row else 0
+    missing = max(0, remote_count - local_count)
+    if missing <= 0:
+        return 0
+
+    timestamp = (str(remote_last_used_at or "").strip() or datetime.utcnow().isoformat(timespec="seconds"))
+    usage_content = content or ""
+    for i in range(missing):
+        source = "ios_json_sync_latest" if i == missing - 1 else "ios_json_sync_count"
+        conn.execute(
+            "INSERT INTO prompt_uses (prompt_id, content, created_at, source) VALUES (?, ?, ?, ?)",
+            (prompt_id, usage_content, timestamp, source),
+        )
+    return missing
+
+
 def build_prompthub_json_export(conn: sqlite3.Connection) -> dict:
-    """Builds the shared JSON format used by PromptHub iOS and desktop."""
+    """Builds the shared JSON format used by PromptHub iOS and desktop.
+
+    Version 2 adds sync_id, use_count, and last_used_at while staying readable by the iOS app.
+    """
+    if not column_exists(conn, "prompts", "sync_id"):
+        conn.execute("ALTER TABLE prompts ADD COLUMN sync_id TEXT")
+
     categories = [r["name"] for r in conn.execute("SELECT name FROM categories ORDER BY name COLLATE NOCASE").fetchall()]
     tools = [r["name"] for r in conn.execute("SELECT name FROM tools ORDER BY name COLLATE NOCASE").fetchall()]
 
     prompt_rows = conn.execute("""
-        SELECT id, title, category, tool, prompt_type, content, notes, created_at, updated_at
+        SELECT id, title, category, tool, prompt_type, content, notes, created_at, updated_at, sync_id
         FROM prompts
         ORDER BY updated_at DESC, title COLLATE NOCASE ASC
     """).fetchall()
 
     prompts = []
     for row in prompt_rows:
-        prompts.append({
+        sync_id = _ensure_prompt_sync_id(conn, int(row["id"]), row["sync_id"] if "sync_id" in row.keys() else None)
+        use_count, last_used_at = _usage_summary_for_prompt(conn, int(row["id"]))
+        item = {
+            "sync_id": sync_id,
             "title": row["title"] or "",
             "category": row["category"] or "Other",
             "tool": row["tool"] or "Generic",
@@ -987,12 +1167,16 @@ def build_prompthub_json_export(conn: sqlite3.Connection) -> dict:
             "tags": get_tags_for_prompt(conn, row["id"]),
             "created_at": row["created_at"] or "",
             "updated_at": row["updated_at"] or "",
-        })
+            "use_count": use_count,
+        }
+        if last_used_at:
+            item["last_used_at"] = last_used_at
+        prompts.append(item)
 
     return {
         "format": PROMPTHUB_JSON_FORMAT,
         "version": PROMPTHUB_JSON_VERSION,
-        "exported_at": datetime.utcnow().isoformat(),
+        "exported_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "categories": _normalise_json_list(categories),
         "tools": _normalise_json_list(tools),
         "prompts": prompts,
@@ -1000,18 +1184,33 @@ def build_prompthub_json_export(conn: sqlite3.Connection) -> dict:
 
 
 def import_prompthub_json_snapshot(conn: sqlite3.Connection, snapshot: dict) -> dict:
-    """Imports shared PromptHub JSON. Duplicate handling: skip same title + content."""
+    """Imports shared PromptHub JSON from desktop or iOS.
+
+    Supports version 1 and version 2.
+    v2 understands sync_id, use_count, and last_used_at. Duplicate handling prefers sync_id;
+    older v1 files fall back to title + content.
+    """
     if not isinstance(snapshot, dict):
         raise ValueError("Invalid JSON import: expected a JSON object.")
 
     if snapshot.get("format") != PROMPTHUB_JSON_FORMAT:
         raise ValueError("Unsupported JSON import format.")
 
-    if int(snapshot.get("version", 0)) != PROMPTHUB_JSON_VERSION:
+    try:
+        version = int(snapshot.get("version", 1) or 1)
+    except Exception:
+        version = 1
+    if version not in PROMPTHUB_JSON_SUPPORTED_VERSIONS:
         raise ValueError(f"Unsupported PromptHub export version: {snapshot.get('version')}")
 
+    if not column_exists(conn, "prompts", "sync_id"):
+        conn.execute("ALTER TABLE prompts ADD COLUMN sync_id TEXT")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_prompts_sync_id ON prompts(sync_id)")
+
     imported = 0
+    updated = 0
     skipped = 0
+    usage_events_added = 0
     categories_added = 0
     tools_added = 0
 
@@ -1036,43 +1235,76 @@ def import_prompthub_json_snapshot(conn: sqlite3.Connection, snapshot: dict) -> 
             skipped += 1
             continue
 
+        sync_id = str(item.get("sync_id") or "").strip() or str(uuid.uuid4()).upper()
         title = str(item.get("title") or "Imported Prompt").strip() or "Imported Prompt"
         category = str(item.get("category") or "Other").strip() or "Other"
         tool = str(item.get("tool") or "Generic").strip() or "Generic"
         prompt_type = str(item.get("prompt_type") or "Generation").strip() or "Generation"
         content = str(item.get("content") or "")
         notes = str(item.get("notes") or "")
-        created_at = str(item.get("created_at") or "").strip() or datetime.utcnow().isoformat()
-        updated_at = str(item.get("updated_at") or "").strip() or datetime.utcnow().isoformat()
+        created_at = str(item.get("created_at") or "").strip() or datetime.utcnow().isoformat(timespec="seconds")
+        updated_at = str(item.get("updated_at") or "").strip() or datetime.utcnow().isoformat(timespec="seconds")
         tags = _normalise_json_list(item.get("tags", []))
-
-        duplicate = conn.execute(
-            "SELECT id FROM prompts WHERE title = ? AND content = ? LIMIT 1",
-            (title, content),
-        ).fetchone()
-        if duplicate:
-            skipped += 1
-            continue
+        remote_use_count = item.get("use_count", 0)
+        remote_last_used_at = item.get("last_used_at")
 
         conn.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (category,))
         conn.execute("INSERT OR IGNORE INTO tools (name) VALUES (?)", (tool,))
 
+        existing = conn.execute(
+            "SELECT id, updated_at FROM prompts WHERE sync_id = ? LIMIT 1",
+            (sync_id,),
+        ).fetchone()
+
+        # Backwards compatibility for older files or existing desktop rows that had no sync_id.
+        if not existing:
+            existing = conn.execute(
+                "SELECT id, updated_at FROM prompts WHERE title = ? AND content = ? LIMIT 1",
+                (title, content),
+            ).fetchone()
+            if existing:
+                conn.execute("UPDATE prompts SET sync_id = ? WHERE id = ?", (sync_id, existing["id"]))
+
+        if existing:
+            prompt_id = int(existing["id"])
+            local_updated = str(existing["updated_at"] or "")
+            if updated_at > local_updated:
+                conn.execute(
+                    """
+                    UPDATE prompts
+                    SET title = ?, category = ?, tool = ?, prompt_type = ?, content = ?, notes = ?, created_at = ?, updated_at = ?, sync_id = ?
+                    WHERE id = ?
+                    """,
+                    (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id, prompt_id),
+                )
+                save_tags(conn, prompt_id, ", ".join(tags))
+                updated += 1
+            else:
+                skipped += 1
+
+            usage_events_added += _merge_usage_metrics(conn, prompt_id, remote_use_count, remote_last_used_at, content)
+            continue
+
         cur = conn.execute(
             """
-            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
+            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at, sync_id)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)
             """,
-            (title, category, tool, prompt_type, content, notes or None, created_at, updated_at),
+            (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id),
         )
         new_prompt_id = cur.lastrowid
         save_tags(conn, new_prompt_id, ", ".join(tags))
+        usage_events_added += _merge_usage_metrics(conn, new_prompt_id, remote_use_count, remote_last_used_at, content)
         imported += 1
 
     return {
         "imported": imported,
+        "updated": updated,
         "skipped": skipped,
+        "usage_events_added": usage_events_added,
         "categories_added": categories_added,
         "tools_added": tools_added,
+        "version": version,
     }
 
 
@@ -1097,7 +1329,9 @@ def json_sync_page():
             result = import_prompthub_json_snapshot(conn, data)
         flash(
             f"JSON import complete. Imported {result['imported']} prompt(s), "
-            f"skipped {result['skipped']} duplicate/invalid item(s). "
+            f"updated {result.get('updated', 0)} prompt(s), "
+            f"skipped {result['skipped']} duplicate/unchanged/invalid item(s), "
+            f"and added {result.get('usage_events_added', 0)} usage event(s). "
             f"Added {result['categories_added']} categor(ies) and {result['tools_added']} tool(s)."
         )
     except Exception as e:
@@ -1276,11 +1510,12 @@ def build_library_base_query(args):
     q = (args.get("q") or "").strip()
     q_not = (args.get("q_not") or "").strip()
     view_family = args.get("view_family")
+    pinned_only = str(args.get("pinned", "0")).lower() in {"1", "true", "yes", "on"}
 
     sort_by = args.get("sort_by", "updated_at")
     sort_dir = args.get("sort_dir", "desc")
 
-    allowed_sorts = {"updated_at", "created_at", "title", "category", "tool", "prompt_type"}
+    allowed_sorts = {"updated_at", "created_at", "title", "category", "tool", "prompt_type", "recently_used", "frequently_used"}
     if sort_by not in allowed_sorts:
         sort_by = "updated_at"
     if sort_dir not in {"asc", "desc"}:
@@ -1312,11 +1547,13 @@ def build_library_base_query(args):
     if tag_filter != "all":
         base_query += " AND t.name = ?"
         params.append(tag_filter)
+    if pinned_only:
+        base_query += " AND p.pinned_at IS NOT NULL"
 
     if q:
         terms = [t.strip() for t in q.split(",") if t.strip()]
         for term in terms:
-            sub = "(LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(p.notes) LIKE ? OR EXISTS (SELECT 1 FROM prompt_tags pt2 JOIN tags t2 ON t2.id = pt2.tag_id WHERE pt2.prompt_id=p.id AND LOWER(t2.name) LIKE ?))"
+            sub = "(LOWER(p.title) LIKE ? OR LOWER(p.content) LIKE ? OR LOWER(COALESCE(p.notes, '')) LIKE ? OR EXISTS (SELECT 1 FROM prompt_tags pt2 JOIN tags t2 ON t2.id = pt2.tag_id WHERE pt2.prompt_id=p.id AND LOWER(t2.name) LIKE ?))"
             base_query += f" AND {sub}"
             lt = f"%{term.lower()}%"
             params.extend([lt, lt, lt, lt])
@@ -1324,7 +1561,7 @@ def build_library_base_query(args):
     if q_not:
         terms = [t.strip() for t in q_not.split(",") if t.strip()]
         for term in terms:
-            sub = "(LOWER(p.title) NOT LIKE ? AND LOWER(p.content) NOT LIKE ? AND LOWER(p.notes) NOT LIKE ? AND NOT EXISTS (SELECT 1 FROM prompt_tags pt2 JOIN tags t2 ON t2.id = pt2.tag_id WHERE pt2.prompt_id=p.id AND LOWER(t2.name) LIKE ?))"
+            sub = "(LOWER(p.title) NOT LIKE ? AND LOWER(p.content) NOT LIKE ? AND LOWER(COALESCE(p.notes, '')) NOT LIKE ? AND NOT EXISTS (SELECT 1 FROM prompt_tags pt2 JOIN tags t2 ON t2.id = pt2.tag_id WHERE pt2.prompt_id=p.id AND LOWER(t2.name) LIKE ?))"
             base_query += f" AND {sub}"
             lt = f"%{term.lower()}%"
             params.extend([lt, lt, lt, lt])
@@ -1344,6 +1581,7 @@ def build_library_base_query(args):
         "q": q,
         "q_not": q_not,
         "view_family": view_family,
+        "pinned_only": pinned_only,
     }
 
 
@@ -1366,6 +1604,10 @@ def nsfw_lock():
 # -------------------------
 @app.route("/", methods=["GET"])
 def index():
+    # Ensure all backward-compatible schema migrations have run before
+    # the modern library queries columns such as prompts.pinned_at.
+    init_db()
+
     category = request.args.get("category", "all")
     tool = request.args.get("tool", "all")
     group_id = request.args.get("group", "all")
@@ -1373,6 +1615,7 @@ def index():
     q = (request.args.get("q") or "").strip()
     q_not = (request.args.get("q_not") or "").strip()
     view_family = request.args.get("view_family")  # NEW: ID to drill down into
+    pinned_only = str(request.args.get("pinned", "0")).lower() in {"1", "true", "yes", "on"}
 
     sort_by = request.args.get("sort_by", "updated_at")
     sort_dir = request.args.get("sort_dir", "desc")
@@ -1381,7 +1624,7 @@ def index():
     except:
         page = 1
 
-    ALLOWED_SORTS = {"updated_at", "created_at", "title", "category", "tool", "prompt_type"}
+    ALLOWED_SORTS = {"updated_at", "created_at", "title", "category", "tool", "prompt_type", "recently_used", "frequently_used"}
     if sort_by not in ALLOWED_SORTS:
         sort_by = "updated_at"
     if sort_dir not in ["asc", "desc"]:
@@ -1416,6 +1659,8 @@ def index():
     if tag_filter != "all":
         base_query += " AND t.name = ?"
         params.append(tag_filter)
+    if pinned_only:
+        base_query += " AND p.pinned_at IS NOT NULL"
 
     if q:
         terms = [t.strip() for t in q.split(',') if t.strip()]
@@ -1441,32 +1686,29 @@ def index():
     total_pages = math.ceil(total_items / ITEMS_PER_PAGE)
 
     offset = (page - 1) * ITEMS_PER_PAGE
+    usage_select = build_prompt_usage_select()
+    order_clause = build_prompt_order_clause(sort_by, sort_dir)
     data_query = f"""
         SELECT DISTINCT p.*,
-        (SELECT COUNT(*) FROM prompts AS p2 WHERE p2.parent_id = p.id) as child_count
+        (SELECT COUNT(*) FROM prompts AS p2 WHERE p2.parent_id = p.id) AS child_count,
+        {usage_select}
         {base_query}
-        ORDER BY p.{sort_by} {sort_dir.upper()}
+        {order_clause}
         LIMIT ? OFFSET ?
     """
     rows = conn.execute(data_query, params + [ITEMS_PER_PAGE, offset]).fetchall()
 
-    prompts = [dict(r) for r in rows]
-    ids = [p["id"] for p in prompts]
-    tag_map = get_tags_for_prompts(conn, ids)
-    group_name_map = get_group_name_map(conn, [p.get("group_id") for p in prompts])
-    for p in prompts:
-        p["tags"] = tag_map.get(p["id"], [])
-        p["group_name"] = group_name_map.get(p.get("group_id"))
-        # Optional: expand descriptor tokens for display/preview
-        p["content"] = inject_descriptors(p.get("content") or "")
-
-        # Optional: expand descriptor tokens for display/preview
-        p["content"] = inject_descriptors(p.get("content") or "")
-
+    prompts = enrich_prompt_rows(conn, rows)
 
     saved_views = get_saved_views()
     all_tags = get_all_tags()
     groups = get_groups()
+    library_stats = {
+        "total": conn.execute("SELECT COUNT(*) FROM prompts").fetchone()[0],
+        "pinned": conn.execute("SELECT COUNT(*) FROM prompts WHERE pinned_at IS NOT NULL").fetchone()[0],
+        "used": conn.execute("SELECT COUNT(DISTINCT prompt_id) FROM prompt_uses").fetchone()[0],
+        "categories": conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0],
+    }
     conn.close()
 
     return render_template(
@@ -1482,6 +1724,8 @@ def index():
         q=q,
         q_not=q_not,
         view_family=view_family,
+        pinned_only=pinned_only,
+        library_stats=library_stats,
         sort_by=sort_by,
         sort_dir=sort_dir,
         page=page,
@@ -1490,6 +1734,105 @@ def index():
         saved_views=saved_views,
         all_tags=all_tags
     )
+
+
+@app.route("/api/prompt/<int:prompt_id>/pin", methods=["POST"])
+def toggle_prompt_pin(prompt_id: int):
+    """Toggle a prompt pin without changing legacy extension routes or prompt content."""
+    init_db()
+    with get_db() as conn:
+        row = conn.execute("SELECT pinned_at FROM prompts WHERE id = ?", (prompt_id,)).fetchone()
+        if not row:
+            return jsonify({"success": False, "error": "Prompt not found"}), 404
+        pinned = not bool(row["pinned_at"])
+        pinned_at = datetime.utcnow().isoformat(timespec="seconds") if pinned else None
+        conn.execute("UPDATE prompts SET pinned_at = ? WHERE id = ?", (pinned_at, prompt_id))
+    return jsonify({"success": True, "pinned": pinned, "pinned_at": pinned_at})
+
+
+@app.route("/random", methods=["GET"])
+def random_prompt_redirect():
+    """Open a random prompt using the same filters as the library, especially category."""
+    init_db()
+    with get_db() as conn:
+        qinfo = build_library_base_query(request.args)
+        base_query = qinfo["base_query"]
+        params = qinfo["params"]
+        row = conn.execute(
+            f"SELECT DISTINCT p.id {base_query} ORDER BY RANDOM() LIMIT 1",
+            params,
+        ).fetchone()
+
+    if not row:
+        flash("No matching prompt found for that random selection.")
+        return redirect(url_for("index", **request.args.to_dict(flat=True)))
+
+    return redirect(url_for("render_prompt", prompt_id=row["id"]))
+
+
+@app.route("/api/random_prompt", methods=["GET"])
+def api_random_prompt():
+    """Return one random prompt matching the supplied category/tool/group/tag/search filters."""
+    init_db()
+    with get_db() as conn:
+        qinfo = build_library_base_query(request.args)
+        base_query = qinfo["base_query"]
+        params = qinfo["params"]
+        usage_select = build_prompt_usage_select()
+        row = conn.execute(
+            f"""
+            SELECT DISTINCT p.*,
+            (SELECT COUNT(*) FROM prompts AS p2 WHERE p2.parent_id = p.id) AS child_count,
+            {usage_select}
+            {base_query}
+            ORDER BY RANDOM()
+            LIMIT 1
+            """,
+            params,
+        ).fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": "No matching prompt found."}), 404
+        prompt = enrich_prompt_rows(conn, [row])[0]
+
+    return jsonify({
+        "ok": True,
+        "prompt": prompt,
+        "render_url": url_for("render_prompt", prompt_id=prompt["id"]),
+        "raw_url": url_for("prompt_raw", prompt_id=prompt["id"]),
+    })
+
+
+@app.route("/api/prompts/frequent", methods=["GET"])
+def api_frequent_prompts():
+    """Small helper endpoint for a future dashboard/card strip of frequent prompts."""
+    init_db()
+    try:
+        limit = max(1, min(50, int(request.args.get("limit", 12))))
+    except Exception:
+        limit = 12
+
+    with get_db() as conn:
+        qinfo = build_library_base_query(request.args)
+        base_query = qinfo["base_query"]
+        params = qinfo["params"]
+        usage_select = build_prompt_usage_select()
+        rows = conn.execute(
+            f"""
+            SELECT DISTINCT p.*,
+            (SELECT COUNT(*) FROM prompts AS p2 WHERE p2.parent_id = p.id) AS child_count,
+            {usage_select}
+            {base_query}
+            ORDER BY use_count DESC,
+                     CASE WHEN last_used_at IS NULL THEN 1 ELSE 0 END ASC,
+                     last_used_at DESC,
+                     p.updated_at DESC
+            LIMIT ?
+            """,
+            params + [limit],
+        ).fetchall()
+        prompts = enrich_prompt_rows(conn, rows)
+
+    return jsonify({"ok": True, "prompts": prompts})
 
 
 @app.route("/api/prompts", methods=["GET"])
@@ -1513,11 +1856,14 @@ def api_prompts():
 
     offset = (page - 1) * per_page
 
+    usage_select = build_prompt_usage_select()
+    order_clause = build_prompt_order_clause(sort_by, sort_dir)
     data_query = f"""
         SELECT DISTINCT p.*,
-        (SELECT COUNT(*) FROM prompts AS p2 WHERE p2.parent_id = p.id) as child_count
+        (SELECT COUNT(*) FROM prompts AS p2 WHERE p2.parent_id = p.id) AS child_count,
+        {usage_select}
         {base_query}
-        ORDER BY p.{sort_by} {sort_dir.upper()}
+        {order_clause}
         LIMIT ? OFFSET ?
     """
 
@@ -1526,14 +1872,7 @@ def api_prompts():
     has_more = len(rows) > per_page
     rows = rows[:per_page]
 
-    prompts = [dict(r) for r in rows]
-
-    ids = [p["id"] for p in prompts]
-    tag_map = get_tags_for_prompts(conn, ids)
-    group_name_map = get_group_name_map(conn, [p.get("group_id") for p in prompts])
-    for p in prompts:
-        p["tags"] = tag_map.get(p["id"], [])
-        p["group_name"] = group_name_map.get(p.get("group_id"))
+    prompts = enrich_prompt_rows(conn, rows)
 
     conn.close()
 
@@ -1846,6 +2185,8 @@ def render_prompt(prompt_id: int):
         override_text = (request.form.get("final_override") or "").strip() if override_active else None
 
         final_text = render_use_output(content, fills, final_override=override_text)
+        with get_db() as use_conn:
+            record_prompt_use(use_conn, prompt_id, final_text, source="render")
 
     return render_template(
         "render_prompt.html",
@@ -2926,6 +3267,8 @@ def api_render_final(prompt_id: int):
     override_text = (request.form.get("final_override") or "").strip() if override_active else None
 
     final_text = render_use_output(base_content, fills, final_override=override_text)
+    with get_db() as conn:
+        record_prompt_use(conn, prompt_id, final_text, source="render_final")
     return jsonify({"text": final_text})
 
 
@@ -3064,10 +3407,14 @@ def prompt_raw(prompt_id: int):
             if prompt_is_nsfw(conn, prompt_id):
                 return jsonify({"error": "locked"}), 403
 
+        raw_content = p["content"] or ""
+        record_prompt_use(conn, prompt_id, raw_content, source="raw")
+        conn.commit()
+
         return jsonify({
             "id": p["id"],
             "title": p["title"],
-            "content": p["content"] or "",
+            "content": raw_content,
             "category": p["category"],
             "tool": p["tool"],
             "prompt_type": p["prompt_type"],
@@ -3118,35 +3465,9 @@ def api_prompt_usage(prompt_id):
             if not content:
                 return jsonify({"ok": False, "error": "empty"}), 400
 
-            last = conn.execute(
-                "SELECT content FROM prompt_uses WHERE prompt_id = ? ORDER BY created_at DESC LIMIT 1",
-                (prompt_id,),
-            ).fetchone()
-
-            if last and (last["content"] or "") == content:
-                return jsonify({"ok": True, "deduped": True})
-
-            now = datetime.utcnow().isoformat(timespec="seconds")
-            conn.execute(
-                "INSERT INTO prompt_uses (prompt_id, content, created_at, source) VALUES (?,?,?,?)",
-                (prompt_id, content, now, source),
-            )
-
-            conn.execute(
-                """
-                DELETE FROM prompt_uses
-                WHERE id IN (
-                    SELECT id FROM prompt_uses
-                    WHERE prompt_id = ?
-                    ORDER BY created_at DESC
-                    LIMIT -1 OFFSET 250
-                )
-                """,
-                (prompt_id,),
-            )
-
+            inserted = record_prompt_use(conn, prompt_id, content, source=source)
             conn.commit()
-            return jsonify({"ok": True})
+            return jsonify({"ok": True, "deduped": not inserted})
 
         rows = conn.execute(
             "SELECT id, content, created_at, source FROM prompt_uses WHERE prompt_id = ? ORDER BY created_at DESC LIMIT 20",
@@ -3409,6 +3730,10 @@ def find_free_port():
     return 8080
 
 if __name__ == "__main__":
+    # Run schema migrations before accepting the first browser request.
+    # This preserves the existing prompts.db and adds only missing columns/indexes.
+    init_db()
+
     port = int(os.environ.get("PROMPTHUB_PORT", find_free_port()))
 
     print(f"Starting PromptHub on http://127.0.0.1:{port}")
