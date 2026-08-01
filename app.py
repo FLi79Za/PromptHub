@@ -17,6 +17,13 @@ from PIL import Image, ImageSequence
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session, g, jsonify
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
+from integration_api import create_integration_blueprint
+from integration_config import (
+    configure_integration_logging,
+    get_or_create_token,
+    get_or_create_secret_key,
+    load_config as load_integration_config,
+)
 
 
 # -------------------------
@@ -57,9 +64,15 @@ def inject_descriptors(text_value: str) -> str:
 
     return DESCRIPTOR_TOKEN_RE.sub(repl, text_value)
 
+INTEGRATION_RUNTIME_CONFIG = load_integration_config()
+get_or_create_token()
+configure_integration_logging(INTEGRATION_RUNTIME_CONFIG.get("debug", False))
+
 app = Flask(__name__)
-CORS(app)
-app.secret_key = "change-me-to-something-random"
+# Preserve the existing broad CORS behaviour for current UI/extension routes.
+# Integration API CORS is handled by its blueprint using an explicit origin allow-list.
+CORS(app, resources={r"^(?!/api/integration/).*": {"origins": "*"}})
+app.secret_key = get_or_create_secret_key()
 
 @app.context_processor
 def inject_global_flags():
@@ -185,6 +198,9 @@ def get_db():
     except Exception:
         pass
     return conn
+
+
+app.register_blueprint(create_integration_blueprint(get_db))
 
 @app.teardown_appcontext
 def close_db(exception=None):
@@ -1007,7 +1023,7 @@ def export_selected():
     export_db_path = TEMP_DIR / export_filename
 
     conn_exp = sqlite3.connect(export_db_path)
-    conn_exp.execute("CREATE TABLE IF NOT EXISTS prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, category TEXT, tool TEXT, prompt_type TEXT, content TEXT, notes TEXT, thumbnail TEXT, parent_id INTEGER, group_id INTEGER, created_at TEXT, updated_at TEXT)")
+    conn_exp.execute("CREATE TABLE IF NOT EXISTS prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, category TEXT, tool TEXT, prompt_type TEXT, content TEXT, notes TEXT, thumbnail TEXT, parent_id INTEGER, group_id INTEGER, created_at TEXT, updated_at TEXT, sync_id TEXT, pinned_at TEXT, revision INTEGER, source TEXT)")
     conn_exp.execute("CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
     conn_exp.execute("CREATE TABLE IF NOT EXISTS prompt_tags (prompt_id INTEGER, tag_id INTEGER)")
 
@@ -1272,10 +1288,10 @@ def import_prompthub_json_snapshot(conn: sqlite3.Connection, snapshot: dict) -> 
                 conn.execute(
                     """
                     UPDATE prompts
-                    SET title = ?, category = ?, tool = ?, prompt_type = ?, content = ?, notes = ?, created_at = ?, updated_at = ?, sync_id = ?
+                    SET title = ?, category = ?, tool = ?, prompt_type = ?, content = ?, notes = ?, created_at = ?, updated_at = ?, sync_id = ?, revision = revision + 1, source = ?
                     WHERE id = ?
                     """,
-                    (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id, prompt_id),
+                    (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id, "json_sync", prompt_id),
                 )
                 save_tags(conn, prompt_id, ", ".join(tags))
                 updated += 1
@@ -1287,10 +1303,10 @@ def import_prompthub_json_snapshot(conn: sqlite3.Connection, snapshot: dict) -> 
 
         cur = conn.execute(
             """
-            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at, sync_id)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)
+            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at, sync_id, source)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)
             """,
-            (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id),
+            (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id, "json_sync"),
         )
         new_prompt_id = cur.lastrowid
         save_tags(conn, new_prompt_id, ", ".join(tags))
@@ -1459,9 +1475,9 @@ def import_db_commit():
             group_id_main = None
 
         cur = conn_main.execute(
-            """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (p["title"], p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], final_thumb_path, group_id_main, now, now)
+            """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, sync_id, source, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (p["title"], p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], final_thumb_path, group_id_main, str(uuid.uuid4()).upper(), "database_import", now, now)
         )
         new_prompt_id = cur.lastrowid
 
@@ -1746,7 +1762,11 @@ def toggle_prompt_pin(prompt_id: int):
             return jsonify({"success": False, "error": "Prompt not found"}), 404
         pinned = not bool(row["pinned_at"])
         pinned_at = datetime.utcnow().isoformat(timespec="seconds") if pinned else None
-        conn.execute("UPDATE prompts SET pinned_at = ? WHERE id = ?", (pinned_at, prompt_id))
+        now = datetime.utcnow().isoformat()
+        conn.execute(
+            "UPDATE prompts SET pinned_at = ?, updated_at = ?, revision = revision + 1, source = ? WHERE id = ?",
+            (pinned_at, now, "ui", prompt_id),
+        )
     return jsonify({"success": True, "pinned": pinned, "pinned_at": pinned_at})
 
 
@@ -1896,8 +1916,8 @@ def upload_thumb_api(prompt_id):
         now = datetime.utcnow().isoformat()
         with get_db() as conn:
             conn.execute(
-                "UPDATE prompts SET thumbnail = ?, updated_at = ? WHERE id = ?",
-                (new_path, now, prompt_id)
+                "UPDATE prompts SET thumbnail = ?, updated_at = ?, revision = revision + 1, source = ? WHERE id = ?",
+                (new_path, now, "ui", prompt_id)
             )
             conn.commit()
 
@@ -1976,10 +1996,10 @@ def new_prompt():
         conn = get_db()
         conn.execute(
             """
-            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, sync_id, source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (title, category, tool, prompt_type, content, notes, thumb_path, group_id, now, now),
+            (title, category, tool, prompt_type, content, notes, thumb_path, group_id, str(uuid.uuid4()).upper(), "ui", now, now),
         )
         new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         save_tags(conn, new_id, tags_str)
@@ -2048,10 +2068,10 @@ def edit_prompt(prompt_id: int):
         conn.execute(
             """
             UPDATE prompts
-            SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, group_id=?, updated_at=?
+            SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, group_id=?, updated_at=?, revision=revision+1, source=?
             WHERE id=?
             """,
-            (title, category, tool, prompt_type, content, notes, new_thumb, group_id, now, prompt_id),
+            (title, category, tool, prompt_type, content, notes, new_thumb, group_id, now, "ui", prompt_id),
         )
         save_tags(conn, prompt_id, tags_str)
         conn.commit()
@@ -2110,10 +2130,10 @@ def duplicate_prompt(prompt_id: int):
     now = datetime.utcnow().isoformat()
     conn.execute(
         """
-        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (new_title, p["category"], p["tool"], p["prompt_type"], new_content, p["notes"], new_thumb, parent_id, p["group_id"], now, now),
+        (new_title, p["category"], p["tool"], p["prompt_type"], new_content, p["notes"], new_thumb, parent_id, p["group_id"], str(uuid.uuid4()).upper(), "ui", now, now),
     )
     new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
@@ -2134,7 +2154,10 @@ def delete_prompt(prompt_id: int):
     thumb = row["thumbnail"] if row else None
 
     conn.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
-    conn.execute("UPDATE prompts SET parent_id = NULL WHERE parent_id = ?", (prompt_id,))
+    conn.execute(
+        "UPDATE prompts SET parent_id = NULL, updated_at = ?, revision = revision + 1, source = ? WHERE parent_id = ?",
+        (datetime.utcnow().isoformat(), "ui", prompt_id),
+    )
     conn.commit()
     conn.close()
 
@@ -2289,10 +2312,10 @@ def import_prompt():
 
                 conn.execute(
                     """
-                    INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, sync_id, source, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (title, cat, tool, ptype, p["content"], pnotes, None, now, now),
+                    (title, cat, tool, ptype, p["content"], pnotes, None, str(uuid.uuid4()).upper(), "text_import", now, now),
                 )
 
         conn.commit()
@@ -2361,7 +2384,10 @@ def delete_group():
     gid = request.form.get("id", "").strip()
     if gid.isdigit():
         with get_db() as conn:
-            conn.execute("UPDATE prompts SET group_id = NULL WHERE group_id = ?", (int(gid),))
+            conn.execute(
+                "UPDATE prompts SET group_id = NULL, updated_at = ?, revision = revision + 1, source = ? WHERE group_id = ?",
+                (datetime.utcnow().isoformat(), "ui", int(gid)),
+            )
             conn.execute("DELETE FROM prompt_groups WHERE id = ?", (int(gid),))
             conn.commit()
     return redirect(url_for("manage"))
@@ -2916,23 +2942,29 @@ def bulk_update():
         with get_db() as conn:
             for pid in ids:
                 now_str = datetime.utcnow().isoformat()
+                prompt_changed = False
                 if cat:
-                    conn.execute("UPDATE prompts SET category=?, updated_at=? WHERE id=?", (cat, now_str, pid))
+                    conn.execute("UPDATE prompts SET category=? WHERE id=?", (cat, pid))
+                    prompt_changed = True
                 if tool:
-                    conn.execute("UPDATE prompts SET tool=?, updated_at=? WHERE id=?", (tool, now_str, pid))
+                    conn.execute("UPDATE prompts SET tool=? WHERE id=?", (tool, pid))
+                    prompt_changed = True
                 if ptype:
-                    conn.execute("UPDATE prompts SET prompt_type=?, updated_at=? WHERE id=?", (ptype, now_str, pid))
+                    conn.execute("UPDATE prompts SET prompt_type=? WHERE id=?", (ptype, pid))
+                    prompt_changed = True
                 if bulk_group is not None and str(bulk_group).strip() != "":
                     bg = str(bulk_group).strip()
                     if bg.lower() == "none":
-                        conn.execute("UPDATE prompts SET group_id=NULL, updated_at=? WHERE id=?", (now_str, pid))
+                        conn.execute("UPDATE prompts SET group_id=NULL WHERE id=?", (pid,))
+                        prompt_changed = True
                     else:
                         try:
                             gid = int(bg)
                         except ValueError:
                             gid = None
                         if gid is not None:
-                            conn.execute("UPDATE prompts SET group_id=?, updated_at=? WHERE id=?", (gid, now_str, pid))
+                            conn.execute("UPDATE prompts SET group_id=? WHERE id=?", (gid, pid))
+                            prompt_changed = True
                 if tags_str:
                     raw_tags = [t.strip() for t in tags_str.split(',') if t.strip()]
                     for tag_name in raw_tags:
@@ -2945,7 +2977,12 @@ def bulk_update():
                             conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (int(pid), tag_id))
                         except sqlite3.IntegrityError:
                             pass
-                    conn.execute("UPDATE prompts SET updated_at=? WHERE id=?", (now_str, pid))
+                    prompt_changed = True
+                if prompt_changed:
+                    conn.execute(
+                        "UPDATE prompts SET updated_at=?, revision=revision+1, source=? WHERE id=?",
+                        (now_str, "ui_bulk", pid),
+                    )
             conn.commit()
     return redirect(url_for("index"))
 
@@ -3130,8 +3167,8 @@ def refine_prompt(prompt_id: int):
         if save_action == "overwrite":
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    "UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?",
-                    (current_content, datetime.utcnow().isoformat(), prompt_id)
+                    "UPDATE prompts SET content = ?, updated_at = ?, revision = revision + 1, source = ? WHERE id = ?",
+                    (current_content, datetime.utcnow().isoformat(), "ui_refine", prompt_id)
                 )
                 conn.commit()
             flash("Prompt updated.")
@@ -3143,8 +3180,8 @@ def refine_prompt(prompt_id: int):
 
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         new_title,
                         prompt["category"],
@@ -3155,6 +3192,8 @@ def refine_prompt(prompt_id: int):
                         prompt["thumbnail"],
                         parent_id,
                         (prompt["group_id"] if ("group_id" in prompt.keys()) else None),
+                        str(uuid.uuid4()).upper(),
+                        "ui_refine",
                         datetime.utcnow().isoformat(),
                         datetime.utcnow().isoformat(),
                     )
@@ -3167,8 +3206,8 @@ def refine_prompt(prompt_id: int):
             new_title = request.form.get("new_title") or f"{prompt['title']} (Refined)"
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         new_title,
                         prompt["category"],
@@ -3179,6 +3218,8 @@ def refine_prompt(prompt_id: int):
                         prompt["thumbnail"],
                         None,
                         (prompt["group_id"] if ("group_id" in prompt.keys()) else None),
+                        str(uuid.uuid4()).upper(),
+                        "ui_refine",
                         datetime.utcnow().isoformat(),
                         datetime.utcnow().isoformat(),
                     ),
@@ -3221,10 +3262,10 @@ def save_from_use(prompt_id: int):
             new_title = f"{prompt['title']} (Variant)"
             conn.execute(
                 """
-                INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], content, prompt["notes"], prompt["thumbnail"], parent_id, (prompt["group_id"] if ("group_id" in prompt.keys()) else None), now, now),
+                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], content, prompt["notes"], prompt["thumbnail"], parent_id, (prompt["group_id"] if ("group_id" in prompt.keys()) else None), str(uuid.uuid4()).upper(), "ui_use", now, now),
             )
             new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             # Copy tags to the variant
@@ -3236,8 +3277,8 @@ def save_from_use(prompt_id: int):
 
         # overwrite
         conn.execute(
-            "UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?",
-            (content, now, prompt_id),
+            "UPDATE prompts SET content = ?, updated_at = ?, revision = revision + 1, source = ? WHERE id = ?",
+            (content, now, "ui_use", prompt_id),
         )
         conn.commit()
 
@@ -3688,11 +3729,11 @@ def ext_save_prompt():
         cur = conn.execute(
             """
             INSERT INTO prompts
-                (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
+                (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
             VALUES
-                (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)
             """,
-            (title, category, tool, prompt_type, content, notes or None, group_id, now, now),
+            (title, category, tool, prompt_type, content, notes or None, group_id, str(uuid.uuid4()).upper(), "browser_extension", now, now),
         )
         prompt_id = cur.lastrowid
 
@@ -3734,12 +3775,16 @@ if __name__ == "__main__":
     # This preserves the existing prompts.db and adds only missing columns/indexes.
     init_db()
 
-    port = int(os.environ.get("PROMPTHUB_PORT", find_free_port()))
+    configured_port = INTEGRATION_RUNTIME_CONFIG.get("port")
+    port = int(os.environ.get("PROMPTHUB_PORT", configured_port or find_free_port()))
+    host = os.environ.get("PROMPTHUB_HOST", INTEGRATION_RUNTIME_CONFIG.get("host") or "127.0.0.1")
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        host = "127.0.0.1"
 
-    print(f"Starting PromptHub on http://127.0.0.1:{port}")
+    print(f"Starting PromptHub on http://{host}:{port}")
 
     app.run(
-        host="127.0.0.1",
+        host=host,
         port=port,
         debug=False,
         use_reloader=False

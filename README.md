@@ -57,6 +57,27 @@ Open in your browser:
 http://127.0.0.1:5000
 ```
 
+## Local Integration API v1
+
+PromptHub includes a local-only, versioned JSON API at `/api/integration/v1` for future ChatGPT app/plugin integration. It supports authenticated prompt search, retrieval, creation, optimistic-concurrency updates, related versions, organisation, dry runs, metadata, and integration change history. Existing UI and browser-extension routes remain unchanged.
+
+Run the database migration once before enabling API clients:
+
+```powershell
+.\env\Scripts\python.exe .\tools\migrate_integration_api.py
+```
+
+View non-secret status or explicitly retrieve the local bearer token:
+
+```powershell
+.\env\Scripts\python.exe .\tools\manage_integration_api.py status
+.\env\Scripts\python.exe .\tools\manage_integration_api.py show-token
+```
+
+The token, Flask session secret, API settings, and integration logs are stored outside the repository in `%LOCALAPPDATA%\PromptHub` by default. The server remains bound to `127.0.0.1` unless an allowed local-loopback value is configured.
+
+See [Integration API v1 documentation](docs/INTEGRATION_API_V1.md) for configuration, security assumptions, endpoint examples, errors, rollback, and future ChatGPT integration guidance.
+
 ---
 
 ## 🧠 What Prompt Hub Is Good For
