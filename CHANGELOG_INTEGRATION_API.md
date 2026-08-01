@@ -61,3 +61,12 @@ No table recreation, column deletion, prompt deletion, destructive conversion, o
 ## Dependencies
 
 No new dependency was added. The implementation uses Flask, Flask-CORS, and Python standard-library modules already available to PromptHub.
+
+## Applied migration and verification
+
+- Created and verified immediate pre-migration database backup `A:\AI\Prompt library\Plib_Backups\Plib_PreIntegrationMigration_20260801_085130`.
+- Applied `001_integration_api_v1`; post-migration `PRAGMA integrity_check` returned `ok`.
+- Confirmed 832 prompts before and after migration, 832 distinct populated `sync_id` values, revisions initialised to 1, and zero initial integration-audit rows.
+- Final automated result: 14 tests passed with temporary databases and temporary output directories.
+- Live read-only smoke result: PromptHub launched and restarted; 832 prompts remained; UI/search/edit/history/management/JSON sync/extension routes and Integration API health/search/retrieval passed; unauthenticated writes returned 401; untrusted CORS origins were denied.
+- Isolated write smoke result: Integration create/retrieve/dry-run/update/conflict/version/organisation/history plus existing UI create/edit/pin/history/saved-view/search/export/management and browser-extension create all passed without touching the live database.
