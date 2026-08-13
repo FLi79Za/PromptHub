@@ -3,3 +3,4 @@ requests>=2.31.0
 pillow
 qrcode[pil]
 flask-cors
+pypdf

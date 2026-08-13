@@ -22,6 +22,7 @@ Prompt Hub helps you:
 * Store visual and contextual references
 * Capture prompts directly from the web
 * Run optional local LLM refinement via Ollama
+* Build reusable AI Actions from editable system instructions, task templates, models, and local knowledge
 * Sync prompt libraries between desktop and iOS
 
 It is designed for serious AI users managing real prompt systems.
@@ -334,6 +335,22 @@ Prompt Hub can integrate with locally hosted Ollama models for:
 Everything remains fully local.
 
 Supported models depend on your Ollama installation.
+
+### AI Actions and Knowledge Library
+
+Open **AI** in the top navigation to manage reusable System Instructions, Prompt Templates,
+AI Actions, and local Knowledge Collections. The upgraded **Use Prompt** screen runs the
+selected action against the editable Final Prompt and always shows a review result before
+anything is applied. Applying a result changes only the on-screen Final Prompt; saving a
+variant or overwriting the stored prompt remains a separate, explicit action.
+
+Knowledge documents are extracted, split into overlapping chunks, embedded with a
+collection-specific Ollama embedding model, and stored in the existing SQLite database.
+At execution time PromptHub embeds the task/current prompt, ranks chunks by cosine
+similarity, and supplies only the best passages as clearly delimited reference context.
+The Ollama host can be changed with `OLLAMA_HOST`; each collection has an editable
+embedding model. See [AI Actions and Knowledge Library](docs/AI_ACTIONS_KNOWLEDGE.md)
+for setup, usage, schema, testing, and limitations.
 
 ---
 

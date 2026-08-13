@@ -17,7 +17,27 @@ from PIL import Image, ImageSequence
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session, g, jsonify
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
+from ai_library import (
+    AILibraryError,
+    DEFAULT_EMBEDDING_MODEL,
+    apply_ai_migrations,
+    build_action_request,
+    create_action,
+    create_collection,
+    create_resource,
+    duplicate_action,
+    duplicate_resource,
+    get_action_for_execution,
+    prepare_document,
+    rebuild_collection,
+    retrieve_knowledge,
+    save_prepared_document,
+    update_action,
+    update_collection,
+    update_resource,
+)
 from integration_api import create_integration_blueprint
+from prompt_service import apply_integration_migrations
 from integration_config import (
     configure_integration_logging,
     get_or_create_token,
@@ -378,6 +398,11 @@ def init_db() -> None:
             conn.execute("ALTER TABLE prompt_uses ADD COLUMN source TEXT;")
         except Exception:
             pass
+
+    # Run both additive schema families so fresh databases and upgraded databases behave alike.
+    apply_integration_migrations(conn)
+    # AI tables do not rewrite existing prompt rows.
+    apply_ai_migrations(conn)
 
     conn.commit()
     conn.close()
@@ -2194,6 +2219,9 @@ def render_prompt(prompt_id: int):
         ORDER BY id ASC
     """, (root_id, root_id)).fetchall()
 
+    ai_actions = conn.execute(
+        "SELECT id, name, model, allow_runtime_instruction FROM ai_actions WHERE enabled=1 ORDER BY name COLLATE NOCASE"
+    ).fetchall()
     conn.close()
 
     content = prompt["content"]
@@ -2218,6 +2246,7 @@ def render_prompt(prompt_id: int):
         placeholders_meta=placeholders_meta,
         base_text=base_text,
         final_text=final_text,
+        ai_actions=ai_actions,
     )
 
 
@@ -2423,6 +2452,302 @@ def delete_tool():
             conn.execute("DELETE FROM tools WHERE name=?", (n,))
             conn.commit()
     return redirect(url_for("manage"))
+
+
+# -------------------------
+# AI Actions + Knowledge Library
+# -------------------------
+
+def _form_bool(name: str, default: bool = False) -> bool:
+    value = request.form.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ai_redirect(anchor: str = ""):
+    target = url_for("ai_manage")
+    return redirect(f"{target}#{anchor}" if anchor else target)
+
+
+@app.route("/ai", methods=["GET"])
+def ai_manage():
+    init_db()
+    with get_db() as conn:
+        systems = conn.execute("SELECT * FROM ai_resources WHERE kind='system' ORDER BY name COLLATE NOCASE").fetchall()
+        templates = conn.execute("SELECT * FROM ai_resources WHERE kind='template' ORDER BY name COLLATE NOCASE").fetchall()
+        actions = conn.execute(
+            """
+            SELECT a.*, s.name AS system_name, t.name AS template_name, k.name AS knowledge_name
+            FROM ai_actions a
+            LEFT JOIN ai_resources s ON s.id=a.system_instruction_id
+            LEFT JOIN ai_resources t ON t.id=a.prompt_template_id
+            LEFT JOIN ai_knowledge_collections k ON k.id=a.knowledge_collection_id
+            ORDER BY a.name COLLATE NOCASE
+            """
+        ).fetchall()
+        collections = conn.execute(
+            """
+            SELECT c.*, COUNT(DISTINCT d.id) AS document_count, COUNT(ch.id) AS chunk_count
+            FROM ai_knowledge_collections c
+            LEFT JOIN ai_knowledge_documents d ON d.collection_id=c.id
+            LEFT JOIN ai_knowledge_chunks ch ON ch.document_id=d.id
+            GROUP BY c.id ORDER BY c.name COLLATE NOCASE
+            """
+        ).fetchall()
+        documents = conn.execute(
+            "SELECT * FROM ai_knowledge_documents ORDER BY filename COLLATE NOCASE"
+        ).fetchall()
+    docs_by_collection: dict[str, list] = {}
+    for document in documents:
+        docs_by_collection.setdefault(document["collection_id"], []).append(document)
+    return render_template(
+        "ai_manage.html",
+        systems=systems,
+        templates=templates,
+        actions=actions,
+        collections=collections,
+        docs_by_collection=docs_by_collection,
+        ollama_models=ollama_list_models(),
+        default_embedding_model=DEFAULT_EMBEDDING_MODEL,
+    )
+
+
+@app.route("/ai/resources", methods=["POST"])
+def ai_resource_create():
+    kind = (request.form.get("kind") or "").strip()
+    try:
+        with get_db() as conn:
+            create_resource(
+                conn, kind=kind, name=request.form.get("name", ""),
+                description=request.form.get("description", ""),
+                content=request.form.get("content", ""), enabled=_form_bool("enabled", True),
+            )
+        flash("Reusable AI item created.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("system-instructions" if kind == "system" else "prompt-templates")
+
+
+@app.route("/ai/resources/<resource_id>/update", methods=["POST"])
+def ai_resource_update(resource_id: str):
+    kind = (request.form.get("kind") or "template").strip()
+    try:
+        with get_db() as conn:
+            update_resource(
+                conn, resource_id, name=request.form.get("name", ""),
+                description=request.form.get("description", ""), content=request.form.get("content", ""),
+                enabled=_form_bool("enabled"),
+            )
+        flash("Reusable AI item saved.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("system-instructions" if kind == "system" else "prompt-templates")
+
+
+@app.route("/ai/resources/<resource_id>/duplicate", methods=["POST"])
+def ai_resource_duplicate(resource_id: str):
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT kind FROM ai_resources WHERE id=?", (resource_id,)).fetchone()
+            duplicate_resource(conn, resource_id)
+        flash("Reusable AI item duplicated.")
+        return _ai_redirect("system-instructions" if row and row["kind"] == "system" else "prompt-templates")
+    except AILibraryError as exc:
+        flash(str(exc))
+        return _ai_redirect()
+
+
+@app.route("/ai/resources/<resource_id>/delete", methods=["POST"])
+def ai_resource_delete(resource_id: str):
+    with get_db() as conn:
+        row = conn.execute("SELECT kind FROM ai_resources WHERE id=?", (resource_id,)).fetchone()
+        conn.execute("DELETE FROM ai_resources WHERE id=?", (resource_id,))
+    flash("Reusable AI item deleted. Referencing actions now show no selection.")
+    return _ai_redirect("system-instructions" if row and row["kind"] == "system" else "prompt-templates")
+
+
+def _action_values_from_form() -> dict:
+    return {
+        "name": request.form.get("name", ""),
+        "description": request.form.get("description", ""),
+        "model": request.form.get("model", ""),
+        "system_instruction_id": request.form.get("system_instruction_id", ""),
+        "prompt_template_id": request.form.get("prompt_template_id", ""),
+        "knowledge_collection_id": request.form.get("knowledge_collection_id", ""),
+        "allow_runtime_instruction": _form_bool("allow_runtime_instruction"),
+        "enabled": _form_bool("enabled"),
+    }
+
+
+@app.route("/ai/actions", methods=["POST"])
+def ai_action_create():
+    try:
+        values = _action_values_from_form()
+        values["allow_runtime_instruction"] = _form_bool("allow_runtime_instruction", True)
+        values["enabled"] = _form_bool("enabled", True)
+        with get_db() as conn:
+            create_action(conn, values)
+        flash("AI Action created.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("ai-actions")
+
+
+@app.route("/ai/actions/<action_id>/update", methods=["POST"])
+def ai_action_update(action_id: str):
+    try:
+        with get_db() as conn:
+            update_action(conn, action_id, _action_values_from_form())
+        flash("AI Action saved.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("ai-actions")
+
+
+@app.route("/ai/actions/<action_id>/duplicate", methods=["POST"])
+def ai_action_duplicate(action_id: str):
+    try:
+        with get_db() as conn:
+            duplicate_action(conn, action_id)
+        flash("AI Action duplicated.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("ai-actions")
+
+
+@app.route("/ai/actions/<action_id>/delete", methods=["POST"])
+def ai_action_delete(action_id: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM ai_actions WHERE id=?", (action_id,))
+    flash("AI Action deleted.")
+    return _ai_redirect("ai-actions")
+
+
+def _collection_numbers() -> tuple[int, int]:
+    try:
+        return int(request.form.get("chunk_size") or 1800), int(request.form.get("chunk_overlap") or 200)
+    except ValueError as exc:
+        raise AILibraryError("Chunk size and overlap must be whole numbers.") from exc
+
+
+@app.route("/ai/collections", methods=["POST"])
+def ai_collection_create():
+    try:
+        chunk_size, overlap = _collection_numbers()
+        with get_db() as conn:
+            create_collection(
+                conn, name=request.form.get("name", ""), description=request.form.get("description", ""),
+                embedding_model=request.form.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
+                chunk_size=chunk_size, chunk_overlap=overlap,
+            )
+        flash("Knowledge collection created.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/collections/<collection_id>/update", methods=["POST"])
+def ai_collection_update(collection_id: str):
+    try:
+        chunk_size, overlap = _collection_numbers()
+        with get_db() as conn:
+            needs_rebuild = update_collection(
+                conn, collection_id, name=request.form.get("name", ""),
+                description=request.form.get("description", ""),
+                embedding_model=request.form.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
+                chunk_size=chunk_size, chunk_overlap=overlap,
+            )
+        flash("Collection saved. Rebuild the index now." if needs_rebuild else "Collection saved.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/collections/<collection_id>/delete", methods=["POST"])
+def ai_collection_delete(collection_id: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM ai_knowledge_collections WHERE id=?", (collection_id,))
+    flash("Knowledge collection and its local index were deleted. Referencing actions now show no collection.")
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/collections/<collection_id>/documents", methods=["POST"])
+def ai_document_import(collection_id: str):
+    upload = request.files.get("document")
+    if not upload or not upload.filename:
+        flash("Choose a document to import.")
+        return _ai_redirect("knowledge-library")
+    filename = secure_filename(upload.filename)
+    data = upload.read(10 * 1024 * 1024 + 1)
+    if len(data) > 10 * 1024 * 1024:
+        flash("Knowledge documents are limited to 10 MB each.")
+        return _ai_redirect("knowledge-library")
+    try:
+        with get_db() as conn:
+            collection = conn.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
+        if not collection:
+            raise AILibraryError("Knowledge collection was not found.")
+        prepared = prepare_document(filename, data, collection, ollama_embed)
+        with get_db() as conn:
+            save_prepared_document(conn, collection_id, prepared)
+        flash(f"Imported or updated and indexed {filename} ({len(prepared['chunks'])} chunks).")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/documents/<document_id>/delete", methods=["POST"])
+def ai_document_delete(document_id: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM ai_knowledge_documents WHERE id=?", (document_id,))
+    flash("Knowledge document and its chunks were removed.")
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/collections/<collection_id>/rebuild", methods=["POST"])
+def ai_collection_rebuild(collection_id: str):
+    try:
+        with get_db() as conn:
+            count = rebuild_collection(conn, collection_id, ollama_embed)
+        flash(f"Knowledge index rebuilt ({count} chunks).")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/api/ai/actions/<action_id>/execute", methods=["POST"])
+def api_ai_action_execute(action_id: str):
+    init_db()
+    data = request.get_json(silent=True) or {}
+    current_prompt = str(data.get("content") or "").strip()
+    runtime_instruction = str(data.get("instruction") or "").strip()
+    if not current_prompt:
+        return jsonify({"ok": False, "error": "The Final Prompt is empty."}), 400
+    try:
+        with get_db() as conn:
+            action = get_action_for_execution(conn, action_id)
+            if runtime_instruction and not action["allow_runtime_instruction"]:
+                raise AILibraryError("This action does not allow a one-off instruction.")
+            passages = []
+            if action["knowledge_collection_id"]:
+                query = "\n\n".join(filter(None, [action.get("template_content"), runtime_instruction, current_prompt]))
+                passages = retrieve_knowledge(conn, action["knowledge_collection_id"], query, ollama_embed)
+        model = str(data.get("model") or action.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL).strip()
+        models = ollama_list_models()
+        if not models:
+            raise AILibraryError("Ollama is unavailable or has no installed models.")
+        if model not in models:
+            raise AILibraryError(f"The selected Ollama model is not installed: {model}")
+        system, prompt = build_action_request(action, current_prompt, runtime_instruction, passages)
+        result = ollama_generate(prompt=prompt, model=model, system=system)
+        session["ollama_model"] = model
+        return jsonify({
+            "ok": True, "content": result, "action": action["name"], "model": model,
+            "sources": [{"filename": item["filename"], "score": round(item["score"], 4)} for item in passages],
+        })
+    except AILibraryError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 # ----------------------------
@@ -3059,7 +3384,8 @@ def restore_backup():
 # Ollama Integration
 # ---------------------------
 OLLAMA_DEFAULT_MODEL = "gemma3:4b"
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+OLLAMA_URL = f"{OLLAMA_HOST}/api/generate"
 
 
 # Cached readiness detection (prevents hammering /api/tags)
@@ -3081,7 +3407,7 @@ def ollama_is_ready_cached(ttl_seconds: float = 10.0) -> bool:
 
 def ollama_list_models():
     try:
-        r = requests.get("http://localhost:11434/api/tags", timeout=1.5)
+        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=1.5)
         r.raise_for_status()
         data = r.json()
         models = []
@@ -3104,10 +3430,54 @@ def ollama_generate(prompt: str, model: str | None = None, system: str | None = 
     if images:
         payload["images"] = images
 
-    r = requests.post(OLLAMA_URL, json=payload, timeout=120)
-    r.raise_for_status()
-    data = r.json()
-    return data.get("response", "").strip()
+    try:
+        r = requests.post(OLLAMA_URL, json=payload, timeout=120)
+        r.raise_for_status()
+        data = r.json()
+    except requests.Timeout as exc:
+        raise AILibraryError("Ollama timed out after 120 seconds.") from exc
+    except requests.ConnectionError as exc:
+        raise AILibraryError(f"Ollama is unavailable at {OLLAMA_HOST}.") from exc
+    except requests.RequestException as exc:
+        detail = ""
+        if getattr(exc, "response", None) is not None:
+            try:
+                detail = (exc.response.json().get("error") or "").strip()
+            except Exception:
+                detail = ""
+        raise AILibraryError(detail or f"Ollama request failed: {exc}") from exc
+    response = str(data.get("response") or "").strip()
+    if not response:
+        raise AILibraryError("Ollama returned an empty response.")
+    return response
+
+
+def ollama_embed(text: str, model: str) -> list[float]:
+    """Create a single embedding through Ollama's current /api/embed endpoint."""
+    try:
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/embed",
+            json={"model": model, "input": text},
+            timeout=120,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except requests.Timeout as exc:
+        raise AILibraryError("Knowledge embedding timed out after 120 seconds.") from exc
+    except requests.ConnectionError as exc:
+        raise AILibraryError(f"Ollama is unavailable at {OLLAMA_HOST}.") from exc
+    except requests.RequestException as exc:
+        detail = ""
+        if getattr(exc, "response", None) is not None:
+            try:
+                detail = (exc.response.json().get("error") or "").strip()
+            except Exception:
+                detail = ""
+        raise AILibraryError(detail or f"Knowledge embedding failed: {exc}") from exc
+    embeddings = payload.get("embeddings") or []
+    if not embeddings or not isinstance(embeddings[0], list):
+        raise AILibraryError("Ollama returned no embedding vector.")
+    return [float(value) for value in embeddings[0]]
 
 @app.route("/prompt/<int:prompt_id>/refine", methods=["GET", "POST"])
 def refine_prompt(prompt_id: int):

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}PromptHub{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='prompthub-modern.css') }}">
 </head>
 <body>
@@ -17,6 +18,7 @@
         <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Library</a>
         <a href="{{ url_for('new_prompt') }}">New</a>
         <a href="{{ url_for('descriptors') }}">Builders</a>
+        <a href="{{ url_for('ai_manage') }}" class="{% if request.endpoint and (request.endpoint == 'ai_manage' or request.endpoint.startswith('ai_')) %}active{% endif %}">AI</a>
         <a href="{{ url_for('json_sync_page') }}">JSON Sync</a>
         <a href="{{ url_for('manage') }}">Manage</a>
       </nav>
