@@ -21,14 +21,18 @@ import app as prompthub  # noqa: E402
 from ai_library import (  # noqa: E402
     AILibraryError,
     apply_ai_migrations,
+    audit_collection,
     build_action_request,
     create_action,
     create_collection,
     create_resource,
+    extract_document_text,
     get_action_for_execution,
     prepare_document,
+    preview_document_import,
     retrieve_knowledge,
     save_prepared_document,
+    record_document_failure,
 )
 
 
@@ -150,6 +154,69 @@ class AILibraryServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(AILibraryError, "disabled"):
             get_action_for_execution(self.connection, action_id)
 
+    def test_builder_migration_and_provenance_are_additive(self):
+        collection_id = create_collection(
+            self.connection, name="Versioned Docs", knowledge_domain="Example SDK", version_label="3.1",
+            embedding_model="test",
+        )
+        collection = self.connection.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
+        prepared = prepare_document(
+            "01_overview.md", b"# Overview\n\nExample SDK 3.1 uses documented widgets.", collection, keyword_embed,
+            ingestion_mode="optimised", provenance={"source_file": "manual.pdf", "source_pages": "2-3", "topic": "Overview"},
+        )
+        save_prepared_document(self.connection, collection_id, prepared)
+        row = self.connection.execute("SELECT * FROM ai_knowledge_documents WHERE collection_id=?", (collection_id,)).fetchone()
+        self.assertEqual("optimised", row["ingestion_mode"])
+        self.assertEqual("manual.pdf", row["original_filename"])
+        self.assertEqual("2-3", row["source_pages"])
+        self.assertEqual(3, self.connection.execute("SELECT version FROM schema_migrations WHERE version=3").fetchone()[0])
+
+    def test_import_preview_flags_duplicate_and_version_conflict(self):
+        collection_id = create_collection(self.connection, name="Docs 2.3", version_label="2.3", embedding_model="test")
+        collection = self.connection.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
+        data = b"Documented camera movement syntax for the current model."
+        prepared = prepare_document("camera.md", data, collection, keyword_embed)
+        save_prepared_document(self.connection, collection_id, prepared)
+        preview = preview_document_import(
+            self.connection, collection_id, "copy.md", data, ingestion_mode="merge",
+            provenance={"version_label": "2.1"},
+        )
+        self.assertEqual("create", preview["operation"])
+        self.assertEqual({"DUPLICATE_CONTENT", "VERSION_CONFLICT"}, {item["code"] for item in preview["warnings"]})
+
+    def test_audit_and_retrieval_expose_diagnostic_details(self):
+        collection_id = create_collection(self.connection, name="Audit Docs", embedding_model="test")
+        collection = self.connection.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
+        prepared = prepare_document("tiny_v1.0.md", b"MiniMax rule.", collection, keyword_embed)
+        save_prepared_document(self.connection, collection_id, prepared)
+        passage = retrieve_knowledge(self.connection, collection_id, "MiniMax", keyword_embed)[0]
+        self.assertIn("chunk_id", passage)
+        self.assertEqual(0, passage["chunk_index"])
+        audit = audit_collection(self.connection, collection_id, available_models=[])
+        self.assertIn("VERY_SMALL", {item["code"] for item in audit["findings"]})
+        self.assertIn("EMBEDDING_MODEL_MISSING", {item["code"] for item in audit["findings"]})
+
+    def test_failed_update_preserves_previous_searchable_chunks(self):
+        collection_id = create_collection(self.connection, name="Protected Update", embedding_model="test")
+        collection = self.connection.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
+        prepared = prepare_document("guide.md", b"MiniMax current documented rule.", collection, keyword_embed)
+        document_id = save_prepared_document(self.connection, collection_id, prepared)
+        original_chunk = self.connection.execute("SELECT content FROM ai_knowledge_chunks WHERE document_id=?", (document_id,)).fetchone()[0]
+        record_document_failure(self.connection, collection_id, "guide.md", "Interrupted embedding request")
+        row = self.connection.execute("SELECT extraction_status, index_error FROM ai_knowledge_documents WHERE id=?", (document_id,)).fetchone()
+        retained_chunk = self.connection.execute("SELECT content FROM ai_knowledge_chunks WHERE document_id=?", (document_id,)).fetchone()[0]
+        self.assertEqual("indexed_with_error", row["extraction_status"])
+        self.assertEqual(original_chunk, retained_chunk)
+
+    def test_blank_pdf_reports_no_extractable_text(self):
+        from pypdf import PdfWriter
+        pdf = io.BytesIO()
+        writer = PdfWriter()
+        writer.add_blank_page(width=100, height=100)
+        writer.write(pdf)
+        with self.assertRaisesRegex(AILibraryError, "no extractable text"):
+            extract_document_text("scanned.pdf", pdf.getvalue())
+
 
 class AIWorkflowRouteTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -215,7 +282,7 @@ class AIWorkflowRouteTests(unittest.TestCase):
             stored = conn.execute("SELECT content FROM prompts WHERE id=?", (self.prompt_id,)).fetchone()[0]
         self.assertEqual("Original prompt remains", stored)
 
-    def test_embedding_failure_does_not_create_document(self):
+    def test_embedding_failure_is_visible_without_partial_chunks(self):
         with prompthub.get_db() as conn:
             collection_id = create_collection(conn, name="Failure Docs", embedding_model="embed:test")
         with patch.object(prompthub, "ollama_embed", side_effect=AILibraryError("Embedding failed cleanly")):
@@ -228,8 +295,11 @@ class AIWorkflowRouteTests(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertIn(b"Embedding failed cleanly", response.data)
         with closing(sqlite3.connect(self.db_path)) as conn:
-            count = conn.execute("SELECT COUNT(*) FROM ai_knowledge_documents").fetchone()[0]
-        self.assertEqual(0, count)
+            document = conn.execute("SELECT extraction_status, index_error FROM ai_knowledge_documents").fetchone()
+            chunks = conn.execute("SELECT COUNT(*) FROM ai_knowledge_chunks").fetchone()[0]
+        self.assertEqual("failed", document[0])
+        self.assertIn("Embedding failed cleanly", document[1])
+        self.assertEqual(0, chunks)
 
 
 if __name__ == "__main__":

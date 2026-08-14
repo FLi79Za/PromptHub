@@ -9,12 +9,14 @@ import math
 import re
 import sqlite3
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable, Iterable
 
 
-AI_SCHEMA_VERSION = 2
+AI_SCHEMA_VERSION = 3
 RESOURCE_KINDS = ("system", "template")
 SUPPORTED_DOCUMENT_EXTENSIONS = {".txt", ".md", ".markdown", ".pdf"}
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
@@ -30,6 +32,16 @@ def utc_now() -> str:
 
 def new_id() -> str:
     return str(uuid.uuid4()).upper()
+
+
+def _column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def _add_column(conn: sqlite3.Connection, table: str, definition: str) -> None:
+    column = definition.split()[0]
+    if not _column_exists(conn, table, column):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
 
 
 def apply_ai_migrations(conn: sqlite3.Connection) -> None:
@@ -131,12 +143,29 @@ def apply_ai_migrations(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    # Knowledge Builder v2 remains additive: existing rows receive conservative defaults.
+    _add_column(conn, "ai_knowledge_collections", "knowledge_domain TEXT")
+    _add_column(conn, "ai_knowledge_collections", "version_label TEXT")
+    _add_column(conn, "ai_knowledge_collections", "revision INTEGER NOT NULL DEFAULT 1")
+    _add_column(conn, "ai_knowledge_collections", "last_rebuilt_at TEXT")
+    _add_column(conn, "ai_knowledge_documents", "original_filename TEXT")
+    _add_column(conn, "ai_knowledge_documents", "source_title TEXT")
+    _add_column(conn, "ai_knowledge_documents", "source_pages TEXT")
+    _add_column(conn, "ai_knowledge_documents", "topic TEXT")
+    _add_column(conn, "ai_knowledge_documents", "status TEXT NOT NULL DEFAULT 'current'")
+    _add_column(conn, "ai_knowledge_documents", "ingestion_mode TEXT NOT NULL DEFAULT 'raw'")
+    _add_column(conn, "ai_knowledge_documents", "provenance_json TEXT NOT NULL DEFAULT '{}'")
+    _add_column(conn, "ai_knowledge_documents", "source_modified_at TEXT")
+    _add_column(conn, "ai_knowledge_documents", "extraction_status TEXT NOT NULL DEFAULT 'indexed'")
+    _add_column(conn, "ai_knowledge_documents", "stored_path TEXT")
+    _add_column(conn, "ai_knowledge_chunks", "section_title TEXT")
+
     migration_exists = conn.execute(
-        "SELECT 1 FROM schema_migrations WHERE version=?", (AI_SCHEMA_VERSION,)
+        "SELECT 1 FROM schema_migrations WHERE version=2"
     ).fetchone()
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
-        (AI_SCHEMA_VERSION, "ai_actions_knowledge_library_v1", utc_now()),
+        (2, "ai_actions_knowledge_library_v1", utc_now()),
     )
     if not migration_exists and not conn.execute("SELECT 1 FROM ai_actions LIMIT 1").fetchone():
         now = utc_now()
@@ -161,6 +190,10 @@ def apply_ai_migrations(conn: sqlite3.Connection) -> None:
             (new_id(), "General Prompt Refinement", "Backward-compatible starter action; edit or duplicate it freely.",
              system_id, template_id, now, now),
         )
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (3, ?, ?)",
+        ("knowledge_base_builder_v2", utc_now()),
+    )
 
 
 def _validate_action_references(conn: sqlite3.Connection, values: dict) -> None:
@@ -286,14 +319,15 @@ def duplicate_action(conn: sqlite3.Connection, action_id: str) -> str:
 
 def create_collection(conn: sqlite3.Connection, *, name: str, description: str = "",
                       embedding_model: str = DEFAULT_EMBEDDING_MODEL,
-                      chunk_size: int = 1800, chunk_overlap: int = 200) -> str:
+                      chunk_size: int = 1800, chunk_overlap: int = 200,
+                      knowledge_domain: str = "", version_label: str = "") -> str:
     collection_id, now = new_id(), utc_now()
     chunk_size = max(400, min(int(chunk_size), 8000))
     chunk_overlap = max(0, min(int(chunk_overlap), chunk_size // 2))
     try:
         conn.execute(
-            "INSERT INTO ai_knowledge_collections(id, name, description, embedding_model, chunk_size, chunk_overlap, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (collection_id, clean_required(name, "Collection name"), description.strip(), clean_required(embedding_model, "Embedding model"), chunk_size, chunk_overlap, now, now),
+            "INSERT INTO ai_knowledge_collections(id, name, description, embedding_model, chunk_size, chunk_overlap, knowledge_domain, version_label, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
+            (collection_id, clean_required(name, "Collection name"), description.strip(), clean_required(embedding_model, "Embedding model"), chunk_size, chunk_overlap, knowledge_domain.strip(), version_label.strip(), now, now),
         )
     except sqlite3.IntegrityError as exc:
         raise AILibraryError("A knowledge collection with that name already exists.") from exc
@@ -302,16 +336,21 @@ def create_collection(conn: sqlite3.Connection, *, name: str, description: str =
 
 def update_collection(conn: sqlite3.Connection, collection_id: str, *, name: str,
                       description: str, embedding_model: str, chunk_size: int,
-                      chunk_overlap: int) -> bool:
+                      chunk_overlap: int, knowledge_domain: str = "",
+                      version_label: str = "", expected_revision: int | None = None) -> bool:
     old = conn.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
     if not old:
         raise AILibraryError("Knowledge collection was not found.")
+    if expected_revision is not None and int(old["revision"]) != int(expected_revision):
+        raise AILibraryError(
+            f"Knowledge collection changed since inspection (expected revision {expected_revision}, current {old['revision']})."
+        )
     chunk_size = max(400, min(int(chunk_size), 8000))
     chunk_overlap = max(0, min(int(chunk_overlap), chunk_size // 2))
     try:
         conn.execute(
-            "UPDATE ai_knowledge_collections SET name=?, description=?, embedding_model=?, chunk_size=?, chunk_overlap=?, updated_at=? WHERE id=?",
-            (clean_required(name, "Collection name"), description.strip(), clean_required(embedding_model, "Embedding model"), chunk_size, chunk_overlap, utc_now(), collection_id),
+            "UPDATE ai_knowledge_collections SET name=?, description=?, embedding_model=?, chunk_size=?, chunk_overlap=?, knowledge_domain=?, version_label=?, revision=revision+1, updated_at=? WHERE id=?",
+            (clean_required(name, "Collection name"), description.strip(), clean_required(embedding_model, "Embedding model"), chunk_size, chunk_overlap, knowledge_domain.strip(), version_label.strip(), utc_now(), collection_id),
         )
     except sqlite3.IntegrityError as exc:
         raise AILibraryError("A knowledge collection with that name already exists.") from exc
@@ -367,7 +406,11 @@ def chunk_text(text: str, chunk_size: int = 1800, overlap: int = 200) -> list[st
 
 
 def prepare_document(filename: str, data: bytes, collection: sqlite3.Row,
-                     embedder: Callable[[str, str], list[float]]) -> dict:
+                     embedder: Callable[[str, str], list[float]], *,
+                     ingestion_mode: str = "raw", provenance: dict | None = None) -> dict:
+    ingestion_mode = ingestion_mode.strip().lower()
+    if ingestion_mode not in {"raw", "optimised", "merge"}:
+        raise AILibraryError("Ingestion mode must be RAW, OPTIMISED, or MERGE.")
     text, media_type = extract_document_text(filename, data)
     chunks = chunk_text(text, int(collection["chunk_size"]), int(collection["chunk_overlap"]))
     if not chunks:
@@ -375,8 +418,10 @@ def prepare_document(filename: str, data: bytes, collection: sqlite3.Row,
     embeddings = [embedder(chunk, collection["embedding_model"]) for chunk in chunks]
     if any(not vector for vector in embeddings):
         raise AILibraryError("The embedding model returned an empty vector.")
+    metadata = dict(provenance or {})
     return {"filename": filename, "media_type": media_type, "text": text,
-            "hash": hashlib.sha256(data).hexdigest(), "chunks": chunks, "embeddings": embeddings}
+            "hash": hashlib.sha256(data).hexdigest(), "chunks": chunks, "embeddings": embeddings,
+            "ingestion_mode": ingestion_mode, "provenance": metadata}
 
 
 def save_prepared_document(conn: sqlite3.Connection, collection_id: str, prepared: dict) -> str:
@@ -389,14 +434,29 @@ def save_prepared_document(conn: sqlite3.Connection, collection_id: str, prepare
         document_id = existing["id"]
         conn.execute("DELETE FROM ai_knowledge_chunks WHERE document_id=?", (document_id,))
         conn.execute(
-            "UPDATE ai_knowledge_documents SET filename=?, media_type=?, content_hash=?, extracted_text=?, indexed_at=?, index_error=NULL, updated_at=? WHERE id=?",
-            (prepared["filename"], prepared["media_type"], prepared["hash"], prepared["text"], now, now, document_id),
+            """UPDATE ai_knowledge_documents SET filename=?, original_filename=?, media_type=?, content_hash=?,
+                extracted_text=?, indexed_at=?, index_error=NULL, source_title=?, source_pages=?, topic=?, status=?,
+                ingestion_mode=?, provenance_json=?, source_modified_at=?, extraction_status='indexed', updated_at=? WHERE id=?""",
+            (prepared["filename"], prepared.get("provenance", {}).get("source_file") or prepared["filename"],
+             prepared["media_type"], prepared["hash"], prepared["text"], now,
+             prepared.get("provenance", {}).get("source_title"), prepared.get("provenance", {}).get("source_pages"),
+             prepared.get("provenance", {}).get("topic"), prepared.get("provenance", {}).get("status", "current"),
+             prepared.get("ingestion_mode", "raw"), json.dumps(prepared.get("provenance", {}), ensure_ascii=False),
+             prepared.get("provenance", {}).get("source_modified_at"), now, document_id),
         )
     else:
         document_id = new_id()
         conn.execute(
-            "INSERT INTO ai_knowledge_documents(id, collection_id, filename, media_type, content_hash, extracted_text, indexed_at, index_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)",
-            (document_id, collection_id, prepared["filename"], prepared["media_type"], prepared["hash"], prepared["text"], now, now, now),
+            """INSERT INTO ai_knowledge_documents(id, collection_id, filename, original_filename, media_type,
+                content_hash, extracted_text, indexed_at, index_error, source_title, source_pages, topic, status,
+                ingestion_mode, provenance_json, source_modified_at, extraction_status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'indexed', ?, ?)""",
+            (document_id, collection_id, prepared["filename"], prepared.get("provenance", {}).get("source_file") or prepared["filename"],
+             prepared["media_type"], prepared["hash"], prepared["text"], now,
+             prepared.get("provenance", {}).get("source_title"), prepared.get("provenance", {}).get("source_pages"),
+             prepared.get("provenance", {}).get("topic"), prepared.get("provenance", {}).get("status", "current"),
+             prepared.get("ingestion_mode", "raw"), json.dumps(prepared.get("provenance", {}), ensure_ascii=False),
+             prepared.get("provenance", {}).get("source_modified_at"), now, now),
         )
     model = conn.execute("SELECT embedding_model FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()[0]
     for index, (content, vector) in enumerate(zip(prepared["chunks"], prepared["embeddings"])):
@@ -404,7 +464,7 @@ def save_prepared_document(conn: sqlite3.Connection, collection_id: str, prepare
             "INSERT INTO ai_knowledge_chunks(id, collection_id, document_id, chunk_index, content, embedding_json, embedding_model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (new_id(), collection_id, document_id, index, content, json.dumps(vector, separators=(",", ":")), model, now),
         )
-    conn.execute("UPDATE ai_knowledge_collections SET updated_at=? WHERE id=?", (now, collection_id))
+    conn.execute("UPDATE ai_knowledge_collections SET revision=revision+1, updated_at=? WHERE id=?", (now, collection_id))
     return document_id
 
 
@@ -431,7 +491,7 @@ def rebuild_collection(conn: sqlite3.Connection, collection_id: str,
             )
             count += 1
         conn.execute("UPDATE ai_knowledge_documents SET indexed_at=?, index_error=NULL, updated_at=? WHERE id=?", (now, now, document["id"]))
-    conn.execute("UPDATE ai_knowledge_collections SET updated_at=? WHERE id=?", (now, collection_id))
+    conn.execute("UPDATE ai_knowledge_collections SET revision=revision+1, last_rebuilt_at=?, updated_at=? WHERE id=?", (now, now, collection_id))
     return count
 
 
@@ -451,7 +511,8 @@ def retrieve_knowledge(conn: sqlite3.Connection, collection_id: str, query: str,
         raise AILibraryError("The action's knowledge collection no longer exists.")
     rows = conn.execute(
         """
-        SELECT c.content, c.embedding_json, d.filename
+        SELECT c.id AS chunk_id, c.chunk_index, c.content, c.embedding_json,
+               d.id AS document_id, d.filename, d.source_title, d.source_pages, d.topic
         FROM ai_knowledge_chunks c JOIN ai_knowledge_documents d ON d.id=c.document_id
         WHERE c.collection_id=? AND c.embedding_model=?
         """, (collection_id, collection["embedding_model"]),
@@ -460,8 +521,213 @@ def retrieve_knowledge(conn: sqlite3.Connection, collection_id: str, query: str,
         raise AILibraryError("This knowledge collection has no current index. Import documents or rebuild it.")
     query_vector = embedder(query, collection["embedding_model"])
     scored = [{"content": row["content"], "filename": row["filename"],
+               "chunk_id": row["chunk_id"], "chunk_index": row["chunk_index"],
+               "document_id": row["document_id"], "source_title": row["source_title"],
+               "source_pages": row["source_pages"], "topic": row["topic"],
                "score": cosine_similarity(query_vector, json.loads(row["embedding_json"]))} for row in rows]
     return sorted(scored, key=lambda item: item["score"], reverse=True)[:max(1, min(limit, 10))]
+
+
+def collection_snapshot(conn: sqlite3.Connection, collection_id: str) -> dict:
+    row = conn.execute(
+        """SELECT c.*, COUNT(DISTINCT d.id) AS document_count, COUNT(ch.id) AS chunk_count
+           FROM ai_knowledge_collections c
+           LEFT JOIN ai_knowledge_documents d ON d.collection_id=c.id
+           LEFT JOIN ai_knowledge_chunks ch ON ch.document_id=d.id
+           WHERE c.id=? GROUP BY c.id""", (collection_id,),
+    ).fetchone()
+    if not row:
+        raise AILibraryError("Knowledge collection was not found.")
+    result = dict(row)
+    result["documents"] = [dict(item) for item in conn.execute(
+        """SELECT d.*, COUNT(ch.id) AS chunk_count FROM ai_knowledge_documents d
+           LEFT JOIN ai_knowledge_chunks ch ON ch.document_id=d.id
+           WHERE d.collection_id=? GROUP BY d.id ORDER BY d.filename COLLATE NOCASE""", (collection_id,),
+    )]
+    for document in result["documents"]:
+        try:
+            document["provenance"] = json.loads(document.pop("provenance_json") or "{}")
+        except json.JSONDecodeError:
+            document["provenance"] = {}
+    return result
+
+
+def list_collection_snapshots(conn: sqlite3.Connection) -> list[dict]:
+    ids = [row[0] for row in conn.execute(
+        "SELECT id FROM ai_knowledge_collections ORDER BY name COLLATE NOCASE"
+    )]
+    return [collection_snapshot(conn, collection_id) for collection_id in ids]
+
+
+def preview_document_import(conn: sqlite3.Connection, collection_id: str, filename: str,
+                            data: bytes, *, ingestion_mode: str = "raw",
+                            provenance: dict | None = None) -> dict:
+    collection = conn.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
+    if not collection:
+        raise AILibraryError("Knowledge collection was not found.")
+    text, media_type = extract_document_text(filename, data)
+    content_hash = hashlib.sha256(data).hexdigest()
+    existing_name = conn.execute(
+        "SELECT id, filename, content_hash, updated_at FROM ai_knowledge_documents WHERE collection_id=? AND filename=? COLLATE NOCASE",
+        (collection_id, filename),
+    ).fetchone()
+    same_hash = conn.execute(
+        "SELECT id, filename FROM ai_knowledge_documents WHERE collection_id=? AND content_hash=?",
+        (collection_id, content_hash),
+    ).fetchall()
+    incoming_version = str((provenance or {}).get("version_label") or "").strip()
+    current_version = str(collection["version_label"] or "").strip()
+    warnings: list[dict] = []
+    if same_hash and not existing_name:
+        warnings.append({"code": "DUPLICATE_CONTENT", "message": "Identical content is already stored under another filename.",
+                         "documents": [row["filename"] for row in same_hash]})
+    if incoming_version and current_version and incoming_version.casefold() != current_version.casefold():
+        warnings.append({"code": "VERSION_CONFLICT", "message": f"Incoming version '{incoming_version}' differs from collection version '{current_version}'."})
+    operation = "update" if existing_name else "create"
+    if existing_name and existing_name["content_hash"] == content_hash:
+        operation = "unchanged"
+    return {
+        "operation": operation, "filename": filename, "media_type": media_type,
+        "content_hash": content_hash, "character_count": len(text),
+        "estimated_chunk_count": len(chunk_text(text, int(collection["chunk_size"]), int(collection["chunk_overlap"]))),
+        "ingestion_mode": ingestion_mode.lower(), "collection_revision": int(collection["revision"]),
+        "existing_document_id": existing_name["id"] if existing_name else None, "warnings": warnings,
+    }
+
+
+def record_document_failure(conn: sqlite3.Connection, collection_id: str, filename: str,
+                            error: str, *, ingestion_mode: str = "raw", provenance: dict | None = None) -> str:
+    now = utc_now()
+    existing = conn.execute(
+        "SELECT id FROM ai_knowledge_documents WHERE collection_id=? AND filename=? COLLATE NOCASE",
+        (collection_id, filename),
+    ).fetchone()
+    document_id = existing["id"] if existing else new_id()
+    values = (filename, (provenance or {}).get("source_file") or filename, ingestion_mode,
+              json.dumps(provenance or {}, ensure_ascii=False), str(error)[:2000], now, document_id)
+    if existing:
+        conn.execute(
+            """UPDATE ai_knowledge_documents SET index_error=?, extraction_status='indexed_with_error',
+               updated_at=? WHERE id=?""", (values[4], now, document_id),
+        )
+    else:
+        conn.execute(
+            """INSERT INTO ai_knowledge_documents(id, collection_id, filename, original_filename, media_type,
+               content_hash, extracted_text, indexed_at, index_error, status, ingestion_mode, provenance_json,
+               extraction_status, created_at, updated_at) VALUES (?, ?, ?, ?, 'application/octet-stream', '', '', NULL,
+               ?, 'current', ?, ?, 'failed', ?, ?)""",
+            (document_id, collection_id, filename, values[1], values[4], ingestion_mode, values[3], now, now),
+        )
+    conn.execute("UPDATE ai_knowledge_collections SET revision=revision+1, updated_at=? WHERE id=?", (now, collection_id))
+    return document_id
+
+
+def rebuild_document(conn: sqlite3.Connection, document_id: str,
+                     embedder: Callable[[str, str], list[float]]) -> int:
+    document = conn.execute("SELECT * FROM ai_knowledge_documents WHERE id=?", (document_id,)).fetchone()
+    if not document:
+        raise AILibraryError("Knowledge document was not found.")
+    if not document["extracted_text"].strip():
+        raise AILibraryError("The document has no extracted text to rebuild.")
+    collection = conn.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (document["collection_id"],)).fetchone()
+    chunks = chunk_text(document["extracted_text"], int(collection["chunk_size"]), int(collection["chunk_overlap"]))
+    vectors = [embedder(chunk, collection["embedding_model"]) for chunk in chunks]
+    if any(not vector for vector in vectors):
+        raise AILibraryError("The embedding model returned an empty vector.")
+    now = utc_now()
+    conn.execute("DELETE FROM ai_knowledge_chunks WHERE document_id=?", (document_id,))
+    for index, (content, vector) in enumerate(zip(chunks, vectors)):
+        conn.execute(
+            "INSERT INTO ai_knowledge_chunks(id, collection_id, document_id, chunk_index, content, embedding_json, embedding_model, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (new_id(), document["collection_id"], document_id, index, content,
+             json.dumps(vector, separators=(",", ":")), collection["embedding_model"], now),
+        )
+    conn.execute("UPDATE ai_knowledge_documents SET indexed_at=?, index_error=NULL, extraction_status='indexed', updated_at=? WHERE id=?", (now, now, document_id))
+    conn.execute("UPDATE ai_knowledge_collections SET revision=revision+1, updated_at=? WHERE id=?", (now, document["collection_id"]))
+    return len(chunks)
+
+
+def duplicate_collection(conn: sqlite3.Connection, collection_id: str, *, new_name: str | None = None) -> str:
+    source = collection_snapshot(conn, collection_id)
+    target_id = create_collection(
+        conn, name=new_name or f"{source['name']} (Copy)", description=source.get("description") or "",
+        embedding_model=source["embedding_model"], chunk_size=source["chunk_size"],
+        chunk_overlap=source["chunk_overlap"], knowledge_domain=source.get("knowledge_domain") or "",
+        version_label=source.get("version_label") or "",
+    )
+    now = utc_now()
+    for document in source["documents"]:
+        document_id = new_id()
+        columns = ["filename", "original_filename", "media_type", "content_hash", "extracted_text", "indexed_at",
+                   "index_error", "source_title", "source_pages", "topic", "status", "ingestion_mode",
+                   "source_modified_at", "extraction_status", "stored_path"]
+        values = [document.get(column) for column in columns]
+        conn.execute(
+            f"INSERT INTO ai_knowledge_documents(id, collection_id, {','.join(columns)}, provenance_json, created_at, updated_at) VALUES (?, ?, {','.join('?' for _ in columns)}, ?, ?, ?)",
+            (document_id, target_id, *values, json.dumps(document.get("provenance", {}), ensure_ascii=False), now, now),
+        )
+        for chunk in conn.execute("SELECT * FROM ai_knowledge_chunks WHERE document_id=? ORDER BY chunk_index", (document["id"],)):
+            conn.execute(
+                "INSERT INTO ai_knowledge_chunks(id, collection_id, document_id, chunk_index, content, embedding_json, embedding_model, section_title, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (new_id(), target_id, document_id, chunk["chunk_index"], chunk["content"], chunk["embedding_json"],
+                 chunk["embedding_model"], chunk["section_title"], now),
+            )
+    conn.execute("UPDATE ai_knowledge_collections SET revision=1, updated_at=? WHERE id=?", (now, target_id))
+    return target_id
+
+
+def audit_collection(conn: sqlite3.Connection, collection_id: str,
+                     available_models: Iterable[str] | None = None) -> dict:
+    snapshot = collection_snapshot(conn, collection_id)
+    documents = snapshot["documents"]
+    findings: list[dict] = []
+    for document in documents:
+        if document["extraction_status"] == "failed" or document["index_error"]:
+            findings.append({"severity": "error", "code": "FAILED_EXTRACTION", "document": document["filename"], "message": document["index_error"] or "Extraction failed."})
+        if not document["extracted_text"].strip():
+            findings.append({"severity": "error", "code": "ZERO_CONTENT", "document": document["filename"], "message": "Document contains no extracted text."})
+        elif len(document["extracted_text"]) < 200:
+            findings.append({"severity": "warning", "code": "VERY_SMALL", "document": document["filename"], "message": "Document is under 200 characters."})
+        elif len(document["extracted_text"]) > 500_000:
+            findings.append({"severity": "warning", "code": "VERY_LARGE", "document": document["filename"], "message": "Document is over 500,000 characters; topic splitting may improve retrieval."})
+        if not document["indexed_at"] or not document["chunk_count"]:
+            findings.append({"severity": "error", "code": "UNINDEXED", "document": document["filename"], "message": "Document has no current searchable chunks."})
+    by_hash = Counter(item["content_hash"] for item in documents if item["content_hash"])
+    for content_hash, count in by_hash.items():
+        if count > 1:
+            names = [item["filename"] for item in documents if item["content_hash"] == content_hash]
+            findings.append({"severity": "warning", "code": "DUPLICATE_CONTENT", "documents": names, "message": "Documents have identical source content."})
+    compact = [(item["filename"], re.sub(r"\s+", " ", item["extracted_text"].lower())[:10000]) for item in documents if item["extracted_text"]]
+    for index, (left_name, left) in enumerate(compact):
+        for right_name, right in compact[index + 1:]:
+            if min(len(left), len(right)) >= 200 and SequenceMatcher(None, left, right).ratio() >= .92:
+                findings.append({"severity": "warning", "code": "NEAR_DUPLICATE", "documents": [left_name, right_name], "message": "Documents appear to contain near-duplicate text."})
+    labels = {match.group(0).casefold() for item in documents for match in re.finditer(r"\bv?\d+(?:\.\d+){1,3}\b", f"{item['filename']} {item.get('source_title') or ''}")}
+    if len(labels) > 1:
+        findings.append({"severity": "warning", "code": "MIXED_VERSION_LABELS", "labels": sorted(labels), "message": "Several version labels occur in document names/titles; review compatibility."})
+    if available_models is not None and snapshot["embedding_model"] not in set(available_models):
+        findings.append({"severity": "error", "code": "EMBEDDING_MODEL_MISSING", "message": f"Embedding model is not available: {snapshot['embedding_model']}"})
+    return {
+        "collection": {key: value for key, value in snapshot.items() if key != "documents"},
+        "finding_count": len(findings), "findings": findings,
+        "rebuild_recommended": any(item["code"] in {"UNINDEXED", "EMBEDDING_MODEL_MISSING"} for item in findings),
+    }
+
+
+def suggested_action_resources(domain: str) -> dict:
+    subject = clean_required(domain, "Knowledge domain")
+    return {
+        "system_instruction": (
+            f"You are an expert prompt architect for {subject}. Treat retrieved passages as technical documentation. "
+            "Preserve the user's core intent and explicit constraints. Apply only relevant documented rules. "
+            "Do not invent unsupported syntax or capabilities. When references are incomplete or conflicting, remain conservative."
+        ),
+        "prompt_template": (
+            f"Transform CURRENT_PROMPT into a production-ready result for {subject} using relevant retrieved reference material. "
+            "Preserve the user's concept and explicit constraints. Improve structure, terminology, sequencing, and domain-specific guidance only where supported by the knowledge base."
+        ),
+        "recommended_actions": [{"name": f"{subject} Director", "purpose": "General grounded transformation and refinement"}],
+    }
 
 
 def get_action_for_execution(conn: sqlite3.Connection, action_id: str) -> dict:

@@ -30,6 +30,7 @@ class IntegrationApiV1Tests(unittest.TestCase):
         prompthub.ollama_models_cached = lambda ttl_seconds=10.0: []
         prompthub.ollama_is_ready_cached = lambda ttl_seconds=10.0: False
         prompthub.ollama_list_models = lambda: []
+        prompthub.ollama_embed = lambda text, model: [1.0, 0.0] if "camera" in text.lower() else [0.0, 1.0]
         prompthub.init_db()
         with closing(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
@@ -123,6 +124,47 @@ class IntegrationApiV1Tests(unittest.TestCase):
         self.assertTrue(data["database"]["connected"])
         self.assertTrue(data["database"]["schema_ready"])
         self.assertNotIn("token", str(data).lower())
+
+    def test_knowledge_builder_preview_apply_retrieve_audit_and_delete(self):
+        preview = self.api_json("POST", "/api/integration/v1/knowledge/collections", {
+            "name": "Disposable Camera Docs", "knowledge_domain": "Camera SDK", "version_label": "1.0",
+            "embedding_model": "embed:test", "dry_run": True,
+        })
+        self.assertEqual(200, preview.status_code)
+        self.assertTrue(preview.get_json()["data"]["dry_run"])
+        created = self.api_json("POST", "/api/integration/v1/knowledge/collections", {
+            "name": "Disposable Camera Docs", "knowledge_domain": "Camera SDK", "version_label": "1.0",
+            "embedding_model": "embed:test", "dry_run": False,
+        }).get_json()["data"]["collection"]
+        collection_id = created["id"]
+        source = {
+            "filename": "camera.md", "content_text": "# Camera movement\n\nUse a documented camera pan for lateral movement.",
+            "ingestion_mode": "optimised", "provenance": {"source_file": "guide.pdf", "source_pages": "4", "topic": "Camera movement", "version_label": "1.0"},
+            "dry_run": True,
+        }
+        source_preview = self.api_json("POST", f"/api/integration/v1/knowledge/collections/{collection_id}/sources", source)
+        self.assertEqual("create", source_preview.get_json()["data"]["preview"]["operation"])
+        source.update({"dry_run": False, "expected_revision": created["revision"]})
+        imported = self.api_json("POST", f"/api/integration/v1/knowledge/collections/{collection_id}/sources", source)
+        self.assertEqual(200, imported.status_code)
+        imported_data = imported.get_json()["data"]
+        document_id = imported_data["document_id"]
+        retrieved = self.api_json("POST", f"/api/integration/v1/knowledge/collections/{collection_id}/search", {"query": "How do I move the camera?"})
+        passage = retrieved.get_json()["data"]["passages"][0]
+        self.assertEqual("camera.md", passage["filename"])
+        self.assertIn("chunk_id", passage)
+        audit = self.api_json("GET", f"/api/integration/v1/knowledge/collections/{collection_id}/audit")
+        self.assertEqual(200, audit.status_code)
+        delete_preview = self.api_json("DELETE", f"/api/integration/v1/knowledge/documents/{document_id}", {"confirm": False})
+        self.assertTrue(delete_preview.get_json()["data"]["dry_run"])
+        current_revision = imported_data["collection"]["revision"]
+        deleted = self.api_json("DELETE", f"/api/integration/v1/knowledge/documents/{document_id}", {"confirm": True, "expected_revision": current_revision})
+        self.assertEqual(200, deleted.status_code)
+        collection_revision = deleted.get_json()["data"]["collection"]["revision"]
+        collection_preview = self.api_json("DELETE", f"/api/integration/v1/knowledge/collections/{collection_id}", {"confirm": False})
+        self.assertTrue(collection_preview.get_json()["data"]["dry_run"])
+        collection_deleted = self.api_json("DELETE", f"/api/integration/v1/knowledge/collections/{collection_id}", {"confirm": True, "expected_revision": collection_revision})
+        self.assertEqual(collection_id, collection_deleted.get_json()["data"]["deleted_collection_id"])
 
     def test_search_prompt_content_tags_and_pagination(self):
         for number in range(3):

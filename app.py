@@ -21,15 +21,21 @@ from ai_library import (
     AILibraryError,
     DEFAULT_EMBEDDING_MODEL,
     apply_ai_migrations,
+    audit_collection,
     build_action_request,
     create_action,
     create_collection,
     create_resource,
+    collection_snapshot,
     duplicate_action,
     duplicate_resource,
+    duplicate_collection,
     get_action_for_execution,
     prepare_document,
+    preview_document_import,
+    rebuild_document,
     rebuild_collection,
+    record_document_failure,
     retrieve_knowledge,
     save_prepared_document,
     update_action,
@@ -220,7 +226,11 @@ def get_db():
     return conn
 
 
-app.register_blueprint(create_integration_blueprint(get_db))
+app.register_blueprint(create_integration_blueprint(
+    get_db,
+    embedder=lambda text, model: ollama_embed(text, model),
+    list_models=lambda: ollama_list_models(),
+))
 
 @app.teardown_appcontext
 def close_db(exception=None):
@@ -2501,6 +2511,14 @@ def ai_manage():
     docs_by_collection: dict[str, list] = {}
     for document in documents:
         docs_by_collection.setdefault(document["collection_id"], []).append(document)
+    ollama_models = ollama_list_models()
+    audit_by_collection = {}
+    for collection in collections:
+        try:
+            with get_db() as conn:
+                audit_by_collection[collection["id"]] = audit_collection(conn, collection["id"], ollama_models)
+        except AILibraryError:
+            audit_by_collection[collection["id"]] = {"findings": [], "finding_count": 0, "rebuild_recommended": False}
     return render_template(
         "ai_manage.html",
         systems=systems,
@@ -2508,7 +2526,8 @@ def ai_manage():
         actions=actions,
         collections=collections,
         docs_by_collection=docs_by_collection,
-        ollama_models=ollama_list_models(),
+        audit_by_collection=audit_by_collection,
+        ollama_models=ollama_models,
         default_embedding_model=DEFAULT_EMBEDDING_MODEL,
     )
 
@@ -2640,6 +2659,8 @@ def ai_collection_create():
                 conn, name=request.form.get("name", ""), description=request.form.get("description", ""),
                 embedding_model=request.form.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
                 chunk_size=chunk_size, chunk_overlap=overlap,
+                knowledge_domain=request.form.get("knowledge_domain", ""),
+                version_label=request.form.get("version_label", ""),
             )
         flash("Knowledge collection created.")
     except AILibraryError as exc:
@@ -2657,6 +2678,8 @@ def ai_collection_update(collection_id: str):
                 description=request.form.get("description", ""),
                 embedding_model=request.form.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
                 chunk_size=chunk_size, chunk_overlap=overlap,
+                knowledge_domain=request.form.get("knowledge_domain", ""),
+                version_label=request.form.get("version_label", ""),
             )
         flash("Collection saved. Rebuild the index now." if needs_rebuild else "Collection saved.")
     except AILibraryError as exc:
@@ -2672,37 +2695,117 @@ def ai_collection_delete(collection_id: str):
     return _ai_redirect("knowledge-library")
 
 
-@app.route("/ai/collections/<collection_id>/documents", methods=["POST"])
-def ai_document_import(collection_id: str):
-    upload = request.files.get("document")
-    if not upload or not upload.filename:
-        flash("Choose a document to import.")
-        return _ai_redirect("knowledge-library")
-    filename = secure_filename(upload.filename)
-    data = upload.read(10 * 1024 * 1024 + 1)
-    if len(data) > 10 * 1024 * 1024:
-        flash("Knowledge documents are limited to 10 MB each.")
-        return _ai_redirect("knowledge-library")
+@app.route("/ai/collections/<collection_id>/duplicate", methods=["POST"])
+def ai_collection_duplicate(collection_id: str):
     try:
         with get_db() as conn:
-            collection = conn.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
-        if not collection:
-            raise AILibraryError("Knowledge collection was not found.")
-        prepared = prepare_document(filename, data, collection, ollama_embed)
-        with get_db() as conn:
-            save_prepared_document(conn, collection_id, prepared)
-        flash(f"Imported or updated and indexed {filename} ({len(prepared['chunks'])} chunks).")
+            duplicate_collection(conn, collection_id, new_name=request.form.get("name") or None)
+        flash("Knowledge collection duplicated with its local documents and index.")
     except AILibraryError as exc:
         flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/collections/<collection_id>/documents", methods=["POST"])
+def ai_document_import(collection_id: str):
+    uploads = [item for field in ("document", "document_folder") for item in request.files.getlist(field) if item and item.filename]
+    if not uploads:
+        flash("Choose one or more documents to import.")
+        return _ai_redirect("knowledge-library")
+    mode = (request.form.get("ingestion_mode") or "raw").lower()
+    imported, failures = 0, []
+    for upload in uploads[:50]:
+        filename = secure_filename(upload.filename)
+        data = upload.read(10 * 1024 * 1024 + 1)
+        provenance = {"source_file": upload.filename, "source_title": request.form.get("source_title", ""),
+                      "source_pages": request.form.get("source_pages", ""), "topic": request.form.get("topic", ""),
+                      "status": request.form.get("status", "current"), "version_label": request.form.get("version_label", "")}
+        try:
+            if len(data) > 10 * 1024 * 1024:
+                raise AILibraryError("Knowledge documents are limited to 10 MB each.")
+            with get_db() as conn:
+                collection = conn.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
+            if not collection:
+                raise AILibraryError("Knowledge collection was not found.")
+            with get_db() as preview_conn:
+                preview = preview_document_import(preview_conn, collection_id, filename, data, ingestion_mode=mode, provenance=provenance)
+            warning_codes = {item["code"] for item in preview["warnings"]}
+            if warning_codes.intersection({"DUPLICATE_CONTENT", "VERSION_CONFLICT"}) and not _form_bool("accept_merge_warnings"):
+                raise AILibraryError(
+                    "Import needs review before apply: " + ", ".join(sorted(warning_codes)) + ". Check the acknowledgement box only after comparing the sources."
+                )
+            prepared = prepare_document(filename, data, collection, ollama_embed, ingestion_mode=mode, provenance=provenance)
+            with get_db() as conn:
+                save_prepared_document(conn, collection_id, prepared)
+            imported += 1
+        except AILibraryError as exc:
+            failures.append(f"{filename}: {exc}")
+            with get_db() as conn:
+                if conn.execute("SELECT 1 FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone():
+                    record_document_failure(conn, collection_id, filename, str(exc), ingestion_mode=mode, provenance=provenance)
+    if imported:
+        flash(f"Imported and indexed {imported} knowledge document(s).")
+    for failure in failures[:5]:
+        flash(failure)
     return _ai_redirect("knowledge-library")
 
 
 @app.route("/ai/documents/<document_id>/delete", methods=["POST"])
 def ai_document_delete(document_id: str):
     with get_db() as conn:
+        row = conn.execute("SELECT collection_id FROM ai_knowledge_documents WHERE id=?", (document_id,)).fetchone()
         conn.execute("DELETE FROM ai_knowledge_documents WHERE id=?", (document_id,))
+        if row:
+            conn.execute("UPDATE ai_knowledge_collections SET revision=revision+1, updated_at=? WHERE id=?", (datetime.utcnow().isoformat(), row["collection_id"]))
     flash("Knowledge document and its chunks were removed.")
     return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/documents/<document_id>/rebuild", methods=["POST"])
+def ai_document_rebuild(document_id: str):
+    try:
+        with get_db() as conn:
+            count = rebuild_document(conn, document_id, ollama_embed)
+        flash(f"Knowledge document rebuilt ({count} chunks).")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/api/ai/documents/<document_id>", methods=["GET"])
+def api_ai_document_inspect(document_id: str):
+    with get_db() as conn:
+        document = conn.execute("SELECT * FROM ai_knowledge_documents WHERE id=?", (document_id,)).fetchone()
+        if not document:
+            return jsonify({"ok": False, "error": "Knowledge document was not found."}), 404
+        chunks = [dict(row) for row in conn.execute(
+            "SELECT id, chunk_index, content, embedding_model FROM ai_knowledge_chunks WHERE document_id=? ORDER BY chunk_index",
+            (document_id,),
+        )]
+    result = dict(document)
+    result.pop("provenance_json", None)
+    return jsonify({"ok": True, "document": result, "chunks": chunks})
+
+
+@app.route("/api/ai/collections/<collection_id>/search", methods=["POST"])
+def api_ai_collection_search(collection_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            passages = retrieve_knowledge(conn, collection_id, str(data.get("query") or ""), ollama_embed, limit=int(data.get("limit") or 5))
+        return jsonify({"ok": True, "passages": passages})
+    except (AILibraryError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/ai/collections/<collection_id>/audit", methods=["GET"])
+def api_ai_collection_audit(collection_id: str):
+    try:
+        with get_db() as conn:
+            result = audit_collection(conn, collection_id, ollama_list_models())
+        return jsonify({"ok": True, **result})
+    except AILibraryError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
 
 
 @app.route("/ai/collections/<collection_id>/rebuild", methods=["POST"])

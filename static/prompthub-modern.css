@@ -41,6 +41,17 @@ button.danger { background: rgba(251,113,133,.12); color: #fecdd3; border-color:
 .document-row { display: flex; justify-content: space-between; gap: .75rem; align-items: center; padding: .65rem 0; border-top: 1px solid var(--border, #333); }
 .document-row small { display: block; opacity: .68; margin-top: .2rem; }
 .upload-row { display: flex; gap: .65rem; flex-wrap: wrap; align-items: center; margin-top: 1rem; }
+.health-panel, .retrieval-tester { margin-top: 1rem; padding: .8rem; border: 1px solid var(--border, #333); border-radius: 10px; }
+.health-finding { display: grid; grid-template-columns: auto 1fr; gap: .3rem .7rem; padding: .55rem 0; border-top: 1px solid var(--border, #333); }
+.health-finding span { grid-column: 1 / -1; opacity: .78; }
+.health-finding.error strong { color: #ff7b7b; }
+.health-finding.warning strong { color: #ffcf66; }
+.retrieval-query { min-width: 280px; flex: 1; }
+.retrieval-results details { margin-top: .55rem; }
+.knowledge-dialog { width: min(920px, 92vw); max-height: 86vh; color: inherit; background: #151820; border: 1px solid var(--border, #333); border-radius: 12px; }
+.knowledge-dialog::backdrop { background: rgba(0,0,0,.72); }
+.knowledge-dialog pre, .retrieval-results pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; padding: .75rem; background: rgba(0,0,0,.24); border-radius: 8px; }
+.dialog-close { float: right; }
 .empty-state { opacity: .68; padding: 1rem; border: 1px dashed var(--border, #333); border-radius: 10px; }
 .ai-review-panel { border: 1px solid rgba(0, 191, 255, .45); background: rgba(0, 191, 255, .06); border-radius: 10px; padding: 1rem; margin-top: .75rem; }
 .ai-review-panel[hidden] { display: none; }
