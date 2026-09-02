@@ -1,0 +1,416 @@
+{
+  "37": {
+    "inputs": {
+      "aspect_ratio": "9:16 (Portrait Widescreen)",
+      "megapixels": 1,
+      "multiple": 12
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Resolution Selector"
+    }
+  },
+  "158": {
+    "inputs": {
+      "filename_prefix": "Ideogram_4.0",
+      "images": [
+        "98:13",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "177": {
+    "inputs": {
+      "seed": -1
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "98:9": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "98:10": {
+    "inputs": {
+      "conditioning": [
+        "98:24",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Conditioning Zero Out"
+    }
+  },
+  "98:11": {
+    "inputs": {
+      "width": [
+        "98:31",
+        1
+      ],
+      "height": [
+        "98:32",
+        1
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyFlux2LatentImage",
+    "_meta": {
+      "title": "Empty Flux 2 Latent"
+    }
+  },
+  "98:12": {
+    "inputs": {
+      "noise": [
+        "98:18",
+        0
+      ],
+      "guider": [
+        "98:155",
+        0
+      ],
+      "sampler": [
+        "98:16",
+        0
+      ],
+      "sigmas": [
+        "98:17",
+        0
+      ],
+      "latent_image": [
+        "98:11",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "98:13": {
+    "inputs": {
+      "samples": [
+        "98:12",
+        0
+      ],
+      "vae": [
+        "98:9",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "98:16": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "98:17": {
+    "inputs": {
+      "steps": [
+        "98:151",
+        1
+      ],
+      "width": [
+        "98:31",
+        1
+      ],
+      "height": [
+        "98:32",
+        1
+      ],
+      "mu": [
+        "98:144",
+        0
+      ],
+      "std": [
+        "98:146",
+        0
+      ]
+    },
+    "class_type": "Ideogram4Scheduler",
+    "_meta": {
+      "title": "Ideogram 4 Scheduler"
+    }
+  },
+  "98:18": {
+    "inputs": {
+      "noise_seed": [
+        "177",
+        0
+      ]
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "98:23": {
+    "inputs": {
+      "unet_name": "IdeoGram v4\\ideogram4_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "98:24": {
+    "inputs": {
+      "text": "{\"high_level_description\":\"A typographic image styled as a still from a crime thriller.. Required visible details: Blood splatters, Rivulets of blood running down a surface, The specific text 'The Dark Passenger is real'\",\"style_description\":{\"aesthetics\":\"Photorealistic, cinematic, high-contrast photography, Suspenseful, dark, thriller-esque., Gritty, visceral, wet appearance due to blood elements.\",\"lighting\":\"Moody, dramatic, low-key lighting with deep shadows and selective highlights.\",\"photo\":\"Shot with a wide aperture lens (shallow depth of field) to focus intensely on the text., Close-up shot focusing on the surface where the text is scrawled., },{\",\"medium\":\"Digital photograph\",\"color_palette\":[\"#2B180C\",\"#170E07\",\"#362516\",\"#4E3826\",\"#4A2D18\",\"#6B4D35\",\"#8D6D52\",\"#584533\",\"#330000\",\"#660000\",\"#111111\",\"#888888\"]},\"compositional_deconstruction\":{\"background\":\"A distressed, textured wall or surface heavily splattered with dried and wet blood. Visible rivulets of blood run vertically down the surface, creating a sense of decay and gravity.\",\"elements\":[{\"type\":\"obj\",\"desc\":\"A surface covered in splatters and rivulets of dark red blood., Visceral, wet, dried, textured, The background material is stained by the presence of blood., Foreboding, disturbing, N/A\",\"color_palette\":[\"#660000\",\"#330000\"]},{\"type\":\"obj\",\"desc\":\"The message 'The Dark Passenger is real' scrawled in blood., Handwritten, urgent, messy script, Scrawling/Writing, Desperate, ominous, N/A\",\"color_palette\":[\"#880000\"]},{\"type\":\"obj\",\"desc\":\"Blood splatters and rivulets., Establishes the mood and setting of a crime scene.\",\"color_palette\":[\"#660000\"]},{\"type\":\"obj\",\"bbox\":[667,100,1000,900],\"desc\":\"The message 'The Dark Passenger is real' written directly onto the bloody background using what appears to be fresh blood.\"},{\"type\":\"text\",\"text\":\"The Dark Passenger is real\",\"desc\":\"Handwritten, distressed, blood-like script, Appears freshly written in blood.\",\"color_palette\":[\"#880000\"]}]}}",
+      "clip": [
+        "98:14",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "98:14": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "ideogram4",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "98:27": {
+    "inputs": {
+      "value": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Int (Width)"
+    }
+  },
+  "98:28": {
+    "inputs": {
+      "value": [
+        "37",
+        1
+      ]
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Int (Height)"
+    }
+  },
+  "98:31": {
+    "inputs": {
+      "expression": "max(((a + 15) // 16) * 16, 256)",
+      "values.a": [
+        "98:27",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "98:32": {
+    "inputs": {
+      "expression": "max(((a + 15) // 16) * 16, 256)",
+      "values.a": [
+        "98:28",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "98:144": {
+    "inputs": {
+      "value": [
+        "98:145",
+        0
+      ]
+    },
+    "class_type": "ComfyNumberConvert",
+    "_meta": {
+      "title": "Convert Number"
+    }
+  },
+  "98:145": {
+    "inputs": {
+      "json_string": [
+        "98:148",
+        0
+      ],
+      "key": "mu"
+    },
+    "class_type": "JsonExtractString",
+    "_meta": {
+      "title": "Extract Text from JSON"
+    }
+  },
+  "98:146": {
+    "inputs": {
+      "value": [
+        "98:150",
+        0
+      ]
+    },
+    "class_type": "ComfyNumberConvert",
+    "_meta": {
+      "title": "Convert Number"
+    }
+  },
+  "98:147": {
+    "inputs": {
+      "json_string": "{\n  \"Quality\": {\n    \"num_steps\": 48,\n    \"mu\": 0.0,\n    \"std\": 1.5,\n    \"preset_id\": \"V4_QUALITY_48\"\n  },\n  \"Default\": {\n    \"num_steps\": 20,\n    \"mu\": 0.0,\n    \"std\": 1.75,\n    \"preset_id\": \"V4_DEFAULT_20\"\n  },\n  \"Turbo\": {\n    \"num_steps\": 12,\n    \"mu\": 0.5,\n    \"std\": 1.75,\n    \"preset_id\": \"V4_TURBO_12\"\n  }\n}",
+      "key": [
+        "98:156",
+        0
+      ]
+    },
+    "class_type": "JsonExtractString",
+    "_meta": {
+      "title": "Extract Text from JSON"
+    }
+  },
+  "98:148": {
+    "inputs": {
+      "string": [
+        "98:147",
+        0
+      ],
+      "find": "'",
+      "replace": "\""
+    },
+    "class_type": "StringReplace",
+    "_meta": {
+      "title": "Replace Text"
+    }
+  },
+  "98:149": {
+    "inputs": {
+      "json_string": [
+        "98:148",
+        0
+      ],
+      "key": "num_steps"
+    },
+    "class_type": "JsonExtractString",
+    "_meta": {
+      "title": "Extract Text from JSON"
+    }
+  },
+  "98:150": {
+    "inputs": {
+      "json_string": [
+        "98:148",
+        0
+      ],
+      "key": "std"
+    },
+    "class_type": "JsonExtractString",
+    "_meta": {
+      "title": "Extract Text from JSON"
+    }
+  },
+  "98:151": {
+    "inputs": {
+      "value": [
+        "98:149",
+        0
+      ]
+    },
+    "class_type": "ComfyNumberConvert",
+    "_meta": {
+      "title": "Convert Number"
+    }
+  },
+  "98:154": {
+    "inputs": {
+      "unet_name": "IdeoGram v4\\ideogram4_unconditional_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "98:155": {
+    "inputs": {
+      "cfg": 7,
+      "model": [
+        "98:157",
+        0
+      ],
+      "positive": [
+        "98:24",
+        0
+      ],
+      "model_negative": [
+        "98:154",
+        0
+      ],
+      "negative": [
+        "98:10",
+        0
+      ]
+    },
+    "class_type": "DualModelGuider",
+    "_meta": {
+      "title": "Dual Model CFG Guider"
+    }
+  },
+  "98:156": {
+    "inputs": {
+      "choice": "Default",
+      "index": 1,
+      "option1": "Quality",
+      "option2": "Default",
+      "option3": "Turbo",
+      "option4": ""
+    },
+    "class_type": "CustomCombo",
+    "_meta": {
+      "title": "Custom Combo"
+    }
+  },
+  "98:157": {
+    "inputs": {
+      "cfg": 3,
+      "start_percent": 0.7,
+      "end_percent": 1,
+      "model": [
+        "98:23",
+        0
+      ]
+    },
+    "class_type": "CFGOverride",
+    "_meta": {
+      "title": "CFG Override"
+    }
+  }
+}

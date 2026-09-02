@@ -175,21 +175,38 @@
         <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
           <button type="button" class="btn-secondary" id="btnCopyFinal">Copy</button>
           <button type="button" class="btn-secondary" id="btnResetFinal">Reset</button>
+          <button type="submit" class="btn-secondary" formaction="{{ url_for('save_from_use', prompt_id=prompt.id) }}" name="save_mode" value="variant" onclick="syncFinalOverride()">Save as Variant</button>
+          <button type="submit" class="btn-secondary" formaction="{{ url_for('save_from_use', prompt_id=prompt.id) }}" name="save_mode" value="overwrite" onclick="syncFinalOverride(); return confirm('Replace the stored prompt with the current Final Prompt?');">Overwrite Stored Prompt</button>
         </div>
 
-        {% if ollama_models %}
-        <div style="display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center;">
-          <select name="model" style="min-width: 220px;">
-            {% for m in ollama_models %}
-              <option value="{{ m }}" {% if session.get('ollama_model') == m %}selected{% endif %}>{{ m }}</option>
+        <div class="ai-use-controls">
+          {% if ai_actions %}
+          <select id="aiActionSelect" aria-label="AI Action">
+            {% for action in ai_actions %}
+              <option value="{{ action.id }}" data-model="{{ action.model or '' }}" data-runtime="{{ 1 if action.allow_runtime_instruction else 0 }}">{{ action.name }}</option>
             {% endfor %}
           </select>
-          <input type="text" name="instruction" placeholder="Refine instruction (optional)" style="min-width: 240px;">
-          <input type="hidden" name="mode" value="refine">
-          <button type="submit" class="btn-secondary" title="Send current output to Ollama refinement">✨ Refine with Ollama</button>
+          {% if ollama_models %}
+          <select id="aiModelSelect" aria-label="Ollama model override">
+            <option value="">Action/default model</option>
+            {% for m in ollama_models %}<option value="{{ m }}">{{ m }}</option>{% endfor %}
+          </select>
+          {% endif %}
+          <input type="text" id="aiOneOffInstruction" placeholder="One-off instruction (optional)">
+          <button type="button" id="btnUseAI" class="btn-secondary" title="Run the selected AI Action and review the result">✨ Use AI</button>
+          {% else %}
+          <a class="btn-secondary" href="{{ url_for('ai_manage') }}#ai-actions">Create an AI Action</a>
+          {% endif %}
         </div>
-        {% endif %}
       </div>
+
+      <div id="aiReviewPanel" class="ai-review-panel" hidden>
+        <div style="display:flex; justify-content:space-between; gap:.75rem; flex-wrap:wrap;"><strong>AI result — review before applying</strong><span id="aiReviewMeta" class="notes"></span></div>
+        <textarea id="aiReviewOutput" aria-label="Generated AI result"></textarea>
+        <div id="aiReviewSources" class="notes"></div>
+        <div class="button-row"><button type="button" id="btnApplyAI">Apply to Final Prompt</button><button type="button" id="btnCancelAI" class="btn-secondary">Cancel</button></div>
+      </div>
+      <div id="aiStatus" class="notes" role="status" aria-live="polite"></div>
 
       <details id="findReplacePanel" style="background:#1a1a1a; padding:1rem; border-radius:8px; border:1px solid #333; margin-top:0.75rem;">
         <summary style="cursor:pointer; user-select:none; display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap;">
@@ -233,6 +250,69 @@
 <script>
 let _descriptorTypes = [];
 let _userEditedFinal = false;
+
+function syncAIRuntimeControl() {
+  const action = document.getElementById("aiActionSelect");
+  const instruction = document.getElementById("aiOneOffInstruction");
+  if (!action || !instruction) return;
+  const selected = action.options[action.selectedIndex];
+  const allowed = !selected || selected.dataset.runtime !== "0";
+  instruction.disabled = !allowed;
+  instruction.placeholder = allowed ? "One-off instruction (optional)" : "One-off instruction disabled for this action";
+  if (!allowed) instruction.value = "";
+}
+
+async function runAIAction() {
+  const action = document.getElementById("aiActionSelect");
+  const finalOutput = document.getElementById("finalOutput");
+  const button = document.getElementById("btnUseAI");
+  const status = document.getElementById("aiStatus");
+  if (!action || !finalOutput || !button) return;
+  if (!String(finalOutput.value || "").trim()) { status.textContent = "The Final Prompt is empty."; return; }
+  button.disabled = true;
+  status.textContent = "Running AI Action…";
+  try {
+    const response = await fetch("/api/ai/actions/" + encodeURIComponent(action.value) + "/execute", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        content: finalOutput.value,
+        model: document.getElementById("aiModelSelect")?.value || "",
+        instruction: document.getElementById("aiOneOffInstruction")?.value || ""
+      })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.error || "AI Action failed.");
+    document.getElementById("aiReviewOutput").value = data.content || "";
+    document.getElementById("aiReviewMeta").textContent = (data.action || "AI Action") + " · " + (data.model || "");
+    const sources = Array.isArray(data.sources) ? data.sources : [];
+    document.getElementById("aiReviewSources").textContent = sources.length ? "Knowledge used: " + sources.map(item => item.filename).join(", ") : "No knowledge collection used.";
+    document.getElementById("aiReviewPanel").hidden = false;
+    status.textContent = "Result ready. The Final Prompt is unchanged until you apply it.";
+  } catch (error) {
+    status.textContent = error.message || "AI Action failed.";
+  } finally { button.disabled = false; }
+}
+
+function applyAIResult() {
+  const result = document.getElementById("aiReviewOutput");
+  const finalOutput = document.getElementById("finalOutput");
+  if (!result || !finalOutput || !String(result.value || "").trim()) return;
+  finalOutput.value = result.value;
+  setUserEditedFinal(true);
+  syncFinalOverride();
+  finalOutput.dispatchEvent(new Event("input", {bubbles:true}));
+  document.getElementById("aiReviewPanel").hidden = true;
+  document.getElementById("aiStatus").textContent = "AI result applied locally. Save explicitly if you want to update the library prompt.";
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  document.getElementById("aiActionSelect")?.addEventListener("change", syncAIRuntimeControl);
+  document.getElementById("btnUseAI")?.addEventListener("click", runAIAction);
+  document.getElementById("btnApplyAI")?.addEventListener("click", applyAIResult);
+  document.getElementById("btnCancelAI")?.addEventListener("click", function () { document.getElementById("aiReviewPanel").hidden = true; document.getElementById("aiStatus").textContent = "AI result discarded. Final Prompt unchanged."; });
+  syncAIRuntimeControl();
+});
 
 function setUserEditedFinal(v) {
   _userEditedFinal = !!v;

@@ -17,6 +17,49 @@ from PIL import Image, ImageSequence
 from flask import Flask, render_template, request, redirect, url_for, flash, send_file, session, g, jsonify
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
+from ai_library import (
+    AILibraryError,
+    DEFAULT_EMBEDDING_MODEL,
+    apply_ai_migrations,
+    audit_collection,
+    build_action_request,
+    create_action,
+    create_collection,
+    create_resource,
+    collection_snapshot,
+    duplicate_action,
+    duplicate_resource,
+    duplicate_collection,
+    get_action_for_execution,
+    prepare_document,
+    preview_document_import,
+    rebuild_document,
+    rebuild_collection,
+    record_document_failure,
+    retrieve_knowledge,
+    save_prepared_document,
+    update_action,
+    update_collection,
+    update_resource,
+)
+from integration_api import create_integration_blueprint
+from prompt_service import apply_integration_migrations
+from integration_config import (
+    configure_integration_logging,
+    get_or_create_token,
+    get_or_create_secret_key,
+    load_config as load_integration_config,
+)
+from skill_runtime import (
+    SkillError, apply_skill_migrations, compare_skill, configure_provider, export_skill, import_skill, inspect_skill,
+    list_prompt_derivations, list_skills, run_skill, save_skill_derivative, source_prompt_input, update_skill,
+)
+from generation_runtime import (
+    GenerationError, apply_generation_migrations, check_server, compatible_profiles,
+    duplicate_profile, get_generation, inspect_workflow, list_profiles, list_prompt_generations,
+    list_servers, refresh_generation, regenerate, save_profile, submit_generation, upsert_server,
+    validate_saved_profile,
+)
 
 
 # -------------------------
@@ -57,9 +100,15 @@ def inject_descriptors(text_value: str) -> str:
 
     return DESCRIPTOR_TOKEN_RE.sub(repl, text_value)
 
+INTEGRATION_RUNTIME_CONFIG = load_integration_config()
+get_or_create_token()
+configure_integration_logging(INTEGRATION_RUNTIME_CONFIG.get("debug", False))
+
 app = Flask(__name__)
-CORS(app)
-app.secret_key = "change-me-to-something-random"
+# Preserve the existing broad CORS behaviour for current UI/extension routes.
+# Integration API CORS is handled by its blueprint using an explicit origin allow-list.
+CORS(app, resources={r"^(?!/api/integration/).*": {"origins": "*"}})
+app.secret_key = get_or_create_secret_key()
 
 @app.context_processor
 def inject_global_flags():
@@ -80,6 +129,11 @@ TEMP_DIR.mkdir(exist_ok=True)
 PROMPT_TYPES = ["Generation", "Edit", "Instruction"]
 UPLOAD_DIR = BASE_DIR / "static" / "uploads" / "thumbs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+GENERATION_INPUT_DIR = BASE_DIR / "static" / "uploads" / "generation_inputs"
+GENERATION_MEDIA_DIR = BASE_DIR / "static" / "uploads" / "generations"
+WORKFLOW_PROFILE_DIR = BASE_DIR / "provider_workflows" / "comfyui_profiles"
+for managed_dir in (GENERATION_INPUT_DIR, GENERATION_MEDIA_DIR, WORKFLOW_PROFILE_DIR):
+    managed_dir.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_THUMB_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB
@@ -185,6 +239,17 @@ def get_db():
     except Exception:
         pass
     return conn
+
+
+app.register_blueprint(create_integration_blueprint(
+    get_db,
+    embedder=lambda text, model: ollama_embed(text, model),
+    list_models=lambda: ollama_list_models(),
+    skill_generate=lambda **kwargs: ollama_generate(**kwargs),
+    skill_base_dir=str(BASE_DIR),
+    workflow_root=str(BASE_DIR / "provider_workflows" / "comfyui_profiles"),
+    generation_media_root=str(BASE_DIR / "static" / "uploads" / "generations"),
+))
 
 @app.teardown_appcontext
 def close_db(exception=None):
@@ -362,6 +427,13 @@ def init_db() -> None:
             conn.execute("ALTER TABLE prompt_uses ADD COLUMN source TEXT;")
         except Exception:
             pass
+
+    # Run both additive schema families so fresh databases and upgraded databases behave alike.
+    apply_integration_migrations(conn)
+    # AI tables do not rewrite existing prompt rows.
+    apply_ai_migrations(conn)
+    apply_skill_migrations(conn)
+    apply_generation_migrations(conn)
 
     conn.commit()
     conn.close()
@@ -1007,7 +1079,7 @@ def export_selected():
     export_db_path = TEMP_DIR / export_filename
 
     conn_exp = sqlite3.connect(export_db_path)
-    conn_exp.execute("CREATE TABLE IF NOT EXISTS prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, category TEXT, tool TEXT, prompt_type TEXT, content TEXT, notes TEXT, thumbnail TEXT, parent_id INTEGER, group_id INTEGER, created_at TEXT, updated_at TEXT)")
+    conn_exp.execute("CREATE TABLE IF NOT EXISTS prompts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, category TEXT, tool TEXT, prompt_type TEXT, content TEXT, notes TEXT, thumbnail TEXT, parent_id INTEGER, group_id INTEGER, created_at TEXT, updated_at TEXT, sync_id TEXT, pinned_at TEXT, revision INTEGER, source TEXT)")
     conn_exp.execute("CREATE TABLE IF NOT EXISTS tags (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
     conn_exp.execute("CREATE TABLE IF NOT EXISTS prompt_tags (prompt_id INTEGER, tag_id INTEGER)")
 
@@ -1272,10 +1344,10 @@ def import_prompthub_json_snapshot(conn: sqlite3.Connection, snapshot: dict) -> 
                 conn.execute(
                     """
                     UPDATE prompts
-                    SET title = ?, category = ?, tool = ?, prompt_type = ?, content = ?, notes = ?, created_at = ?, updated_at = ?, sync_id = ?
+                    SET title = ?, category = ?, tool = ?, prompt_type = ?, content = ?, notes = ?, created_at = ?, updated_at = ?, sync_id = ?, revision = revision + 1, source = ?
                     WHERE id = ?
                     """,
-                    (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id, prompt_id),
+                    (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id, "json_sync", prompt_id),
                 )
                 save_tags(conn, prompt_id, ", ".join(tags))
                 updated += 1
@@ -1287,10 +1359,10 @@ def import_prompthub_json_snapshot(conn: sqlite3.Connection, snapshot: dict) -> 
 
         cur = conn.execute(
             """
-            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at, sync_id)
-            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)
+            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at, sync_id, source)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?)
             """,
-            (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id),
+            (title, category, tool, prompt_type, content, notes or None, created_at, updated_at, sync_id, "json_sync"),
         )
         new_prompt_id = cur.lastrowid
         save_tags(conn, new_prompt_id, ", ".join(tags))
@@ -1459,9 +1531,9 @@ def import_db_commit():
             group_id_main = None
 
         cur = conn_main.execute(
-            """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (p["title"], p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], final_thumb_path, group_id_main, now, now)
+            """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, sync_id, source, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (p["title"], p["category"], p["tool"], p["prompt_type"], p["content"], p["notes"], final_thumb_path, group_id_main, str(uuid.uuid4()).upper(), "database_import", now, now)
         )
         new_prompt_id = cur.lastrowid
 
@@ -1746,7 +1818,11 @@ def toggle_prompt_pin(prompt_id: int):
             return jsonify({"success": False, "error": "Prompt not found"}), 404
         pinned = not bool(row["pinned_at"])
         pinned_at = datetime.utcnow().isoformat(timespec="seconds") if pinned else None
-        conn.execute("UPDATE prompts SET pinned_at = ? WHERE id = ?", (pinned_at, prompt_id))
+        now = datetime.utcnow().isoformat()
+        conn.execute(
+            "UPDATE prompts SET pinned_at = ?, updated_at = ?, revision = revision + 1, source = ? WHERE id = ?",
+            (pinned_at, now, "ui", prompt_id),
+        )
     return jsonify({"success": True, "pinned": pinned, "pinned_at": pinned_at})
 
 
@@ -1896,8 +1972,8 @@ def upload_thumb_api(prompt_id):
         now = datetime.utcnow().isoformat()
         with get_db() as conn:
             conn.execute(
-                "UPDATE prompts SET thumbnail = ?, updated_at = ? WHERE id = ?",
-                (new_path, now, prompt_id)
+                "UPDATE prompts SET thumbnail = ?, updated_at = ?, revision = revision + 1, source = ? WHERE id = ?",
+                (new_path, now, "ui", prompt_id)
             )
             conn.commit()
 
@@ -1976,10 +2052,10 @@ def new_prompt():
         conn = get_db()
         conn.execute(
             """
-            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, group_id, sync_id, source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (title, category, tool, prompt_type, content, notes, thumb_path, group_id, now, now),
+            (title, category, tool, prompt_type, content, notes, thumb_path, group_id, str(uuid.uuid4()).upper(), "ui", now, now),
         )
         new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
         save_tags(conn, new_id, tags_str)
@@ -1987,6 +2063,8 @@ def new_prompt():
         conn.close()
         return redirect(url_for("index"))
 
+    with get_db() as conn:
+        installed_skills = list_skills(conn)
     return render_template(
         "edit_prompt.html",
         prompt=None,
@@ -1995,7 +2073,10 @@ def new_prompt():
         groups=get_groups(),
         prompt_types=PROMPT_TYPES,
         tags_str="",
-        ollama_models=ollama_models
+        ollama_models=ollama_models,
+        installed_skills=installed_skills,
+        derivations=[],
+        workflow_profiles=[]
     )
 
 
@@ -2048,10 +2129,10 @@ def edit_prompt(prompt_id: int):
         conn.execute(
             """
             UPDATE prompts
-            SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, group_id=?, updated_at=?
+            SET title=?, category=?, tool=?, prompt_type=?, content=?, notes=?, thumbnail=?, group_id=?, updated_at=?, revision=revision+1, source=?
             WHERE id=?
             """,
-            (title, category, tool, prompt_type, content, notes, new_thumb, group_id, now, prompt_id),
+            (title, category, tool, prompt_type, content, notes, new_thumb, group_id, now, "ui", prompt_id),
         )
         save_tags(conn, prompt_id, tags_str)
         conn.commit()
@@ -2065,6 +2146,11 @@ def edit_prompt(prompt_id: int):
 
     conn = get_db()
     current_tags = get_tags_for_prompt(conn, prompt_id)
+    installed_skills = list_skills(conn)
+    derivations = list_prompt_derivations(conn, prompt_id)
+    workflow_profiles = compatible_profiles(conn, prompt_id, show_all=True)
+    generations = list_prompt_generations(conn, prompt_id)
+    parent = conn.execute("SELECT id,title FROM prompts WHERE id=?", (prompt["parent_id"],)).fetchone() if prompt["parent_id"] else None
     conn.close()
 
     return render_template(
@@ -2075,7 +2161,12 @@ def edit_prompt(prompt_id: int):
         groups=get_groups(),
         prompt_types=PROMPT_TYPES,
         tags_str=", ".join(current_tags),
-        ollama_models=ollama_models
+        ollama_models=ollama_models,
+        installed_skills=installed_skills,
+        derivations=derivations,
+        parent=parent,
+        workflow_profiles=workflow_profiles,
+        generations=generations,
     )
 
 
@@ -2110,10 +2201,10 @@ def duplicate_prompt(prompt_id: int):
     now = datetime.utcnow().isoformat()
     conn.execute(
         """
-        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (new_title, p["category"], p["tool"], p["prompt_type"], new_content, p["notes"], new_thumb, parent_id, p["group_id"], now, now),
+        (new_title, p["category"], p["tool"], p["prompt_type"], new_content, p["notes"], new_thumb, parent_id, p["group_id"], str(uuid.uuid4()).upper(), "ui", now, now),
     )
     new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
@@ -2134,7 +2225,10 @@ def delete_prompt(prompt_id: int):
     thumb = row["thumbnail"] if row else None
 
     conn.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))
-    conn.execute("UPDATE prompts SET parent_id = NULL WHERE parent_id = ?", (prompt_id,))
+    conn.execute(
+        "UPDATE prompts SET parent_id = NULL, updated_at = ?, revision = revision + 1, source = ? WHERE parent_id = ?",
+        (datetime.utcnow().isoformat(), "ui", prompt_id),
+    )
     conn.commit()
     conn.close()
 
@@ -2171,6 +2265,9 @@ def render_prompt(prompt_id: int):
         ORDER BY id ASC
     """, (root_id, root_id)).fetchall()
 
+    ai_actions = conn.execute(
+        "SELECT id, name, model, allow_runtime_instruction FROM ai_actions WHERE enabled=1 ORDER BY name COLLATE NOCASE"
+    ).fetchall()
     conn.close()
 
     content = prompt["content"]
@@ -2195,6 +2292,7 @@ def render_prompt(prompt_id: int):
         placeholders_meta=placeholders_meta,
         base_text=base_text,
         final_text=final_text,
+        ai_actions=ai_actions,
     )
 
 
@@ -2289,10 +2387,10 @@ def import_prompt():
 
                 conn.execute(
                     """
-                    INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, sync_id, source, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (title, cat, tool, ptype, p["content"], pnotes, None, now, now),
+                    (title, cat, tool, ptype, p["content"], pnotes, None, str(uuid.uuid4()).upper(), "text_import", now, now),
                 )
 
         conn.commit()
@@ -2361,7 +2459,10 @@ def delete_group():
     gid = request.form.get("id", "").strip()
     if gid.isdigit():
         with get_db() as conn:
-            conn.execute("UPDATE prompts SET group_id = NULL WHERE group_id = ?", (int(gid),))
+            conn.execute(
+                "UPDATE prompts SET group_id = NULL, updated_at = ?, revision = revision + 1, source = ? WHERE group_id = ?",
+                (datetime.utcnow().isoformat(), "ui", int(gid)),
+            )
             conn.execute("DELETE FROM prompt_groups WHERE id = ?", (int(gid),))
             conn.commit()
     return redirect(url_for("manage"))
@@ -2397,6 +2498,666 @@ def delete_tool():
             conn.execute("DELETE FROM tools WHERE name=?", (n,))
             conn.commit()
     return redirect(url_for("manage"))
+
+
+# -------------------------
+# AI Actions + Knowledge Library
+# -------------------------
+
+def _form_bool(name: str, default: bool = False) -> bool:
+    value = request.form.get(name)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _ai_redirect(anchor: str = ""):
+    target = url_for("ai_manage")
+    return redirect(f"{target}#{anchor}" if anchor else target)
+
+
+@app.route("/ai", methods=["GET"])
+def ai_manage():
+    init_db()
+    with get_db() as conn:
+        systems = conn.execute("SELECT * FROM ai_resources WHERE kind='system' ORDER BY name COLLATE NOCASE").fetchall()
+        templates = conn.execute("SELECT * FROM ai_resources WHERE kind='template' ORDER BY name COLLATE NOCASE").fetchall()
+        actions = conn.execute(
+            """
+            SELECT a.*, s.name AS system_name, t.name AS template_name, k.name AS knowledge_name
+            FROM ai_actions a
+            LEFT JOIN ai_resources s ON s.id=a.system_instruction_id
+            LEFT JOIN ai_resources t ON t.id=a.prompt_template_id
+            LEFT JOIN ai_knowledge_collections k ON k.id=a.knowledge_collection_id
+            ORDER BY a.name COLLATE NOCASE
+            """
+        ).fetchall()
+        collections = conn.execute(
+            """
+            SELECT c.*, COUNT(DISTINCT d.id) AS document_count, COUNT(ch.id) AS chunk_count
+            FROM ai_knowledge_collections c
+            LEFT JOIN ai_knowledge_documents d ON d.collection_id=c.id
+            LEFT JOIN ai_knowledge_chunks ch ON ch.document_id=d.id
+            GROUP BY c.id ORDER BY c.name COLLATE NOCASE
+            """
+        ).fetchall()
+        documents = conn.execute(
+            "SELECT * FROM ai_knowledge_documents ORDER BY filename COLLATE NOCASE"
+        ).fetchall()
+    docs_by_collection: dict[str, list] = {}
+    for document in documents:
+        docs_by_collection.setdefault(document["collection_id"], []).append(document)
+    ollama_models = ollama_list_models()
+    audit_by_collection = {}
+    for collection in collections:
+        try:
+            with get_db() as conn:
+                audit_by_collection[collection["id"]] = audit_collection(conn, collection["id"], ollama_models)
+        except AILibraryError:
+            audit_by_collection[collection["id"]] = {"findings": [], "finding_count": 0, "rebuild_recommended": False}
+    return render_template(
+        "ai_manage.html",
+        systems=systems,
+        templates=templates,
+        actions=actions,
+        collections=collections,
+        docs_by_collection=docs_by_collection,
+        audit_by_collection=audit_by_collection,
+        ollama_models=ollama_models,
+        default_embedding_model=DEFAULT_EMBEDDING_MODEL,
+    )
+
+
+def _generation_error_response(exc: GenerationError):
+    status = 404 if exc.code.endswith("NOT_FOUND") else 409 if exc.code in {"DUPLICATE_PROFILE", "PROFILE_INVALIDATED"} else 400
+    return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), status
+
+
+@app.route("/comfyui", methods=["GET"])
+def comfyui_manage():
+    with get_db() as conn:
+        return render_template("comfyui.html", servers=list_servers(conn), profiles=list_profiles(conn))
+
+
+@app.route("/api/comfyui/servers", methods=["GET", "POST"])
+def api_comfyui_servers():
+    try:
+        with get_db() as conn:
+            if request.method == "GET":
+                return jsonify({"ok": True, "servers": list_servers(conn)})
+            return jsonify({"ok": True, **upsert_server(conn, request.get_json(silent=True) or {})})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/servers/<server_id>/health", methods=["POST"])
+def api_comfyui_server_health(server_id: str):
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, **check_server(conn, server_id)})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/workflows/inspect", methods=["POST"])
+def api_comfyui_workflow_inspect():
+    upload = request.files.get("workflow")
+    try:
+        if upload is not None:
+            graph = json.loads(upload.read().decode("utf-8-sig"))
+        else:
+            graph = (request.get_json(silent=True) or {}).get("workflow")
+        return jsonify({"ok": True, "workflow": graph, "inspection": inspect_workflow(graph)})
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return jsonify({"ok": False, "error": "Workflow file is not valid JSON.", "code": "INVALID_WORKFLOW"}), 400
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/profiles", methods=["GET", "POST"])
+def api_comfyui_profiles():
+    try:
+        with get_db() as conn:
+            if request.method == "GET":
+                return jsonify({"ok": True, "profiles": list_profiles(conn)})
+            data = request.get_json(silent=True) or {}
+            return jsonify({"ok": True, **save_profile(conn, data, data.get("workflow"), WORKFLOW_PROFILE_DIR, allow_update=bool(data.get("allow_update")))})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/profiles/<profile_id>/duplicate", methods=["POST"])
+def api_comfyui_profile_duplicate(profile_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, **duplicate_profile(conn, profile_id, str(data.get("id") or ""), str(data.get("display_name") or ""), WORKFLOW_PROFILE_DIR)})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/profiles/<profile_id>/validate", methods=["POST"])
+def api_comfyui_profile_validate(profile_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, "validation": validate_saved_profile(conn, profile_id, live=bool(data.get("live")))})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/prompts/<prompt_id>/workflow-profiles", methods=["GET"])
+def api_prompt_workflow_profiles(prompt_id: str):
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, "profiles": compatible_profiles(conn, prompt_id, show_all=request.args.get("show_all") == "1")})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/prompts/<prompt_id>/generations", methods=["GET", "POST"])
+def api_prompt_generations(prompt_id: str):
+    try:
+        with get_db() as conn:
+            if request.method == "GET":
+                return jsonify({"ok": True, "generations": list_prompt_generations(conn, prompt_id)})
+            profile_id = str(request.form.get("profile_id") or "")
+            values = {key: value for key, value in request.form.items() if key not in {"profile_id", "prompt"}}
+            prompt_override = request.form.get("prompt")
+            for role in request.files:
+                managed_uploads = []
+                for upload in request.files.getlist(role):
+                    if not upload or not upload.filename:
+                        continue
+                    safe_name = secure_filename(upload.filename) or f"{role}.bin"
+                    destination = GENERATION_INPUT_DIR / f"{uuid.uuid4().hex}_{safe_name}"
+                    upload.save(destination)
+                    managed_uploads.append({"source_path": str(destination), "filename": safe_name, "managed_upload": True})
+                if managed_uploads:
+                    values[role] = managed_uploads if len(managed_uploads) > 1 else managed_uploads[0]
+            generation = submit_generation(conn, prompt_id, profile_id, values, prompt_override=prompt_override)
+            return jsonify({"ok": True, "generation": generation}), 202
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/generations/<generation_id>", methods=["GET"])
+def api_generation_status(generation_id: str):
+    try:
+        with get_db() as conn:
+            generation = refresh_generation(conn, generation_id, GENERATION_MEDIA_DIR)
+            return jsonify({"ok": True, "generation": generation})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/generations/<generation_id>/regenerate", methods=["POST"])
+def api_generation_regenerate(generation_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            generation = regenerate(conn, generation_id, new_seed=bool(data.get("new_seed")), current_prompt=bool(data.get("current_prompt")))
+            return jsonify({"ok": True, "generation": generation}), 202
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/generations/<generation_id>/media/<int:index>", methods=["GET"])
+def generation_media(generation_id: str, index: int):
+    try:
+        with get_db() as conn:
+            generation = get_generation(conn, generation_id)
+        media = generation["result_media"]
+        if index < 0 or index >= len(media):
+            return "Not found", 404
+        path = Path(media[index]["stored_path"]).resolve()
+        if GENERATION_MEDIA_DIR.resolve() not in path.parents or not path.is_file():
+            return "Not found", 404
+        return send_file(path, mimetype=media[index].get("content_type"))
+    except GenerationError:
+        return "Not found", 404
+
+
+@app.route("/skills", methods=["GET"])
+def skills_manage():
+    init_db()
+    with get_db() as conn:
+        skills = list_skills(conn, request.args.get("q", "").strip())
+    return render_template("skills.html", skills=skills, ollama_models=ollama_list_models())
+
+
+@app.route("/skills/import", methods=["POST"])
+def skills_import():
+    source = (request.form.get("source") or "").strip()
+    try:
+        with get_db() as conn:
+            result = import_skill(conn, source, base_dir=BASE_DIR, source_type="portable", source_platform="user")
+        if result["operation"] == "conflict":
+            flash("Skill import stopped: the existing PromptHub copy has local modifications.", "danger")
+        else:
+            flash(f"Skill {result['operation']}: {result['inspection']['display_name']}.")
+    except SkillError as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("skills_manage"))
+
+
+@app.route("/api/skills", methods=["GET"])
+def api_skills():
+    init_db()
+    with get_db() as conn:
+        return jsonify({"ok": True, "skills": list_skills(conn, request.args.get("q", "").strip())})
+
+
+@app.route("/api/skills/inspect", methods=["POST"])
+def api_skill_inspect():
+    data = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"ok": True, "inspection": inspect_skill(str(data.get("source") or ""))})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
+
+
+@app.route("/api/skills/import", methods=["POST"])
+def api_skill_import():
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            result = import_skill(conn, str(data.get("source") or ""), base_dir=BASE_DIR, source_type=str(data.get("source_type") or "portable"), source_platform=str(data.get("source_platform") or "unknown"), tags=data.get("tags") or [])
+        return jsonify({"ok": True, **result}), (409 if result.get("operation") == "conflict" else 200)
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
+
+
+@app.route("/api/skills/<skill_id>/compare", methods=["POST"])
+def api_skill_compare(skill_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, "comparison": compare_skill(conn, skill_id, str(data.get("source") or ""))})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
+
+
+@app.route("/api/skills/<skill_id>/update", methods=["POST"])
+def api_skill_update(skill_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, **update_skill(conn, skill_id, str(data.get("source") or ""), base_dir=BASE_DIR)})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 409 if exc.code == "SKILL_UPDATE_CONFLICT" else 400
+
+
+@app.route("/api/skills/providers", methods=["POST"])
+def api_skill_provider_configure():
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            result = configure_provider(conn, str(data.get("provider_id") or ""), str(data.get("capability") or ""), data.get("config") or {}, enabled=bool(data.get("enabled")), trust_requirement=str(data.get("trust_requirement") or "trusted"))
+        return jsonify({"ok": True, **result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/skills/<skill_id>/run", methods=["POST"])
+def api_skill_run(skill_id: str):
+    data = request.get_json(silent=True) or {}
+    request_text = str(data.get("request") or "").strip()
+    model = str(data.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL).strip()
+    if not model:
+        return jsonify({"ok": False, "error": "execution model is required."}), 400
+    if model not in ollama_list_models():
+        return jsonify({"ok": False, "error": f"The selected Ollama model is not installed: {model}"}), 400
+    try:
+        with get_db() as conn:
+            inputs = list(data.get("inputs") or [])
+            source_prompt_id = data.get("source_prompt_id")
+            operation = str(data.get("operation") or "create").lower()
+            if source_prompt_id and operation != "create" and not any(isinstance(item, dict) and item.get("role") in {"source", "draft"} for item in inputs):
+                inputs.insert(0, source_prompt_input(conn, source_prompt_id))
+            parameters = dict(data.get("parameters") or {})
+            freeform_instruction = str(data.get("freeform_instruction") or "").strip()
+            if freeform_instruction and not any(isinstance(item, dict) and item.get("role") == "instruction" for item in inputs):
+                inputs.append({"type": "text", "role": "instruction", "content": freeform_instruction})
+            result = run_skill(conn, skill_id, request_text, model, parameters, ollama_generate, operation=operation, inputs=inputs or None, target=data.get("target"), source_prompt_id=int(source_prompt_id) if str(source_prompt_id or "").isdigit() else None, capability_registry={"structured_output": {"status": "PRESERVED", "provider": "Ollama"}, "image_generation": {"status": "SUBSTITUTED", "provider": "ComfyUI"}})
+        session["ollama_model"] = model
+        return jsonify({"ok": True, **result})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
+
+
+@app.route("/api/prompts/<prompt_id>/skill-derivatives", methods=["GET", "POST"])
+def api_prompt_skill_derivatives(prompt_id: str):
+    try:
+        with get_db() as conn:
+            if request.method == "GET":
+                return jsonify({"ok": True, "derivations": list_prompt_derivations(conn, prompt_id)})
+            data = request.get_json(silent=True) or {}
+            result = save_skill_derivative(conn, prompt_id, str(data.get("execution_id") or ""), title=data.get("title"), replace_original=bool(data.get("replace_original", False)))
+        return jsonify({"ok": True, **result})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
+
+
+@app.route("/ai/resources", methods=["POST"])
+def ai_resource_create():
+    kind = (request.form.get("kind") or "").strip()
+    try:
+        with get_db() as conn:
+            create_resource(
+                conn, kind=kind, name=request.form.get("name", ""),
+                description=request.form.get("description", ""),
+                content=request.form.get("content", ""), enabled=_form_bool("enabled", True),
+            )
+        flash("Reusable AI item created.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("system-instructions" if kind == "system" else "prompt-templates")
+
+
+@app.route("/ai/resources/<resource_id>/update", methods=["POST"])
+def ai_resource_update(resource_id: str):
+    kind = (request.form.get("kind") or "template").strip()
+    try:
+        with get_db() as conn:
+            update_resource(
+                conn, resource_id, name=request.form.get("name", ""),
+                description=request.form.get("description", ""), content=request.form.get("content", ""),
+                enabled=_form_bool("enabled"),
+            )
+        flash("Reusable AI item saved.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("system-instructions" if kind == "system" else "prompt-templates")
+
+
+@app.route("/ai/resources/<resource_id>/duplicate", methods=["POST"])
+def ai_resource_duplicate(resource_id: str):
+    try:
+        with get_db() as conn:
+            row = conn.execute("SELECT kind FROM ai_resources WHERE id=?", (resource_id,)).fetchone()
+            duplicate_resource(conn, resource_id)
+        flash("Reusable AI item duplicated.")
+        return _ai_redirect("system-instructions" if row and row["kind"] == "system" else "prompt-templates")
+    except AILibraryError as exc:
+        flash(str(exc))
+        return _ai_redirect()
+
+
+@app.route("/ai/resources/<resource_id>/delete", methods=["POST"])
+def ai_resource_delete(resource_id: str):
+    with get_db() as conn:
+        row = conn.execute("SELECT kind FROM ai_resources WHERE id=?", (resource_id,)).fetchone()
+        conn.execute("DELETE FROM ai_resources WHERE id=?", (resource_id,))
+    flash("Reusable AI item deleted. Referencing actions now show no selection.")
+    return _ai_redirect("system-instructions" if row and row["kind"] == "system" else "prompt-templates")
+
+
+def _action_values_from_form() -> dict:
+    return {
+        "name": request.form.get("name", ""),
+        "description": request.form.get("description", ""),
+        "model": request.form.get("model", ""),
+        "system_instruction_id": request.form.get("system_instruction_id", ""),
+        "prompt_template_id": request.form.get("prompt_template_id", ""),
+        "knowledge_collection_id": request.form.get("knowledge_collection_id", ""),
+        "allow_runtime_instruction": _form_bool("allow_runtime_instruction"),
+        "enabled": _form_bool("enabled"),
+    }
+
+
+@app.route("/ai/actions", methods=["POST"])
+def ai_action_create():
+    try:
+        values = _action_values_from_form()
+        values["allow_runtime_instruction"] = _form_bool("allow_runtime_instruction", True)
+        values["enabled"] = _form_bool("enabled", True)
+        with get_db() as conn:
+            create_action(conn, values)
+        flash("AI Action created.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("ai-actions")
+
+
+@app.route("/ai/actions/<action_id>/update", methods=["POST"])
+def ai_action_update(action_id: str):
+    try:
+        with get_db() as conn:
+            update_action(conn, action_id, _action_values_from_form())
+        flash("AI Action saved.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("ai-actions")
+
+
+@app.route("/ai/actions/<action_id>/duplicate", methods=["POST"])
+def ai_action_duplicate(action_id: str):
+    try:
+        with get_db() as conn:
+            duplicate_action(conn, action_id)
+        flash("AI Action duplicated.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("ai-actions")
+
+
+@app.route("/ai/actions/<action_id>/delete", methods=["POST"])
+def ai_action_delete(action_id: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM ai_actions WHERE id=?", (action_id,))
+    flash("AI Action deleted.")
+    return _ai_redirect("ai-actions")
+
+
+def _collection_numbers() -> tuple[int, int]:
+    try:
+        return int(request.form.get("chunk_size") or 1800), int(request.form.get("chunk_overlap") or 200)
+    except ValueError as exc:
+        raise AILibraryError("Chunk size and overlap must be whole numbers.") from exc
+
+
+@app.route("/ai/collections", methods=["POST"])
+def ai_collection_create():
+    try:
+        chunk_size, overlap = _collection_numbers()
+        with get_db() as conn:
+            create_collection(
+                conn, name=request.form.get("name", ""), description=request.form.get("description", ""),
+                embedding_model=request.form.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
+                chunk_size=chunk_size, chunk_overlap=overlap,
+                knowledge_domain=request.form.get("knowledge_domain", ""),
+                version_label=request.form.get("version_label", ""),
+            )
+        flash("Knowledge collection created.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/collections/<collection_id>/update", methods=["POST"])
+def ai_collection_update(collection_id: str):
+    try:
+        chunk_size, overlap = _collection_numbers()
+        with get_db() as conn:
+            needs_rebuild = update_collection(
+                conn, collection_id, name=request.form.get("name", ""),
+                description=request.form.get("description", ""),
+                embedding_model=request.form.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
+                chunk_size=chunk_size, chunk_overlap=overlap,
+                knowledge_domain=request.form.get("knowledge_domain", ""),
+                version_label=request.form.get("version_label", ""),
+            )
+        flash("Collection saved. Rebuild the index now." if needs_rebuild else "Collection saved.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/collections/<collection_id>/delete", methods=["POST"])
+def ai_collection_delete(collection_id: str):
+    with get_db() as conn:
+        conn.execute("DELETE FROM ai_knowledge_collections WHERE id=?", (collection_id,))
+    flash("Knowledge collection and its local index were deleted. Referencing actions now show no collection.")
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/collections/<collection_id>/duplicate", methods=["POST"])
+def ai_collection_duplicate(collection_id: str):
+    try:
+        with get_db() as conn:
+            duplicate_collection(conn, collection_id, new_name=request.form.get("name") or None)
+        flash("Knowledge collection duplicated with its local documents and index.")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/collections/<collection_id>/documents", methods=["POST"])
+def ai_document_import(collection_id: str):
+    uploads = [item for field in ("document", "document_folder") for item in request.files.getlist(field) if item and item.filename]
+    if not uploads:
+        flash("Choose one or more documents to import.")
+        return _ai_redirect("knowledge-library")
+    mode = (request.form.get("ingestion_mode") or "raw").lower()
+    imported, failures = 0, []
+    for upload in uploads[:50]:
+        filename = secure_filename(upload.filename)
+        data = upload.read(10 * 1024 * 1024 + 1)
+        provenance = {"source_file": upload.filename, "source_title": request.form.get("source_title", ""),
+                      "source_pages": request.form.get("source_pages", ""), "topic": request.form.get("topic", ""),
+                      "status": request.form.get("status", "current"), "version_label": request.form.get("version_label", "")}
+        try:
+            if len(data) > 10 * 1024 * 1024:
+                raise AILibraryError("Knowledge documents are limited to 10 MB each.")
+            with get_db() as conn:
+                collection = conn.execute("SELECT * FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone()
+            if not collection:
+                raise AILibraryError("Knowledge collection was not found.")
+            with get_db() as preview_conn:
+                preview = preview_document_import(preview_conn, collection_id, filename, data, ingestion_mode=mode, provenance=provenance)
+            warning_codes = {item["code"] for item in preview["warnings"]}
+            if warning_codes.intersection({"DUPLICATE_CONTENT", "VERSION_CONFLICT"}) and not _form_bool("accept_merge_warnings"):
+                raise AILibraryError(
+                    "Import needs review before apply: " + ", ".join(sorted(warning_codes)) + ". Check the acknowledgement box only after comparing the sources."
+                )
+            prepared = prepare_document(filename, data, collection, ollama_embed, ingestion_mode=mode, provenance=provenance)
+            with get_db() as conn:
+                save_prepared_document(conn, collection_id, prepared)
+            imported += 1
+        except AILibraryError as exc:
+            failures.append(f"{filename}: {exc}")
+            with get_db() as conn:
+                if conn.execute("SELECT 1 FROM ai_knowledge_collections WHERE id=?", (collection_id,)).fetchone():
+                    record_document_failure(conn, collection_id, filename, str(exc), ingestion_mode=mode, provenance=provenance)
+    if imported:
+        flash(f"Imported and indexed {imported} knowledge document(s).")
+    for failure in failures[:5]:
+        flash(failure)
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/documents/<document_id>/delete", methods=["POST"])
+def ai_document_delete(document_id: str):
+    with get_db() as conn:
+        row = conn.execute("SELECT collection_id FROM ai_knowledge_documents WHERE id=?", (document_id,)).fetchone()
+        conn.execute("DELETE FROM ai_knowledge_documents WHERE id=?", (document_id,))
+        if row:
+            conn.execute("UPDATE ai_knowledge_collections SET revision=revision+1, updated_at=? WHERE id=?", (datetime.utcnow().isoformat(), row["collection_id"]))
+    flash("Knowledge document and its chunks were removed.")
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/ai/documents/<document_id>/rebuild", methods=["POST"])
+def ai_document_rebuild(document_id: str):
+    try:
+        with get_db() as conn:
+            count = rebuild_document(conn, document_id, ollama_embed)
+        flash(f"Knowledge document rebuilt ({count} chunks).")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/api/ai/documents/<document_id>", methods=["GET"])
+def api_ai_document_inspect(document_id: str):
+    with get_db() as conn:
+        document = conn.execute("SELECT * FROM ai_knowledge_documents WHERE id=?", (document_id,)).fetchone()
+        if not document:
+            return jsonify({"ok": False, "error": "Knowledge document was not found."}), 404
+        chunks = [dict(row) for row in conn.execute(
+            "SELECT id, chunk_index, content, embedding_model FROM ai_knowledge_chunks WHERE document_id=? ORDER BY chunk_index",
+            (document_id,),
+        )]
+    result = dict(document)
+    result.pop("provenance_json", None)
+    return jsonify({"ok": True, "document": result, "chunks": chunks})
+
+
+@app.route("/api/ai/collections/<collection_id>/search", methods=["POST"])
+def api_ai_collection_search(collection_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            passages = retrieve_knowledge(conn, collection_id, str(data.get("query") or ""), ollama_embed, limit=int(data.get("limit") or 5))
+        return jsonify({"ok": True, "passages": passages})
+    except (AILibraryError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/ai/collections/<collection_id>/audit", methods=["GET"])
+def api_ai_collection_audit(collection_id: str):
+    try:
+        with get_db() as conn:
+            result = audit_collection(conn, collection_id, ollama_list_models())
+        return jsonify({"ok": True, **result})
+    except AILibraryError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 404
+
+
+@app.route("/ai/collections/<collection_id>/rebuild", methods=["POST"])
+def ai_collection_rebuild(collection_id: str):
+    try:
+        with get_db() as conn:
+            count = rebuild_collection(conn, collection_id, ollama_embed)
+        flash(f"Knowledge index rebuilt ({count} chunks).")
+    except AILibraryError as exc:
+        flash(str(exc))
+    return _ai_redirect("knowledge-library")
+
+
+@app.route("/api/ai/actions/<action_id>/execute", methods=["POST"])
+def api_ai_action_execute(action_id: str):
+    init_db()
+    data = request.get_json(silent=True) or {}
+    current_prompt = str(data.get("content") or "").strip()
+    runtime_instruction = str(data.get("instruction") or "").strip()
+    if not current_prompt:
+        return jsonify({"ok": False, "error": "The Final Prompt is empty."}), 400
+    try:
+        with get_db() as conn:
+            action = get_action_for_execution(conn, action_id)
+            if runtime_instruction and not action["allow_runtime_instruction"]:
+                raise AILibraryError("This action does not allow a one-off instruction.")
+            passages = []
+            if action["knowledge_collection_id"]:
+                query = "\n\n".join(filter(None, [action.get("template_content"), runtime_instruction, current_prompt]))
+                passages = retrieve_knowledge(conn, action["knowledge_collection_id"], query, ollama_embed)
+        model = str(data.get("model") or action.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL).strip()
+        models = ollama_list_models()
+        if not models:
+            raise AILibraryError("Ollama is unavailable or has no installed models.")
+        if model not in models:
+            raise AILibraryError(f"The selected Ollama model is not installed: {model}")
+        system, prompt = build_action_request(action, current_prompt, runtime_instruction, passages)
+        result = ollama_generate(prompt=prompt, model=model, system=system)
+        session["ollama_model"] = model
+        return jsonify({
+            "ok": True, "content": result, "action": action["name"], "model": model,
+            "sources": [{"filename": item["filename"], "score": round(item["score"], 4)} for item in passages],
+        })
+    except AILibraryError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
 
 # ----------------------------
@@ -2916,23 +3677,29 @@ def bulk_update():
         with get_db() as conn:
             for pid in ids:
                 now_str = datetime.utcnow().isoformat()
+                prompt_changed = False
                 if cat:
-                    conn.execute("UPDATE prompts SET category=?, updated_at=? WHERE id=?", (cat, now_str, pid))
+                    conn.execute("UPDATE prompts SET category=? WHERE id=?", (cat, pid))
+                    prompt_changed = True
                 if tool:
-                    conn.execute("UPDATE prompts SET tool=?, updated_at=? WHERE id=?", (tool, now_str, pid))
+                    conn.execute("UPDATE prompts SET tool=? WHERE id=?", (tool, pid))
+                    prompt_changed = True
                 if ptype:
-                    conn.execute("UPDATE prompts SET prompt_type=?, updated_at=? WHERE id=?", (ptype, now_str, pid))
+                    conn.execute("UPDATE prompts SET prompt_type=? WHERE id=?", (ptype, pid))
+                    prompt_changed = True
                 if bulk_group is not None and str(bulk_group).strip() != "":
                     bg = str(bulk_group).strip()
                     if bg.lower() == "none":
-                        conn.execute("UPDATE prompts SET group_id=NULL, updated_at=? WHERE id=?", (now_str, pid))
+                        conn.execute("UPDATE prompts SET group_id=NULL WHERE id=?", (pid,))
+                        prompt_changed = True
                     else:
                         try:
                             gid = int(bg)
                         except ValueError:
                             gid = None
                         if gid is not None:
-                            conn.execute("UPDATE prompts SET group_id=?, updated_at=? WHERE id=?", (gid, now_str, pid))
+                            conn.execute("UPDATE prompts SET group_id=? WHERE id=?", (gid, pid))
+                            prompt_changed = True
                 if tags_str:
                     raw_tags = [t.strip() for t in tags_str.split(',') if t.strip()]
                     for tag_name in raw_tags:
@@ -2945,7 +3712,12 @@ def bulk_update():
                             conn.execute("INSERT INTO prompt_tags (prompt_id, tag_id) VALUES (?, ?)", (int(pid), tag_id))
                         except sqlite3.IntegrityError:
                             pass
-                    conn.execute("UPDATE prompts SET updated_at=? WHERE id=?", (now_str, pid))
+                    prompt_changed = True
+                if prompt_changed:
+                    conn.execute(
+                        "UPDATE prompts SET updated_at=?, revision=revision+1, source=? WHERE id=?",
+                        (now_str, "ui_bulk", pid),
+                    )
             conn.commit()
     return redirect(url_for("index"))
 
@@ -3022,7 +3794,8 @@ def restore_backup():
 # Ollama Integration
 # ---------------------------
 OLLAMA_DEFAULT_MODEL = "gemma3:4b"
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+OLLAMA_URL = f"{OLLAMA_HOST}/api/generate"
 
 
 # Cached readiness detection (prevents hammering /api/tags)
@@ -3044,7 +3817,7 @@ def ollama_is_ready_cached(ttl_seconds: float = 10.0) -> bool:
 
 def ollama_list_models():
     try:
-        r = requests.get("http://localhost:11434/api/tags", timeout=1.5)
+        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=1.5)
         r.raise_for_status()
         data = r.json()
         models = []
@@ -3056,7 +3829,7 @@ def ollama_list_models():
     except Exception:
         return []
 
-def ollama_generate(prompt: str, model: str | None = None, system: str | None = None, images: list[str] | None = None) -> str:
+def ollama_generate(prompt: str, model: str | None = None, system: str | None = None, images: list[str] | None = None, format: dict | str | None = None, think: bool | None = None) -> str:
     payload = {
         "model": model or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL,
         "prompt": prompt,
@@ -3066,11 +3839,59 @@ def ollama_generate(prompt: str, model: str | None = None, system: str | None = 
         payload["system"] = system
     if images:
         payload["images"] = images
+    if format:
+        payload["format"] = format
+    if think is not None:
+        payload["think"] = think
 
-    r = requests.post(OLLAMA_URL, json=payload, timeout=120)
-    r.raise_for_status()
-    data = r.json()
-    return data.get("response", "").strip()
+    try:
+        r = requests.post(OLLAMA_URL, json=payload, timeout=120)
+        r.raise_for_status()
+        data = r.json()
+    except requests.Timeout as exc:
+        raise AILibraryError("Ollama timed out after 120 seconds.") from exc
+    except requests.ConnectionError as exc:
+        raise AILibraryError(f"Ollama is unavailable at {OLLAMA_HOST}.") from exc
+    except requests.RequestException as exc:
+        detail = ""
+        if getattr(exc, "response", None) is not None:
+            try:
+                detail = (exc.response.json().get("error") or "").strip()
+            except Exception:
+                detail = ""
+        raise AILibraryError(detail or f"Ollama request failed: {exc}") from exc
+    response = str(data.get("response") or "").strip()
+    if not response:
+        raise AILibraryError("Ollama returned an empty response.")
+    return response
+
+
+def ollama_embed(text: str, model: str) -> list[float]:
+    """Create a single embedding through Ollama's current /api/embed endpoint."""
+    try:
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/embed",
+            json={"model": model, "input": text},
+            timeout=120,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except requests.Timeout as exc:
+        raise AILibraryError("Knowledge embedding timed out after 120 seconds.") from exc
+    except requests.ConnectionError as exc:
+        raise AILibraryError(f"Ollama is unavailable at {OLLAMA_HOST}.") from exc
+    except requests.RequestException as exc:
+        detail = ""
+        if getattr(exc, "response", None) is not None:
+            try:
+                detail = (exc.response.json().get("error") or "").strip()
+            except Exception:
+                detail = ""
+        raise AILibraryError(detail or f"Knowledge embedding failed: {exc}") from exc
+    embeddings = payload.get("embeddings") or []
+    if not embeddings or not isinstance(embeddings[0], list):
+        raise AILibraryError("Ollama returned no embedding vector.")
+    return [float(value) for value in embeddings[0]]
 
 @app.route("/prompt/<int:prompt_id>/refine", methods=["GET", "POST"])
 def refine_prompt(prompt_id: int):
@@ -3130,8 +3951,8 @@ def refine_prompt(prompt_id: int):
         if save_action == "overwrite":
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    "UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?",
-                    (current_content, datetime.utcnow().isoformat(), prompt_id)
+                    "UPDATE prompts SET content = ?, updated_at = ?, revision = revision + 1, source = ? WHERE id = ?",
+                    (current_content, datetime.utcnow().isoformat(), "ui_refine", prompt_id)
                 )
                 conn.commit()
             flash("Prompt updated.")
@@ -3143,8 +3964,8 @@ def refine_prompt(prompt_id: int):
 
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         new_title,
                         prompt["category"],
@@ -3155,6 +3976,8 @@ def refine_prompt(prompt_id: int):
                         prompt["thumbnail"],
                         parent_id,
                         (prompt["group_id"] if ("group_id" in prompt.keys()) else None),
+                        str(uuid.uuid4()).upper(),
+                        "ui_refine",
                         datetime.utcnow().isoformat(),
                         datetime.utcnow().isoformat(),
                     )
@@ -3167,8 +3990,8 @@ def refine_prompt(prompt_id: int):
             new_title = request.form.get("new_title") or f"{prompt['title']} (Refined)"
             with sqlite3.connect(DB_PATH) as conn:
                 conn.execute(
-                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    """INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         new_title,
                         prompt["category"],
@@ -3179,6 +4002,8 @@ def refine_prompt(prompt_id: int):
                         prompt["thumbnail"],
                         None,
                         (prompt["group_id"] if ("group_id" in prompt.keys()) else None),
+                        str(uuid.uuid4()).upper(),
+                        "ui_refine",
                         datetime.utcnow().isoformat(),
                         datetime.utcnow().isoformat(),
                     ),
@@ -3221,10 +4046,10 @@ def save_from_use(prompt_id: int):
             new_title = f"{prompt['title']} (Variant)"
             conn.execute(
                 """
-                INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO prompts (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], content, prompt["notes"], prompt["thumbnail"], parent_id, (prompt["group_id"] if ("group_id" in prompt.keys()) else None), now, now),
+                (new_title, prompt["category"], prompt["tool"], prompt["prompt_type"], content, prompt["notes"], prompt["thumbnail"], parent_id, (prompt["group_id"] if ("group_id" in prompt.keys()) else None), str(uuid.uuid4()).upper(), "ui_use", now, now),
             )
             new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             # Copy tags to the variant
@@ -3236,8 +4061,8 @@ def save_from_use(prompt_id: int):
 
         # overwrite
         conn.execute(
-            "UPDATE prompts SET content = ?, updated_at = ? WHERE id = ?",
-            (content, now, prompt_id),
+            "UPDATE prompts SET content = ?, updated_at = ?, revision = revision + 1, source = ? WHERE id = ?",
+            (content, now, "ui_use", prompt_id),
         )
         conn.commit()
 
@@ -3688,11 +4513,11 @@ def ext_save_prompt():
         cur = conn.execute(
             """
             INSERT INTO prompts
-                (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, created_at, updated_at)
+                (title, category, tool, prompt_type, content, notes, thumbnail, parent_id, group_id, sync_id, source, created_at, updated_at)
             VALUES
-                (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)
+                (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)
             """,
-            (title, category, tool, prompt_type, content, notes or None, group_id, now, now),
+            (title, category, tool, prompt_type, content, notes or None, group_id, str(uuid.uuid4()).upper(), "browser_extension", now, now),
         )
         prompt_id = cur.lastrowid
 
@@ -3734,12 +4559,16 @@ if __name__ == "__main__":
     # This preserves the existing prompts.db and adds only missing columns/indexes.
     init_db()
 
-    port = int(os.environ.get("PROMPTHUB_PORT", find_free_port()))
+    configured_port = INTEGRATION_RUNTIME_CONFIG.get("port")
+    port = int(os.environ.get("PROMPTHUB_PORT", configured_port or find_free_port()))
+    host = os.environ.get("PROMPTHUB_HOST", INTEGRATION_RUNTIME_CONFIG.get("host") or "127.0.0.1")
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        host = "127.0.0.1"
 
-    print(f"Starting PromptHub on http://127.0.0.1:{port}")
+    print(f"Starting PromptHub on http://{host}:{port}")
 
     app.run(
-        host="127.0.0.1",
+        host=host,
         port=port,
         debug=False,
         use_reloader=False

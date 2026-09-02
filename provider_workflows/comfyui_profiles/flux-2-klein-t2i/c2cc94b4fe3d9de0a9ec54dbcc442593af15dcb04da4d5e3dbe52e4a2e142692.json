@@ -1,0 +1,458 @@
+{
+  "9": {
+    "inputs": {
+      "filename_prefix": "Flux2-Klein",
+      "images": [
+        "121",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "76": {
+    "inputs": {
+      "value": "A female human in her forties of caucasian heritage. She is petite and athletic. Her skin is smooth. Her facial structure centres on a distinctly asymmetrical face, with subtle cheekbones. Her eyes are warm copper-brown. Her nose has softly rounded form. Her mouth has pronounced Cupid's bow"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Prompt"
+    }
+  },
+  "95": {
+    "inputs": {
+      "aspect_ratio": "2:3 (Portrait Photo)",
+      "megapixels": 1,
+      "multiple": 8
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "Resolution Selector"
+    }
+  },
+  "97": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "98": {
+    "inputs": {
+      "noise": [
+        "108",
+        0
+      ],
+      "guider": [
+        "106",
+        0
+      ],
+      "sampler": [
+        "97",
+        0
+      ],
+      "sigmas": [
+        "107",
+        0
+      ],
+      "latent_image": [
+        "100",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "99": {
+    "inputs": {
+      "samples": [
+        "98",
+        0
+      ],
+      "vae": [
+        "104",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "100": {
+    "inputs": {
+      "width": [
+        "102",
+        0
+      ],
+      "height": [
+        "103",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyFlux2LatentImage",
+    "_meta": {
+      "title": "Empty Flux 2 Latent"
+    }
+  },
+  "101": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "111",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "102": {
+    "inputs": {
+      "value": [
+        "95",
+        0
+      ]
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "103": {
+    "inputs": {
+      "value": [
+        "95",
+        1
+      ]
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "104": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "105": {
+    "inputs": {
+      "text": [
+        "76",
+        0
+      ],
+      "clip": [
+        "111",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "106": {
+    "inputs": {
+      "cfg": 1,
+      "model": [
+        "111",
+        0
+      ],
+      "positive": [
+        "105",
+        0
+      ],
+      "negative": [
+        "101",
+        0
+      ]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFG Guider"
+    }
+  },
+  "107": {
+    "inputs": {
+      "steps": 8,
+      "width": [
+        "102",
+        0
+      ],
+      "height": [
+        "103",
+        0
+      ]
+    },
+    "class_type": "Flux2Scheduler",
+    "_meta": {
+      "title": "Flux2Scheduler"
+    }
+  },
+  "108": {
+    "inputs": {
+      "noise_seed": 118804720419150
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "109": {
+    "inputs": {
+      "unet_name": "Flux2Klein9b\\flux-2-klein-9b-fp8.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "110": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "111": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "109",
+        0
+      ],
+      "clip": [
+        "110",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "112": {
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider"
+    }
+  },
+  "113": {
+    "inputs": {
+      "model_name": "sam_vit_b_01ec64.pth",
+      "device_mode": "AUTO"
+    },
+    "class_type": "SAMLoader",
+    "_meta": {
+      "title": "SAMLoader (Impact)"
+    }
+  },
+  "115": {
+    "inputs": {
+      "images": [
+        "121",
+        1
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "116": {
+    "inputs": {
+      "model_name": "segm/person_yolov8m-seg.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider"
+    }
+  },
+  "117": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "111",
+        0
+      ]
+    },
+    "class_type": "DifferentialDiffusion",
+    "_meta": {
+      "title": "Differential Diffusion"
+    }
+  },
+  "118": {
+    "inputs": {
+      "rgthree_comparer": {
+        "images": [
+          {
+            "name": "B",
+            "selected": true,
+            "url": "/api/view?filename=rgthree.compare._temp_vygfz_00001_.png&type=temp&subfolder=&rand=0.15242438521804902"
+          }
+        ]
+      },
+      "image_a": [
+        "99",
+        0
+      ],
+      "image_b": [
+        "121",
+        0
+      ]
+    },
+    "class_type": "Image Comparer (rgthree)",
+    "_meta": {
+      "title": "Image Comparer (rgthree)"
+    }
+  },
+  "119": {
+    "inputs": {
+      "text": [
+        "122",
+        0
+      ],
+      "clip": [
+        "111",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "120": {
+    "inputs": {
+      "output": "",
+      "source": [
+        "122",
+        1
+      ]
+    },
+    "class_type": "Display Any (rgthree)",
+    "_meta": {
+      "title": "Display Any (rgthree)"
+    }
+  },
+  "121": {
+    "inputs": {
+      "guide_size": 768,
+      "guide_size_for": true,
+      "max_size": 1024,
+      "seed": 521154678352466,
+      "steps": 10,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.19,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.5,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 1.5,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 40,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": false,
+      "tiled_decode": false,
+      "image": [
+        "99",
+        0
+      ],
+      "model": [
+        "117",
+        0
+      ],
+      "clip": [
+        "111",
+        1
+      ],
+      "vae": [
+        "104",
+        0
+      ],
+      "positive": [
+        "119",
+        0
+      ],
+      "negative": [
+        "101",
+        0
+      ],
+      "bbox_detector": [
+        "112",
+        0
+      ],
+      "sam_model_opt": [
+        "113",
+        0
+      ],
+      "segm_detector_opt": [
+        "116",
+        1
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer"
+    }
+  },
+  "122": {
+    "inputs": {
+      "main_prompt": [
+        "76",
+        0
+      ],
+      "subject_mode": "auto",
+      "detail_preset": "auto",
+      "strictness": "balanced",
+      "dedupe_mode": "smart",
+      "max_terms": 24,
+      "keep_hair_terms": true,
+      "keep_expression_terms": true,
+      "keep_age_terms": true,
+      "keep_damage_terms": true,
+      "append_custom_face_terms": "",
+      "whitelist_terms": "",
+      "blacklist_terms": ""
+    },
+    "class_type": "FaceDetailPromptComposer",
+    "_meta": {
+      "title": "Face Detail Prompt Composer"
+    }
+  }
+}

@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+
+{% macro resource_section(title, anchor, kind, items) %}
+<section id="{{ anchor }}" class="ai-section">
+  <div class="section-heading"><div><h2>{{ title }}</h2><p class="notes">Reusable text referenced by AI Actions. Disabling an item prevents actions from running with it.</p></div></div>
+  <details class="ai-card create-card">
+    <summary>Create {{ title[:-1] }}</summary>
+    <form method="post" action="{{ url_for('ai_resource_create') }}" class="ai-form">
+      <input type="hidden" name="kind" value="{{ kind }}">
+      <label>Name<input name="name" required></label>
+      <label>Description<input name="description" placeholder="Optional purpose or category"></label>
+      <label class="wide">Content<textarea name="content" rows="7" required></textarea></label>
+      <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
+      <button type="submit">Create</button>
+    </form>
+  </details>
+  <div class="ai-card-grid">
+    {% for item in items %}
+    <details class="ai-card" {% if loop.first %}open{% endif %}>
+      <summary><strong>{{ item.name }}</strong><span class="status-pill {{ 'on' if item.enabled else 'off' }}">{{ 'Enabled' if item.enabled else 'Disabled' }}</span></summary>
+      <form method="post" action="{{ url_for('ai_resource_update', resource_id=item.id) }}" class="ai-form">
+        <input type="hidden" name="kind" value="{{ kind }}">
+        <label>Name<input name="name" value="{{ item.name }}" required></label>
+        <label>Description<input name="description" value="{{ item.description or '' }}"></label>
+        <label class="wide">Content<textarea name="content" rows="8" required>{{ item.content }}</textarea></label>
+        <label class="check"><input type="checkbox" name="enabled" {% if item.enabled %}checked{% endif %}> Enabled</label>
+        <div class="button-row"><button type="submit">Save</button></div>
+      </form>
+      <div class="button-row secondary-actions">
+        <form method="post" action="{{ url_for('ai_resource_duplicate', resource_id=item.id) }}"><button class="btn-secondary">Duplicate</button></form>
+        <form method="post" action="{{ url_for('ai_resource_delete', resource_id=item.id) }}" onsubmit="return confirm('Delete this item? Referencing actions will keep working only after you choose a replacement.');"><button class="danger">Delete</button></form>
+      </div>
+    </details>
+    {% else %}<p class="empty-state">No saved items yet.</p>{% endfor %}
+  </div>
+</section>
+{% endmacro %}
+
+{% block content %}
+<section class="page ai-page">
+  <div class="page-header"><div><h1>AI Actions & Knowledge</h1><p>Manage reusable local-AI workflows without changing PromptHub source files.</p></div><a class="btn-secondary" href="{{ url_for('manage') }}">General Manage</a></div>
+  <nav class="ai-subnav"><a href="#ai-actions">Actions</a><a href="#system-instructions">System Instructions</a><a href="#prompt-templates">Prompt Templates</a><a href="#knowledge-library">Knowledge</a></nav>
+
+  <section id="ai-actions" class="ai-section">
+    <div class="section-heading"><div><h2>AI Actions</h2><p class="notes">Combine a generation model with reusable instructions and, optionally, one knowledge collection.</p></div></div>
+    <details class="ai-card create-card" open>
+      <summary>Create AI Action</summary>
+      <form method="post" action="{{ url_for('ai_action_create') }}" class="ai-form">
+        <label>Name<input name="name" required></label>
+        <label>Description<input name="description"></label>
+        <label>Ollama model<select name="model"><option value="">Use current selection</option>{% for model in ollama_models %}<option value="{{ model }}">{{ model }}</option>{% endfor %}</select></label>
+        <label>System instruction<select name="system_instruction_id"><option value="">Default assistant</option>{% for item in systems %}<option value="{{ item.id }}">{{ item.name }}{{ '' if item.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
+        <label>Prompt template<select name="prompt_template_id"><option value="">Default improvement task</option>{% for item in templates %}<option value="{{ item.id }}">{{ item.name }}{{ '' if item.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
+        <label>Knowledge collection<select name="knowledge_collection_id"><option value="">None</option>{% for item in collections %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></label>
+        <label class="check"><input type="checkbox" name="allow_runtime_instruction" checked> Allow one-off instruction</label>
+        <label class="check"><input type="checkbox" name="enabled" checked> Enabled</label>
+        <button type="submit">Create Action</button>
+      </form>
+    </details>
+    <div class="ai-card-grid">
+    {% for action in actions %}
+      <details class="ai-card">
+        <summary><strong>{{ action.name }}</strong><span class="status-pill {{ 'on' if action.enabled else 'off' }}">{{ 'Enabled' if action.enabled else 'Disabled' }}</span></summary>
+        <form method="post" action="{{ url_for('ai_action_update', action_id=action.id) }}" class="ai-form">
+          <label>Name<input name="name" value="{{ action.name }}" required></label>
+          <label>Description<input name="description" value="{{ action.description or '' }}"></label>
+          <label>Ollama model<select name="model"><option value="">Use current selection</option>{% for model in ollama_models %}<option value="{{ model }}" {% if action.model == model %}selected{% endif %}>{{ model }}</option>{% endfor %}{% if action.model and action.model not in ollama_models %}<option selected value="{{ action.model }}">{{ action.model }} (missing)</option>{% endif %}</select></label>
+          <label>System instruction<select name="system_instruction_id"><option value="">Default assistant</option>{% for item in systems %}<option value="{{ item.id }}" {% if action.system_instruction_id == item.id %}selected{% endif %}>{{ item.name }}{{ '' if item.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
+          <label>Prompt template<select name="prompt_template_id"><option value="">Default improvement task</option>{% for item in templates %}<option value="{{ item.id }}" {% if action.prompt_template_id == item.id %}selected{% endif %}>{{ item.name }}{{ '' if item.enabled else ' (disabled)' }}</option>{% endfor %}</select></label>
+          <label>Knowledge collection<select name="knowledge_collection_id"><option value="">None</option>{% for item in collections %}<option value="{{ item.id }}" {% if action.knowledge_collection_id == item.id %}selected{% endif %}>{{ item.name }}</option>{% endfor %}</select></label>
+          <label class="check"><input type="checkbox" name="allow_runtime_instruction" {% if action.allow_runtime_instruction %}checked{% endif %}> Allow one-off instruction</label>
+          <label class="check"><input type="checkbox" name="enabled" {% if action.enabled %}checked{% endif %}> Enabled</label>
+          <button type="submit">Save</button>
+        </form>
+        <div class="button-row secondary-actions"><form method="post" action="{{ url_for('ai_action_duplicate', action_id=action.id) }}"><button class="btn-secondary">Duplicate</button></form><form method="post" action="{{ url_for('ai_action_delete', action_id=action.id) }}" onsubmit="return confirm('Delete this AI Action?');"><button class="danger">Delete</button></form></div>
+      </details>
+    {% else %}<p class="empty-state">Create an action to enable the Use AI workflow.</p>{% endfor %}
+    </div>
+  </section>
+
+  {{ resource_section('System Instructions', 'system-instructions', 'system', systems) }}
+  {{ resource_section('Prompt Templates', 'prompt-templates', 'template', templates) }}
+
+  <section id="knowledge-library" class="ai-section">
+    <div class="section-heading"><div><h2>Knowledge Manager</h2><p class="notes">Build, inspect, test, and maintain reusable local knowledge collections. TXT, Markdown, and PDF are supported.</p></div></div>
+    <details class="ai-card create-card"><summary>Create Knowledge Collection</summary>
+      <form method="post" action="{{ url_for('ai_collection_create') }}" class="ai-form">
+        <label>Name<input name="name" required></label><label>Description<input name="description"></label>
+        <label>Knowledge domain<input name="knowledge_domain" placeholder="Subject or system described by the sources"></label>
+        <label>Version label<input name="version_label" placeholder="Optional, for example 2.3"></label>
+        <label>Embedding model<input name="embedding_model" value="{{ default_embedding_model }}" required></label>
+        <label>Chunk size (characters)<input name="chunk_size" type="number" min="400" max="8000" value="1800"></label>
+        <label>Overlap (characters)<input name="chunk_overlap" type="number" min="0" value="200"></label>
+        <button type="submit">Create Collection</button>
+      </form>
+    </details>
+    <div class="ai-card-grid">
+    {% for collection in collections %}
+      <details class="ai-card knowledge-card">
+        <summary><strong>{{ collection.name }}</strong><span class="status-pill on">{{ collection.document_count }} docs · {{ collection.chunk_count }} chunks</span></summary>
+        <form method="post" action="{{ url_for('ai_collection_update', collection_id=collection.id) }}" class="ai-form">
+          <label>Name<input name="name" value="{{ collection.name }}" required></label><label>Description<input name="description" value="{{ collection.description or '' }}"></label>
+          <label>Knowledge domain<input name="knowledge_domain" value="{{ collection.knowledge_domain or '' }}"></label>
+          <label>Version label<input name="version_label" value="{{ collection.version_label or '' }}"></label>
+          <label>Embedding model<input name="embedding_model" value="{{ collection.embedding_model }}" required></label>
+          <label>Chunk size<input name="chunk_size" type="number" min="400" max="8000" value="{{ collection.chunk_size }}"></label>
+          <label>Overlap<input name="chunk_overlap" type="number" min="0" value="{{ collection.chunk_overlap }}"></label>
+          <button type="submit">Save Settings</button>
+        </form>
+        <p class="notes">Revision {{ collection.revision }} · Last rebuilt {{ collection.last_rebuilt_at or 'Never' }} · {{ audit_by_collection[collection.id].finding_count }} health finding(s)</p>
+        <details class="health-panel"><summary>Collection health</summary>
+          {% for finding in audit_by_collection[collection.id].findings %}<div class="health-finding {{ finding.severity }}"><strong>{{ finding.code }}</strong>{% if finding.document %} · {{ finding.document }}{% endif %}<span>{{ finding.message }}</span></div>
+          {% else %}<p class="notes">No heuristic issues detected.</p>{% endfor %}
+        </details>
+        <div class="document-list">
+          <h3>Documents</h3>
+          {% for document in docs_by_collection.get(collection.id, []) %}
+          <div class="document-row"><div><strong>{{ document.filename }}</strong><small>{{ document.indexed_at or 'Not indexed' }}{% if document.index_error %} · {{ document.index_error }}{% endif %}</small></div><form method="post" action="{{ url_for('ai_document_delete', document_id=document.id) }}" onsubmit="return confirm('Remove this document and its index?');"><button class="danger">Remove</button></form></div>
+          {% else %}<p class="notes">No documents imported.</p>{% endfor %}
+        </div>
+        <form method="post" action="{{ url_for('ai_document_import', collection_id=collection.id) }}" enctype="multipart/form-data" class="ai-form import-form"><label class="wide">Files<input type="file" name="document" accept=".txt,.md,.markdown,.pdf" multiple></label><label class="wide">Folder (supported files only)<input type="file" name="document_folder" accept=".txt,.md,.markdown,.pdf" webkitdirectory multiple></label><label>Ingestion mode<select name="ingestion_mode"><option value="optimised">OPTIMISED (recommended)</option><option value="raw">RAW</option><option value="merge">MERGE</option></select></label><label>Source title<input name="source_title"></label><label>Topic<input name="topic"></label><label>Source pages<input name="source_pages" placeholder="Optional, e.g. 14-19"></label><label>Status<select name="status"><option value="current">Current</option><option value="supplemental">Supplemental</option><option value="obsolete">Obsolete</option></select></label><label>Source version<input name="version_label"></label><label class="check wide"><input type="checkbox" name="accept_merge_warnings"> I reviewed duplicate/version warnings and explicitly accept this merge</label><button type="submit">Import & Index Sources</button></form>
+        <div class="retrieval-tester" data-collection-id="{{ collection.id }}"><h3>Retrieval test</h3><div class="upload-row"><input class="retrieval-query" placeholder="Ask a question this collection should answer"><button type="button" class="run-retrieval">Test Retrieval</button></div><div class="retrieval-results notes"></div></div>
+        <div class="button-row secondary-actions"><form method="post" action="{{ url_for('ai_collection_rebuild', collection_id=collection.id) }}"><button class="btn-secondary">Rebuild Collection</button></form><form method="post" action="{{ url_for('ai_collection_duplicate', collection_id=collection.id) }}" onsubmit="return confirm('Duplicate this collection and its local index?');"><button class="btn-secondary">Duplicate Collection</button></form><form method="post" action="{{ url_for('ai_collection_delete', collection_id=collection.id) }}" onsubmit="return confirm('Delete this collection, its documents, and its index?');"><button class="danger">Delete Collection</button></form></div>
+      </details>
+    {% else %}<p class="empty-state">No knowledge collections yet.</p>{% endfor %}
+    </div>
+  </section>
+  <dialog id="knowledgePreview" class="knowledge-dialog"><form method="dialog"><button class="dialog-close">Close</button></form><h2 id="knowledgePreviewTitle">Document preview</h2><h3>Extracted text</h3><pre id="knowledgeExtracted"></pre><h3>Generated chunks</h3><div id="knowledgeChunks"></div></dialog>
+</section>
+<script>
+function escapeKnowledgeHtml(value) { const div=document.createElement('div'); div.textContent=String(value ?? ''); return div.innerHTML; }
+document.querySelectorAll('.document-row form[action*="/ai/documents/"]').forEach(form => {
+  const match = form.action.match(/\/ai\/documents\/([^/]+)\/delete/); if (!match) return;
+  const actions = document.createElement('div'); actions.className = 'button-row';
+  const inspect = document.createElement('button'); inspect.type = 'button'; inspect.className = 'btn-secondary'; inspect.textContent = 'Preview';
+  const rebuild = document.createElement('form'); rebuild.method = 'post'; rebuild.action = `/ai/documents/${match[1]}/rebuild`; rebuild.innerHTML = '<button class="btn-secondary">Rebuild</button>';
+  inspect.addEventListener('click', async () => { const response = await fetch(`/api/ai/documents/${match[1]}`); const data = await response.json(); if (!data.ok) return window.showToast(data.error || 'Could not inspect document'); document.getElementById('knowledgePreviewTitle').textContent = data.document.filename; document.getElementById('knowledgeExtracted').textContent = data.document.extracted_text; document.getElementById('knowledgeChunks').innerHTML = data.chunks.map((chunk, index) => `<details><summary>${index + 1}. ${chunk.id}</summary><pre>${escapeKnowledgeHtml(chunk.content)}</pre></details>`).join(''); document.getElementById('knowledgePreview').showModal(); });
+  form.parentNode.insertBefore(actions, form); actions.append(inspect, rebuild, form);
+});
+document.querySelectorAll('.run-retrieval').forEach(button => button.addEventListener('click', async () => {
+  const tester = button.closest('.retrieval-tester'); const query = tester.querySelector('.retrieval-query').value.trim(); if (!query) return window.showToast('Enter a retrieval query');
+  const output = tester.querySelector('.retrieval-results'); output.textContent = 'Testing retrieval…';
+  const response = await fetch(`/api/ai/collections/${tester.dataset.collectionId}/search`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({query})}); const data = await response.json();
+  output.innerHTML = data.ok ? data.passages.map((item, index) => `<details><summary>${index + 1}. ${escapeKnowledgeHtml(item.filename)} · score ${Number(item.score).toFixed(4)} · chunk ${item.chunk_index}</summary><pre>${escapeKnowledgeHtml(item.content)}</pre></details>`).join('') : escapeKnowledgeHtml(data.error || 'Retrieval failed');
+}));
+</script>
+{% endblock %}

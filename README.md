@@ -1,5 +1,9 @@
 # Prompt Hub
 
+Prompt Hub includes reusable AI Actions and a local Knowledge Manager. See [AI Actions and Knowledge](docs/AI_ACTIONS_KNOWLEDGE.md) for collection building, RAW/OPTIMISED/MERGE ingestion, provenance, retrieval testing, audits, rebuilds, and Codex integration.
+
+See [ComfyUI workflow dispatch](docs/COMFYUI_GENERATION.md) for multi-server configuration, reusable semantic Workflow Profiles, media uploads, generation history, API operations, and worked Flux 2 Klein/H3 I2V examples.
+
 A local, self-hosted web application for storing, organising, refining, and reusing AI prompts.
 
 Prompt Hub is built for real-world AI workflows, not toy examples. It supports full-length prompts, instruction-based editing, iterative refinement, visual context, browser capture, local AI integration, and structured organisation.
@@ -22,6 +26,7 @@ Prompt Hub helps you:
 * Store visual and contextual references
 * Capture prompts directly from the web
 * Run optional local LLM refinement via Ollama
+* Build reusable AI Actions from editable system instructions, task templates, models, and local knowledge
 * Sync prompt libraries between desktop and iOS
 
 It is designed for serious AI users managing real prompt systems.
@@ -56,6 +61,27 @@ Open in your browser:
 ```text
 http://127.0.0.1:5000
 ```
+
+## Local Integration API v1
+
+PromptHub includes a local-only, versioned JSON API at `/api/integration/v1` for future ChatGPT app/plugin integration. It supports authenticated prompt search, retrieval, creation, optimistic-concurrency updates, related versions, organisation, dry runs, metadata, and integration change history. Existing UI and browser-extension routes remain unchanged.
+
+Run the database migration once before enabling API clients:
+
+```powershell
+.\env\Scripts\python.exe .\tools\migrate_integration_api.py
+```
+
+View non-secret status or explicitly retrieve the local bearer token:
+
+```powershell
+.\env\Scripts\python.exe .\tools\manage_integration_api.py status
+.\env\Scripts\python.exe .\tools\manage_integration_api.py show-token
+```
+
+The token, Flask session secret, API settings, and integration logs are stored outside the repository in `%LOCALAPPDATA%\PromptHub` by default. The server remains bound to `127.0.0.1` unless an allowed local-loopback value is configured.
+
+See [Integration API v1 documentation](docs/INTEGRATION_API_V1.md) for configuration, security assumptions, endpoint examples, errors, rollback, and future ChatGPT integration guidance.
 
 ---
 
@@ -313,6 +339,22 @@ Prompt Hub can integrate with locally hosted Ollama models for:
 Everything remains fully local.
 
 Supported models depend on your Ollama installation.
+
+### AI Actions and Knowledge Library
+
+Open **AI** in the top navigation to manage reusable System Instructions, Prompt Templates,
+AI Actions, and local Knowledge Collections. The upgraded **Use Prompt** screen runs the
+selected action against the editable Final Prompt and always shows a review result before
+anything is applied. Applying a result changes only the on-screen Final Prompt; saving a
+variant or overwriting the stored prompt remains a separate, explicit action.
+
+Knowledge documents are extracted, split into overlapping chunks, embedded with a
+collection-specific Ollama embedding model, and stored in the existing SQLite database.
+At execution time PromptHub embeds the task/current prompt, ranks chunks by cosine
+similarity, and supplies only the best passages as clearly delimited reference context.
+The Ollama host can be changed with `OLLAMA_HOST`; each collection has an editable
+embedding model. See [AI Actions and Knowledge Library](docs/AI_ACTIONS_KNOWLEDGE.md)
+for setup, usage, schema, testing, and limitations.
 
 ---
 

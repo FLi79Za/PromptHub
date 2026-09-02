@@ -30,7 +30,9 @@
                 formaction="{{ url_for('duplicate_prompt', prompt_id=prompt.id) }}"
                 name="as_variant" value="true"
                 title="Create a child version linked to this prompt using your current edits">Make Variant</button>
+        {% if workflow_profiles %}<button class="btn-primary" type="button" id="openGenerate">Generate</button>{% endif %}
       {% endif %}
+      {% if installed_skills %}<button class="btn-primary" type="button" id="openApplySkill">Apply Skill</button>{% endif %}
       <a class="btn-secondary" href="{{ url_for('index') }}">Back</a>
     </div>
   </div>
@@ -90,6 +92,33 @@
         </div>
     </details>
     {% endif %}
+  {% endif %}
+
+  {% if prompt and prompt.id and workflow_profiles %}
+  <dialog id="generateDialog" class="skill-dialog generation-dialog">
+    <form id="generationForm">
+      <div class="skill-dialog-header"><div><p class="eyebrow">Everyday generation</p><h2>Generate with…</h2><p class="notes">Choose any available workflow. Recommendations are suggestions, not restrictions.</p></div><button type="button" class="icon-button" id="closeGenerate" aria-label="Close">×</button></div>
+      <label>Prompt for this generation<textarea id="generationPrompt" name="prompt" rows="7" required>{{ prompt.content }}</textarea><span class="field-help">You can edit this copy for the render. The saved PromptHub prompt will not be changed.</span></label>
+      <label>Workflow Profile<select id="generationProfile" name="profile_id" required></select><span id="generationProfileHint" class="field-help"></span></label>
+      <div id="generationFields" class="generation-fields"></div>
+      <div class="skill-run-actions"><button type="submit" class="btn-primary" id="submitGeneration">Generate</button><span id="generationStatus" class="notes" aria-live="polite"></span></div>
+    </form>
+  </dialog>
+  {% endif %}
+
+  {% if prompt and prompt.id %}
+  <section class="panel generation-history">
+    <div class="section-heading"><div><p class="eyebrow">ComfyUI</p><h2>Generations</h2></div><span class="notes">{{ generations|length }} record{{ '' if generations|length == 1 else 's' }}</span></div>
+    <div id="generationHistory">
+    {% for item in generations %}
+      <article class="generation-card" data-generation-id="{{ item.id }}">
+        <div><strong>{{ item.profile_name }}</strong><span class="generation-status status-{{ item.status }}">{{ item.status|title }}</span><p class="notes">{{ item.server_name }} · {{ item.created_at }}{% if item.parameters.seed is defined %} · Seed {{ item.parameters.seed }}{% endif %}</p>{% if item.error_message %}<p class="generation-error">{{ item.error_message }}</p>{% endif %}</div>
+        <div class="generation-results">{% for media in item.result_media %}{% if media.kind == 'image' %}<a href="{{ media.url }}" target="_blank"><img src="{{ media.url }}" alt="Generated result"></a>{% else %}<a class="btn-secondary" href="{{ media.url }}" target="_blank">Open {{ media.kind|title }}</a>{% endif %}{% endfor %}</div>
+        <div class="skill-run-actions"><button type="button" class="btn-secondary refresh-generation">Refresh</button><button type="button" class="btn-secondary regenerate-generation">Regenerate</button><button type="button" class="btn-secondary new-seed-generation">New Seed</button></div>
+      </article>
+    {% else %}<p class="notes" id="noGenerations">No generations yet.</p>{% endfor %}
+    </div>
+  </section>
   {% endif %}
 
   <form method="post"
@@ -234,6 +263,35 @@
     </div>
 
   </form>
+
+  {% if installed_skills %}
+  <dialog id="applySkillDialog" class="skill-dialog">
+    <form id="applySkillForm" method="dialog">
+      <div class="skill-dialog-header"><div><p class="eyebrow">Inline draft assistance</p><h2>Apply Skill</h2><p class="notes">Uses the current editor text. Nothing is saved or replaced until you accept the result.</p></div><button type="button" class="icon-button" id="closeApplySkill" aria-label="Close">×</button></div>
+      <div class="skill-form-grid">
+        <label>Skill<select id="applySkillId" required>{% for skill in installed_skills %}<option value="{{ skill.id }}">{{ skill.display_name|replace('-', ' ')|title }}</option>{% endfor %}</select></label>
+        <label>Operation<select id="applySkillOperation" required></select></label>
+        <label>Target<select id="applySkillTarget"><option value="">No specific target</option></select></label>
+        <label>Execution Model<select id="applySkillModel" required>{% for model in ollama_models %}<option value="{{ model }}" {% if session.get('ollama_model') == model %}selected{% endif %}>{{ model }}</option>{% endfor %}</select></label>
+        <label>Mode<input id="applySkillMode" placeholder="Optional, e.g. I2V"></label>
+        <label>Duration (seconds)<input id="applySkillDuration" type="number" min="1" placeholder="Optional"></label>
+      </div>
+      <label>Additional instruction <textarea id="applySkillInstruction" rows="2" placeholder="Optional: what should change or be preserved?"></textarea></label>
+      <div class="skill-run-actions"><button type="submit">Preview Result</button><span id="applySkillStatus" class="notes" aria-live="polite"></span></div>
+    </form>
+    <section id="applySkillComparison" hidden>
+      <div class="comparison-grid"><article><p class="eyebrow">Original</p><pre id="skillOriginal"></pre></article><article><p class="eyebrow">Transformed</p><pre id="skillTransformed"></pre></article></div>
+      <p id="skillExecutionProvenance" class="notes"></p>
+      <div class="skill-run-actions"><button type="button" id="replaceWithSkillResult">Replace Draft</button><button type="button" id="insertSkillResult">Insert Below</button><button type="button" class="btn-secondary" id="copySkillResult">Copy</button>{% if prompt and prompt.id %}<button type="button" id="saveSkillDerivative">Save as New Prompt</button><button type="button" class="btn-danger" id="replaceOriginalAndSave">Save &amp; Replace Original</button>{% endif %}<button type="button" class="btn-secondary" id="discardSkillResult">Discard</button><button type="button" class="btn-secondary" id="retrySkillResult">Try Again</button></div>
+    </section>
+  </dialog>
+  {% endif %}
+
+  {% if derivations %}
+  <details class="panel prompt-lineage"><summary><strong>Skill derivation history</strong> <span class="notes">{{ derivations|length }} record{{ '' if derivations|length == 1 else 's' }}</span></summary>
+    {% for item in derivations %}<div class="lineage-item"><strong>{{ item.derived_title or prompt.title }}</strong><span class="notes">{{ item.operation|title }}{% if item.target %} → {{ item.target|replace('_', ' ')|title }}{% endif %} using {{ item.skill_name }} · {{ item.execution_model }} · {{ item.created_at }}</span>{% if item.source_prompt_id != prompt.id %}<a href="{{ url_for('edit_prompt', prompt_id=item.source_prompt_id) }}">View source</a>{% elif item.derived_prompt_id and item.derived_prompt_id != prompt.id %}<a href="{{ url_for('edit_prompt', prompt_id=item.derived_prompt_id) }}">View derivative</a>{% endif %}</div>{% endfor %}
+  </details>
+  {% endif %}
 
   <!-- Descriptor Picker Modal (Edit/New Prompt) -->
   <div id="descriptorModalBackdrop" style="position:fixed; inset:0; background:rgba(0,0,0,0.55); display:none; z-index:9998;"></div>
@@ -770,5 +828,56 @@
   }
 })();
 </script>
+
+{% if installed_skills %}
+<script>
+(() => {
+  const catalogue={{ installed_skills|tojson }}, dialog=document.getElementById('applySkillDialog'), skillSelect=document.getElementById('applySkillId'), operationSelect=document.getElementById('applySkillOperation'), targetSelect=document.getElementById('applySkillTarget'), source=document.getElementById('content'), comparison=document.getElementById('applySkillComparison'), transformed=document.getElementById('skillTransformed'), status=document.getElementById('applySkillStatus');
+  let executionId=null;
+  function currentSkill(){ return catalogue.find(item => item.id===skillSelect.value); }
+  function populateSkillOptions(){ const skill=currentSkill(); operationSelect.innerHTML=''; (skill.operations||['create','transform','convert','refine','diagnose']).forEach(value=>operationSelect.add(new Option(value.charAt(0).toUpperCase()+value.slice(1),value))); if(skill.operations?.includes('refine')) operationSelect.value='refine'; targetSelect.innerHTML='<option value="">No specific target</option>'; (skill.targets||[]).forEach(target=>targetSelect.add(new Option(target.label,target.id))); }
+  document.getElementById('openApplySkill').addEventListener('click',()=>{ populateSkillOptions(); comparison.hidden=true; dialog.showModal(); });
+  document.getElementById('closeApplySkill').addEventListener('click',()=>dialog.close()); skillSelect.addEventListener('change',populateSkillOptions);
+  async function run(){ status.textContent='Running locally…'; const button=document.querySelector('#applySkillForm button[type="submit"]'); button.disabled=true; const inputs=[{type:'text',role:'draft',content:source.value}], instruction=document.getElementById('applySkillInstruction').value.trim(), parameters={}; if(instruction) inputs.push({type:'text',role:'instruction',content:instruction}); const mode=document.getElementById('applySkillMode').value.trim(), duration=document.getElementById('applySkillDuration').value; if(mode) parameters.mode=mode; if(duration) parameters.duration=Number(duration); const body={operation:operationSelect.value,inputs,target:targetSelect.value||null,model:document.getElementById('applySkillModel').value,parameters}; {% if prompt and prompt.id %}body.source_prompt_id={{ prompt.id }};{% endif %} try { const response=await fetch('/api/skills/'+encodeURIComponent(skillSelect.value)+'/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}), payload=await response.json(); if(!response.ok||!payload.ok) throw new Error(payload.error||'Skill execution failed'); executionId=payload.execution_id; document.getElementById('skillOriginal').textContent=source.value; transformed.textContent=payload.result_text||payload.content; document.getElementById('skillExecutionProvenance').textContent='Used '+payload.skill+' v'+payload.version+' · '+payload.model+' · '+(payload.target?'target '+payload.target+' · ':'')+'resources: '+(payload.resources.join(', ')||'SKILL.md only'); comparison.hidden=false; status.textContent='Complete — draft unchanged'; } catch(error){ status.textContent=error.message; } finally { button.disabled=false; } }
+  document.getElementById('applySkillForm').addEventListener('submit',event=>{event.preventDefault();run();});
+  document.getElementById('replaceWithSkillResult').addEventListener('click',()=>{source.value=transformed.textContent;comparison.hidden=true;status.textContent='Draft replaced — continue editing or save.';});
+  document.getElementById('insertSkillResult').addEventListener('click',()=>{source.value=source.value.trimEnd()+'\n\n'+transformed.textContent;comparison.hidden=true;status.textContent='Result inserted below the draft.';});
+  document.getElementById('discardSkillResult').addEventListener('click',()=>{comparison.hidden=true;status.textContent='Result discarded.';});
+  document.getElementById('retrySkillResult').addEventListener('click',run);
+  const saveButton=document.getElementById('saveSkillDerivative'); if(saveButton) saveButton.addEventListener('click',async()=>{ if(!executionId)return; const response=await fetch('/api/prompts/{{ prompt.id if prompt and prompt.id else 0 }}/skill-derivatives',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execution_id:executionId})}), payload=await response.json(); if(!response.ok||!payload.ok){status.textContent=payload.error||'Save failed';return;} location.href='/prompt/'+payload.prompt_id+'/edit'; });
+  const replaceButton=document.getElementById('replaceOriginalAndSave'); if(replaceButton) replaceButton.addEventListener('click',async()=>{ if(!executionId||!confirm('Save the Skill result over the original prompt?'))return; const response=await fetch('/api/prompts/{{ prompt.id if prompt and prompt.id else 0 }}/skill-derivatives',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({execution_id:executionId,replace_original:true})}), payload=await response.json(); if(!response.ok||!payload.ok){status.textContent=payload.error||'Save failed';return;} location.reload(); });
+  document.getElementById('copySkillResult').addEventListener('click',async()=>{await navigator.clipboard.writeText(transformed.textContent);window.showToast('Skill result copied');});
+})();
+</script>
+{% endif %}
+
+{% if prompt and prompt.id and workflow_profiles %}
+<script>
+(() => {
+  const profiles={{ workflow_profiles|tojson }}, dialog=document.getElementById('generateDialog'), select=document.getElementById('generationProfile'), fields=document.getElementById('generationFields'), status=document.getElementById('generationStatus'), promptInput=document.getElementById('generationPrompt'), submitButton=document.getElementById('submitGeneration'), profileHint=document.getElementById('generationProfileHint'), savedPrompt={{ prompt.content|tojson }}, preferredKind={{ (prompt.category or '')|lower|tojson }};
+  const mediaTypes=new Set(['image','images','audio','video']);
+  function addProfileGroup(label, items){ if(!items.length)return; const group=document.createElement('optgroup'); group.label=label; items.forEach(profile=>{ const suffix=profile.selectable?'':` — ${profile.selection_block_reason||'Unavailable'}`, option=new Option(profile.display_name+' · '+profile.server_name+suffix,profile.id); option.disabled=!profile.selectable; group.appendChild(option); }); select.appendChild(group); }
+  function populateProfiles(){
+    select.innerHTML='';
+    const recommended=profiles.filter(profile=>profile.recommended), available=profiles.filter(profile=>!profile.recommended);
+    addProfileGroup('Recommended',recommended);
+    const kinds=['image','video']; if(preferredKind==='video')kinds.reverse();
+    kinds.forEach(kind=>addProfileGroup(kind==='image'?'All image workflows':'All video workflows',available.filter(profile=>profile.generation_kind===kind)));
+    addProfileGroup('Other workflows',available.filter(profile=>!['image','video'].includes(profile.generation_kind)));
+    const firstSelectable=Array.from(select.options).find(option=>!option.disabled); if(firstSelectable)select.value=firstSelectable.value;
+  }
+  function renderFields(){ const profile=profiles.find(item=>item.id===select.value); fields.innerHTML=''; if(!profile){ submitButton.disabled=true; profileHint.textContent='No validated workflow is currently available.'; return; } submitButton.disabled=!profile.selectable; submitButton.textContent='Generate '+(profile.generation_kind==='video'?'Video':'Image'); profileHint.textContent=(profile.recommended?'Recommended from prompt metadata. ':'')+(profile.compatibility_reasons||[]).join(' · '); const promptDefinition=(profile.inputs||{}).prompt||{}; promptInput.required=Boolean(promptDefinition.required!==false); Object.entries(profile.inputs||{}).forEach(([role,definition])=>{ if(role==='prompt')return; const label=document.createElement('label'); label.textContent=definition.label||role.replaceAll('_',' '); let input; if(mediaTypes.has(definition.type)){ input=document.createElement('input'); input.type='file'; if(definition.type==='image'||definition.type==='images')input.accept='image/*'; if(definition.type==='audio')input.accept='audio/*'; if(definition.type==='video')input.accept='video/*'; input.multiple=Boolean(definition.multiple); } else if(definition.enum){ input=document.createElement('select'); definition.enum.forEach(value=>input.add(new Option(value,value))); if(definition.default!==undefined)input.value=definition.default; } else { input=document.createElement('input'); input.type=['integer','number'].includes(definition.type)?'number':definition.type==='boolean'?'checkbox':'text'; ['min','max','step'].forEach(key=>{if(definition[key]!==undefined)input[key]=definition[key];}); if(definition.default!==undefined){ if(input.type==='checkbox')input.checked=Boolean(definition.default); else input.value=definition.default; } } input.name=role; input.required=Boolean(definition.required); label.appendChild(input); fields.appendChild(label); }); }
+  function openGeneration(){ promptInput.value=document.querySelector('#mainPromptForm textarea[name="content"]')?.value||savedPrompt; populateProfiles(); renderFields(); status.textContent=''; dialog.showModal(); }
+  document.getElementById('openGenerate').addEventListener('click',openGeneration); document.getElementById('closeGenerate').addEventListener('click',()=>dialog.close()); select.addEventListener('change',renderFields);
+  document.getElementById('generationForm').addEventListener('submit',async event=>{ event.preventDefault(); const button=event.currentTarget.querySelector('button[type=submit]'); button.disabled=true; status.textContent='Uploading inputs and submitting…'; const form=new FormData(event.currentTarget); event.currentTarget.querySelectorAll('input[type=checkbox]').forEach(input=>form.set(input.name,input.checked?'true':'false')); try { const response=await fetch('/api/prompts/{{ prompt.id }}/generations',{method:'POST',body:form}), payload=await response.json(); if(!response.ok||!payload.ok)throw new Error(payload.error||'Generation submission failed'); status.textContent='Queued as '+payload.generation.comfy_prompt_id; setTimeout(()=>location.reload(),700); } catch(error){status.textContent=error.message;} finally {button.disabled=false;} });
+  async function act(card,action,body){ const id=card.dataset.generationId, response=await fetch('/api/generations/'+id+(action?'/'+action:''),{method:action?'POST':'GET',headers:action?{'Content-Type':'application/json'}:{},body:action?JSON.stringify(body||{}):null}), payload=await response.json(); if(!response.ok||!payload.ok)throw new Error(payload.error||'Generation request failed'); location.reload(); }
+  document.querySelectorAll('.refresh-generation').forEach(button=>button.addEventListener('click',()=>act(button.closest('.generation-card')).catch(error=>window.showToast(error.message))));
+  document.querySelectorAll('.regenerate-generation').forEach(button=>button.addEventListener('click',()=>act(button.closest('.generation-card'),'regenerate',{}).catch(error=>window.showToast(error.message))));
+  document.querySelectorAll('.new-seed-generation').forEach(button=>button.addEventListener('click',()=>act(button.closest('.generation-card'),'regenerate',{new_seed:true}).catch(error=>window.showToast(error.message))));
+  document.querySelectorAll('.generation-card').forEach(card=>{ const state=card.querySelector('.generation-status')?.textContent.trim().toLowerCase(); if(['queued','running','preparing'].includes(state))setTimeout(()=>act(card).catch(()=>{}),5000); });
+  if(new URLSearchParams(location.search).get('generate')==='1')openGeneration();
+})();
+</script>
+{% endif %}
 
 {% endblock %}

@@ -1,0 +1,377 @@
+{
+  "92": {
+    "inputs": {
+      "filename_prefix": "video/MiniMax_H3",
+      "format": "auto",
+      "codec": "auto",
+      "video": [
+        "105:91",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "122": {
+    "inputs": {
+      "seed": -1
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "123": {
+    "inputs": {
+      "selection": "first_and_last",
+      "images": [
+        "105:10",
+        0
+      ]
+    },
+    "class_type": "ScorpioFrameBoundaryExtractor",
+    "_meta": {
+      "title": "Frame Boundary Extractor"
+    }
+  },
+  "124": {
+    "inputs": {
+      "filename_prefix": "MiniMax",
+      "format": "png",
+      "format.bit_depth": "8-bit",
+      "format.input_color_space": "sRGB",
+      "images": [
+        "123",
+        0
+      ]
+    },
+    "class_type": "SaveImageAdvanced",
+    "_meta": {
+      "title": "Save Image (Advanced)"
+    }
+  },
+  "131": {
+    "inputs": {
+      "filename_prefix": "audio/ComfyUI",
+      "format": "mp3",
+      "format.quality": "128k",
+      "audio": [
+        "105:23",
+        0
+      ]
+    },
+    "class_type": "SaveAudioAdvanced",
+    "_meta": {
+      "title": "Save Audio (Advanced)"
+    }
+  },
+  "132": {
+    "inputs": {
+      "aspect_ratio": "16:9 (Widescreen)",
+      "use_first_frame": true,
+      "use_last_frame": false,
+      "megapixels": "0.40 MP",
+      "first_crop_position": "centre",
+      "last_crop_position": "centre",
+      "interpolation": "bicubic",
+      "multiple": 32,
+      "duration_seconds": 12,
+      "seed": [
+        "122",
+        0
+      ],
+      "Resolution Preview": "864 × 480  •  0.415 MP actual",
+      "first_frame": [
+        "114",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3CanvasUtility",
+    "_meta": {
+      "title": "MiniMax H3 Canvas + Activated Frames"
+    }
+  },
+  "134": {
+    "inputs": {
+      "output": "",
+      "source": [
+        "132",
+        7
+      ]
+    },
+    "class_type": "Display Any (rgthree)",
+    "_meta": {
+      "title": "Display Any (rgthree)"
+    }
+  },
+  "105:24": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "105:17": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "105:14": {
+    "inputs": {
+      "noise": [
+        "105:15",
+        0
+      ],
+      "guider": [
+        "105:16",
+        0
+      ],
+      "sampler": [
+        "105:17",
+        0
+      ],
+      "sigmas": [
+        "105:9",
+        0
+      ],
+      "latent_image": [
+        "105:104",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "105:16": {
+    "inputs": {
+      "model": [
+        "105:157",
+        0
+      ],
+      "conditioning": [
+        "105:104",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "Basic Guider"
+    }
+  },
+  "105:15": {
+    "inputs": {
+      "noise_seed": [
+        "132",
+        6
+      ]
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "105:107": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "105:111",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "105:111": {
+    "inputs": {
+      "value": [
+        "132",
+        4
+      ]
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Float (duration)"
+    }
+  },
+  "105:6": {
+    "inputs": {
+      "unet_name": "Minimax\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "105:9": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 8,
+      "denoise": 1,
+      "model": [
+        "105:157",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "105:10": {
+    "inputs": {
+      "samples": [
+        "105:14",
+        0
+      ],
+      "vae": [
+        "105:11",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "105:23": {
+    "inputs": {
+      "samples": [
+        "105:14",
+        0
+      ],
+      "vae": [
+        "105:24",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE Decode Audio"
+    }
+  },
+  "105:156": {
+    "inputs": {
+      "lora_name": "Minimax H3\\turbo\\minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
+      "strength_model": 1,
+      "model": [
+        "105:6",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "MiniMax H3 Turbo 8-Step LoRA (MODEL ONLY)"
+    }
+  },
+  "105:91": {
+    "inputs": {
+      "fps": 24,
+      "bit_depth": 8,
+      "images": [
+        "105:10",
+        0
+      ],
+      "audio": [
+        "105:23",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "105:157": {
+    "inputs": {
+      "shift_video": 6,
+      "shift_audio": 3,
+      "model": [
+        "105:156",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3SigmaShift",
+    "_meta": {
+      "title": "MiniMax H3 Turbo Sigma Shift"
+    }
+  },
+  "105:104": {
+    "inputs": {
+      "prompt": "integrated_multimodal_description:\n\n[Shot 1, 0.00-12.00s] Photorealistic live-action action comedy inside a brightly lit corporate work cafeteria at lunchtime. The entire clip is staged like a classic 1990s side-on arcade fighting game: a locked medium-wide full-body view, both fighters standing on the same flat horizontal fighting plane, one screen-left and one screen-right, with almost no movement towards or away from the camera. The camera remains perpendicular to the fighters and never crosses their shared axis.\n\nFighter A is a stocky middle-aged office man wearing a white business shirt with rolled sleeves, a loosened blue tie and dark trousers. He remains screen-left facing right.\n\nFighter B is a tall athletic office woman wearing a dark green blouse, black office trousers and an ID lanyard. She remains screen-right facing left.\n\nA single large cheeseburger sits prominently on a cafeteria table exactly between them in the background, clearly visible throughout.\n\nAt first both fighters stare intensely at the cheeseburger. Their eyes shift from the burger to one another. Fighter A slowly raises his fists into an awkward boxing stance. Fighter B calmly settles into a much more competent martial-arts stance.\n\nAfter a short tense pause, Fighter A advances towards screen-right and throws one ambitious right punch towards Fighter B's head. Fighter B leans backwards just enough for the punch to pass in front of her face without contact.\n\nAs Fighter A's momentum carries him forward, Fighter B plants her left foot and immediately drives one short front kick into Fighter A's stomach. Her shoe makes clear contact. Fighter A folds around the impact and staggers several steps back towards screen-left, colliding lightly with a cafeteria chair.\n\nFighter A catches himself before falling. He looks embarrassed, straightens his loosened tie and raises his fists again as though nothing happened.\n\nFighter B does not pursue him. She lowers her guard slightly and looks towards the cheeseburger.\n\nFighter A notices her looking at it.\n\nBoth fighters immediately turn their eyes back towards the cheeseburger.\n\nThe shot ends with both suddenly beginning to sidestep towards the burger from opposite sides, still watching each other suspiciously.\n\nThroughout the entire clip, preserve the strict side-on arcade-fighting composition. Both full bodies remain readable. Fighter A stays associated with screen-left and Fighter B with screen-right. No orbiting camera, no perspective rotation, no cuts and no close-ups.\n\noverall_soundscape:\nCorporate cafeteria ambience, fluorescent electrical hum, quiet distant conversations, trainers squeaking on the tiled floor, clothing movement, a fast punch whoosh, one solid comedic body-impact thump, chair legs scraping across tile, Fighter A's short involuntary grunt, then a brief quiet beat as both notice the cheeseburger again.\n\nnon_diegetic_music:\nA dramatic martial-arts-inspired arcade battle cue begins softly during the opening stare, builds as Fighter A attacks, punctuates the kick with a heavy percussion hit, then briefly drops back as both fighters refocus on the cheeseburger.",
+      "width": [
+        "132",
+        2
+      ],
+      "height": [
+        "132",
+        3
+      ],
+      "length": [
+        "105:107",
+        1
+      ],
+      "clip": [
+        "105:13",
+        0
+      ],
+      "vae": [
+        "105:11",
+        0
+      ],
+      "first_frame": [
+        "132",
+        0
+      ],
+      "last_frame": [
+        "132",
+        1
+      ]
+    },
+    "class_type": "MiniMaxH3ImageToVideo",
+    "_meta": {
+      "title": "MiniMax H3 Image to Video"
+    }
+  },
+  "105:11": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "105:13": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "114": {
+    "inputs": {
+      "image": "Flux2-Klein_00013_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "START FRAME (I2V)"
+    }
+  }
+}

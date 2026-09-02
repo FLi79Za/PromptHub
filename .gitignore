@@ -20,3 +20,9 @@ static/uploads/
 app - Copy.py
 prompts.db-shm
 prompts.db-wal
+
+# PromptHub Integration API local secrets/configuration (normally stored in %LOCALAPPDATA%\PromptHub)
+integration_api.json
+integration_api.token
+flask_secret.key
+integration_api.log*
