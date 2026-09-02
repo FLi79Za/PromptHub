@@ -46,6 +46,7 @@
 
     <div class="quick-actions" style="display:flex;gap:.45rem;flex-wrap:wrap;">
       <a class="btn-primary" href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
+      <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=p.id, generate=1) }}">Generate</a>
       <button type="button" class="btn-secondary" onclick="copyPrompt(event, {{ p.id }})">Copy</button>
       <button type="button" class="btn-secondary" onclick="togglePreview({{ p.id }})">Preview</button>
       <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>

@@ -1,0 +1,375 @@
+{
+  "134": {
+    "inputs": {
+      "source": [
+        "132",
+        7
+      ]
+    },
+    "class_type": "Display Any (rgthree)",
+    "_meta": {
+      "title": "Display Any (rgthree)"
+    }
+  },
+  "122": {
+    "inputs": {
+      "seed": -1
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "132": {
+    "inputs": {
+      "aspect_ratio": "16:9 (Widescreen)",
+      "use_first_frame": true,
+      "use_last_frame": false,
+      "megapixels": "0.40 MP",
+      "first_crop_position": "centre",
+      "last_crop_position": "centre",
+      "interpolation": "bicubic",
+      "multiple": 32,
+      "duration_seconds": 8,
+      "seed": [
+        "122",
+        0
+      ],
+      "first_frame": [
+        "114",
+        0
+      ],
+      "last_frame": [
+        "127",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3CanvasUtility",
+    "_meta": {
+      "title": "MiniMax H3 Canvas + Activated Frames"
+    }
+  },
+  "123": {
+    "inputs": {
+      "selection": "first_and_last",
+      "images": [
+        "105:10",
+        0
+      ]
+    },
+    "class_type": "ScorpioFrameBoundaryExtractor",
+    "_meta": {
+      "title": "Frame Boundary Extractor"
+    }
+  },
+  "131": {
+    "inputs": {
+      "filename_prefix": "audio/MiniMax_H3_I2V_PDD8",
+      "format": "mp3",
+      "audio": [
+        "105:23",
+        0
+      ],
+      "format.quality": "128k"
+    },
+    "class_type": "SaveAudioAdvanced",
+    "_meta": {
+      "title": "Save Audio (Advanced)"
+    }
+  },
+  "92": {
+    "inputs": {
+      "filename_prefix": "video/MiniMax_H3_I2V_PDD8",
+      "format": "auto",
+      "video": [
+        "105:91",
+        0
+      ],
+      "format.codec": "auto"
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "124": {
+    "inputs": {
+      "filename_prefix": "MiniMax_H3_I2V_PDD8",
+      "format": "png",
+      "images": [
+        "123",
+        0
+      ],
+      "format.bit_depth": "8-bit",
+      "format.input_color_space": "sRGB"
+    },
+    "class_type": "SaveImageAdvanced",
+    "_meta": {
+      "title": "Save Image (Advanced)"
+    }
+  },
+  "114": {
+    "inputs": {
+      "image": "stone_park_bench_2816x1536 (1).jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "127": {
+    "inputs": {
+      "image": "003_ChatGPT Image Aug 17, 2026, 07_59_52 PM_cropped.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load End Image (disabled until use_last_frame=true)"
+    }
+  },
+  "105:11": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "105:24": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "105:17": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "105:14": {
+    "inputs": {
+      "noise": [
+        "105:15",
+        0
+      ],
+      "guider": [
+        "105:16",
+        0
+      ],
+      "sampler": [
+        "105:17",
+        0
+      ],
+      "sigmas": [
+        "105:9",
+        0
+      ],
+      "latent_image": [
+        "105:104",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "105:16": {
+    "inputs": {
+      "model": [
+        "105:154",
+        0
+      ],
+      "conditioning": [
+        "105:104",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "Basic Guider"
+    }
+  },
+  "105:15": {
+    "inputs": {
+      "noise_seed": [
+        "132",
+        6
+      ]
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "RandomNoise"
+    }
+  },
+  "105:104": {
+    "inputs": {
+      "prompt": "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced.\n\nintegrated_multimodal_description: [Shot 1] A single continuous locked-off wide shot preserves the exact park setting, composition, lighting, concrete blocks, wooden seesaw, pivot, benches, trees and visible lettering from the reference image. The seesaw begins in its current position, with the concrete block marked “Approved” raised on the right and the concrete block marked “Declined” lowered on the left. The heavy seesaw slowly pivots in the opposite direction: the “Approved” side descends while the “Declined” side rises. It reaches the opposite tilt, pauses briefly, then smoothly reverses direction. The seesaw rocks back and forth through two slow, weighty cycles, with believable momentum and slight settling at each change of direction. The camera remains completely static. The concrete blocks stay firmly attached to the seesaw, and the existing lettering remains stable and readable throughout. End with the seesaw returning close to its original raised-“Approved” position.\n\noverall_soundscape: Quiet outdoor park ambience with distant birds, faint background voices, subtle wind through the trees, and deep creaking and wooden strain from the seesaw pivot as the heavy concrete blocks move.\n\nnon_diegetic_music: N/A",
+      "clip": [
+        "105:13",
+        0
+      ],
+      "vae": [
+        "105:11",
+        0
+      ],
+      "width": [
+        "132",
+        2
+      ],
+      "height": [
+        "132",
+        3
+      ],
+      "length": [
+        "105:107",
+        1
+      ],
+      "first_frame": [
+        "132",
+        0
+      ],
+      "last_frame": [
+        "132",
+        1
+      ]
+    },
+    "class_type": "MiniMaxH3ImageToVideo",
+    "_meta": {
+      "title": "MiniMax H3 Image to Video"
+    }
+  },
+  "105:107": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "105:111",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "105:111": {
+    "inputs": {
+      "value": [
+        "132",
+        4
+      ]
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Float (duration)"
+    }
+  },
+  "105:13": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "105:6": {
+    "inputs": {
+      "unet_name": "Minimax\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "105:9": {
+    "inputs": {
+      "scheduler": "simple",
+      "steps": 8,
+      "denoise": 1.0,
+      "model": [
+        "105:154",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "105:10": {
+    "inputs": {
+      "samples": [
+        "105:14",
+        0
+      ],
+      "vae": [
+        "105:11",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "105:91": {
+    "inputs": {
+      "fps": 24,
+      "bit_depth": 8,
+      "color_space": "sRGB",
+      "images": [
+        "105:10",
+        0
+      ],
+      "audio": [
+        "105:23",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "105:23": {
+    "inputs": {
+      "samples": [
+        "105:14",
+        0
+      ],
+      "vae": [
+        "105:24",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE Decode Audio"
+    }
+  },
+  "105:154": {
+    "inputs": {
+      "lora_name": "Minimax H3\\alibaba-h3acc\\MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors",
+      "strength_model": 1.0,
+      "model": [
+        "105:6",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "FL2VA PDD 8-Step — strength 1.0"
+    }
+  }
+}

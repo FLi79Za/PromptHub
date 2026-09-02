@@ -1,0 +1,14 @@
+interface:
+  display_name: Image Prompt Craft
+  short_description: Model-native image prompts and precise edits
+  default_prompt: Use $image-prompt-craft to turn my idea or edit request into a model-optimised
+    image prompt.
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

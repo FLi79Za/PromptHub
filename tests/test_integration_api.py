@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 
 TEST_CONFIG_DIR = tempfile.TemporaryDirectory(prefix="prompthub-test-config-")
@@ -17,6 +18,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import app as prompthub  # noqa: E402
 from integration_config import get_or_create_token  # noqa: E402
 from prompt_service import apply_integration_migrations, utc_now  # noqa: E402
+from skill_runtime import import_skill  # noqa: E402
+from generation_runtime import save_profile, upsert_server  # noqa: E402
 
 
 class IntegrationApiV1Tests(unittest.TestCase):
@@ -92,6 +95,33 @@ class IntegrationApiV1Tests(unittest.TestCase):
         payload.update(overrides)
         response = self.api_json("POST", "/api/integration/v1/prompts", payload)
         return response
+
+    def install_image_profiles(self):
+        graph = {
+            "1": {"class_type": "CLIPTextEncode", "inputs": {"text": "source"}},
+            "2": {"class_type": "KSampler", "inputs": {"seed": 7, "steps": 8, "positive": ["1", 0]}},
+            "9": {"class_type": "SaveImage", "inputs": {"images": ["2", 0]}},
+        }
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys=ON")
+            upsert_server(conn, {"id": "image-local", "display_name": "Image ComfyUI", "base_url": "http://127.0.0.1:8188", "enabled": True})
+            for profile_id, name, family, target in (
+                ("flux-test", "Flux 2 Klein T2I", "flux", "flux_2_klein"),
+                ("krea-test", "Krea 2 Turbo", "krea", "krea_2"),
+                ("ideogram-test", "Ideogram 4 T2I", "ideogram", "ideogram_4"),
+            ):
+                save_profile(conn, {
+                    "id": profile_id, "display_name": name, "generation_kind": "image",
+                    "model_family": family, "mode": "t2i", "server_id": "image-local",
+                    "inputs": {
+                        "prompt": {"node_id": "1", "field": "text", "type": "text", "required": True},
+                        "seed": {"node_id": "2", "field": "seed", "type": "integer", "default": 7},
+                    },
+                    "outputs": [{"node_id": "9", "type": "image"}],
+                    "compatibility": {"targets": [target]},
+                }, graph, Path(self.temp_dir.name) / "workflows")
+            conn.commit()
 
     def test_authentication_required_and_valid_authentication_accepted(self):
         unauthenticated = self.api_json("GET", "/api/integration/v1/prompts", authenticated=False)
@@ -318,6 +348,9 @@ class IntegrationApiV1Tests(unittest.TestCase):
         self.assertEqual(200, self.client.get("/").status_code)
         self.assertEqual(200, self.client.get("/prompt/new").status_code)
         self.assertEqual(200, self.client.get(f"/prompt/{self.fixture_id}/edit").status_code)
+        comfyui_page = self.client.get("/comfyui")
+        self.assertEqual(200, comfyui_page.status_code)
+        self.assertIn(b"Workflow Profiles", comfyui_page.data)
         self.assertEqual(200, self.client.get(f"/prompt/{self.fixture_id}/history").status_code)
         self.assertEqual(200, self.client.get("/api/ext/categories").status_code)
         self.assertEqual(200, self.client.get("/api/ext/prompts?limit=1").status_code)
@@ -358,6 +391,75 @@ class IntegrationApiV1Tests(unittest.TestCase):
         )
         self.assertEqual(200, extension.status_code)
         self.assertEqual({"success", "id", "title", "category", "tool", "prompt_type", "group", "tags"}, set(extension.get_json()))
+
+    def test_skill_conversion_api_loads_source_and_saves_derivative(self):
+        skill_root = Path(self.temp_dir.name) / "conversion-test-skill"
+        (skill_root / "references").mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text("---\nname: conversion-test-skill\ndescription: Create and convert prompts.\n---\nFollow the selected profile.", encoding="utf-8")
+        (skill_root / "references" / "ideogram-4.md").write_text("# Ideogram 4\nProfile guidance", encoding="utf-8")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            import_skill(conn, skill_root, base_dir=self.temp_dir.name)
+            conn.commit()
+        self.assertIn(b"Apply Skill", self.client.get(f"/prompt/{self.fixture_id}/edit").data)
+        self.assertIn(b"Transform Prompt", self.client.get("/skills").data)
+        prompthub.ollama_list_models = lambda: ["qwen-test"]
+        prompthub.ollama_generate = lambda **kwargs: "converted prompt"
+        run = self.api_json("POST", "/api/integration/v1/skills/conversion-test-skill/run", {
+            "operation": "convert", "source_prompt_id": "SYNC-FIXTURE-001",
+            "target": "ideogram_4", "model": "qwen-test", "inputs": [],
+        })
+        self.assertEqual(200, run.status_code, run.get_json())
+        result = run.get_json()["data"]
+        self.assertIn("references/ideogram-4.md", result["resources"])
+        saved = self.api_json("POST", "/api/integration/v1/prompts/SYNC-FIXTURE-001/skill-derivations", {"execution_id": result["execution_id"]})
+        self.assertEqual(200, saved.status_code, saved.get_json())
+        derived_id = saved.get_json()["data"]["prompt_id"]
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual("Fixture content searchable needle", conn.execute("SELECT content FROM prompts WHERE id=?", (self.fixture_id,)).fetchone()[0])
+            self.assertEqual(("converted prompt", self.fixture_id), conn.execute("SELECT content,parent_id FROM prompts WHERE id=?", (derived_id,)).fetchone())
+
+    def test_saved_prompt_generation_ui_lists_all_profiles_and_preserves_prompt(self):
+        self.install_image_profiles()
+        page = self.client.get(f"/prompt/{self.fixture_id}/edit?generate=1")
+        self.assertEqual(200, page.status_code)
+        for text in (b"Generate", b"generationPrompt", b"Flux 2 Klein T2I", b"Krea 2 Turbo", b"Ideogram 4 T2I", b"All image workflows"):
+            self.assertIn(text, page.data)
+        self.assertIn(b"Fixture content searchable needle", page.data)
+        self.assertIn(b"select.addEventListener('change',renderFields)", page.data)
+        library = self.client.get("/")
+        self.assertIn(f"/prompt/{self.fixture_id}/edit?generate=1".encode(), library.data)
+
+    def test_generation_form_prompt_override_does_not_update_saved_prompt(self):
+        self.install_image_profiles()
+        captured = {}
+
+        def fake_submit(conn, prompt_id, profile_id, values, **kwargs):
+            captured.update({"prompt_id": prompt_id, "profile_id": profile_id, "values": values, **kwargs})
+            return {"id": "generation-test", "comfy_prompt_id": "job-test", "status": "queued"}
+
+        with patch.object(prompthub, "submit_generation", side_effect=fake_submit):
+            response = self.client.post(f"/api/prompts/{self.fixture_id}/generations", data={
+                "profile_id": "krea-test", "prompt": "render-only prompt", "seed": "99",
+            })
+        self.assertEqual(202, response.status_code, response.get_json())
+        self.assertEqual("render-only prompt", captured["prompt_override"])
+        self.assertNotIn("prompt", captured["values"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual("Fixture content searchable needle", conn.execute("SELECT content FROM prompts WHERE id=?", (self.fixture_id,)).fetchone()[0])
+
+    def test_new_prompt_editor_exposes_transient_skill_assistance(self):
+        skill_root = Path(self.temp_dir.name) / "inline-test-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text("---\nname: inline-test-skill\ndescription: Refine draft text.\n---\nRefine the draft.", encoding="utf-8")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            import_skill(conn, skill_root, base_dir=self.temp_dir.name)
+            conn.commit()
+        page = self.client.get("/prompt/new")
+        self.assertEqual(200, page.status_code)
+        for text in (b"Apply Skill", b"Inline draft assistance", b"Replace Draft", b"Insert Below", b"role:'draft'"):
+            self.assertIn(text, page.data)
 
 
 if __name__ == "__main__":

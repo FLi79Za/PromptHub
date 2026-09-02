@@ -1,0 +1,14 @@
+interface:
+  display_name: Video Prompt Craft
+  short_description: Craft coherent prompts for leading video models
+  default_prompt: Use $craft-video-prompts to turn my shot idea and references into
+    a model-specific video prompt.
+  icon_small: assets/icon.svg
+  icon_large: assets/icon.svg
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true

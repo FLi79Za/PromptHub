@@ -45,6 +45,12 @@ from ai_library import (
     suggested_action_resources,
     update_collection,
 )
+from skill_runtime import SkillError, compare_skill, configure_provider, export_skill, import_skill, inspect_skill, list_prompt_derivations, list_skills, run_skill, save_skill_derivative, source_prompt_input, update_skill
+from generation_runtime import (
+    GenerationError, check_server, compatible_profiles, duplicate_profile, get_generation,
+    inspect_workflow, list_profiles, list_prompt_generations, list_servers, refresh_generation,
+    regenerate, save_profile, submit_generation, upsert_server, validate_saved_profile,
+)
 
 
 API_VERSION = "1.0.0"
@@ -105,6 +111,10 @@ def create_integration_blueprint(
     *,
     embedder: Callable[[str, str], list[float]] | None = None,
     list_models: Callable[[], list[str]] | None = None,
+    skill_generate: Callable[..., str] | None = None,
+    skill_base_dir: str | None = None,
+    workflow_root: str | None = None,
+    generation_media_root: str | None = None,
 ) -> Blueprint:
     api = Blueprint("integration_api_v1", __name__, url_prefix=BASE_PATH)
 
@@ -194,6 +204,11 @@ def create_integration_blueprint(
     def handle_ai_library_error(exc: AILibraryError):
         return failure("KNOWLEDGE_ERROR", str(exc), 400)
 
+    @api.errorhandler(GenerationError)
+    def handle_generation_error(exc: GenerationError):
+        status = 404 if exc.code.endswith("NOT_FOUND") else 409 if exc.code in {"DUPLICATE_PROFILE", "PROFILE_INVALIDATED"} else 400
+        return failure(exc.code, str(exc), status, exc.details)
+
     @api.errorhandler(RequestEntityTooLarge)
     def handle_request_too_large(_exc: RequestEntityTooLarge):
         return failure("REQUEST_TOO_LARGE", "JSON request exceeds the configured size limit.", 413)
@@ -239,10 +254,192 @@ def create_integration_blueprint(
                 "metadata", "dry_run", "integration_history",
                 "knowledge_collections", "knowledge_source_import", "knowledge_retrieval_test",
                 "knowledge_audit", "knowledge_rebuild", "knowledge_action_bundle",
+                "skills", "skill_import", "skill_inspection", "skill_runtime", "skill_export",
+                "skill_operations", "prompt_skill_derivations",
+                "comfyui_servers", "workflow_profiles", "workflow_import", "generation_dispatch",
+                "generation_status", "generation_history", "generation_regenerate",
             ],
         }
         status = 200 if database_connected and schema_ready else 503
         return success(data, status=status)
+
+    @api.route("/comfyui/servers", methods=["GET", "POST"])
+    def api_comfyui_servers():
+        with get_db() as conn:
+            if request.method == "GET":
+                return success({"servers": list_servers(conn)})
+            return success(upsert_server(conn, _json_body()))
+
+    @api.route("/comfyui/servers/<server_id>/health", methods=["POST"])
+    def api_comfyui_server_health(server_id: str):
+        with get_db() as conn:
+            return success(check_server(conn, server_id))
+
+    @api.route("/comfyui/workflows/inspect", methods=["POST"])
+    def api_comfyui_workflow_inspect():
+        graph = _json_body().get("workflow")
+        return success({"inspection": inspect_workflow(graph)})
+
+    @api.route("/comfyui/profiles", methods=["GET", "POST"])
+    def api_comfyui_profiles():
+        with get_db() as conn:
+            if request.method == "GET":
+                return success({"profiles": list_profiles(conn)})
+            data = _json_body()
+            return success(save_profile(conn, data, data.get("workflow"), workflow_root or "provider_workflows/comfyui_profiles", allow_update=bool(data.get("allow_update"))))
+
+    @api.route("/comfyui/profiles/<profile_id>/duplicate", methods=["POST"])
+    def api_comfyui_profile_duplicate(profile_id: str):
+        data = _json_body()
+        with get_db() as conn:
+            return success(duplicate_profile(conn, profile_id, str(data.get("id") or ""), str(data.get("display_name") or ""), workflow_root or "provider_workflows/comfyui_profiles"))
+
+    @api.route("/comfyui/profiles/<profile_id>/validate", methods=["POST"])
+    def api_comfyui_profile_validate(profile_id: str):
+        data = _json_body()
+        with get_db() as conn:
+            return success({"validation": validate_saved_profile(conn, profile_id, live=bool(data.get("live")))})
+
+    @api.route("/prompts/<identifier>/compatible-workflows", methods=["GET"])
+    def api_compatible_workflows(identifier: str):
+        with get_db() as conn:
+            return success({"profiles": compatible_profiles(conn, identifier, show_all=request.args.get("show_all") == "1")})
+
+    @api.route("/prompts/<identifier>/generations", methods=["GET", "POST"])
+    def api_prompt_generations(identifier: str):
+        with get_db() as conn:
+            if request.method == "GET":
+                return success({"generations": list_prompt_generations(conn, identifier)})
+            data = _json_body()
+            generation = submit_generation(
+                conn,
+                identifier,
+                str(data.get("profile_id") or ""),
+                data.get("inputs") or {},
+                prompt_override=data.get("prompt_override"),
+            )
+            return success({"generation": generation}, status=202)
+
+    @api.route("/generations/<generation_id>", methods=["GET"])
+    def api_generation_status(generation_id: str):
+        with get_db() as conn:
+            generation = refresh_generation(conn, generation_id, generation_media_root or "static/uploads/generations")
+            return success({"generation": generation})
+
+    @api.route("/generations/<generation_id>/regenerate", methods=["POST"])
+    def api_generation_regenerate(generation_id: str):
+        data = _json_body()
+        with get_db() as conn:
+            generation = regenerate(conn, generation_id, new_seed=bool(data.get("new_seed")), current_prompt=bool(data.get("current_prompt")))
+            return success({"generation": generation}, status=202)
+
+    @api.route("/skills", methods=["GET"])
+    def api_list_skills():
+        with get_db() as conn:
+            return success({"skills": list_skills(conn, str(request.args.get("q") or "").strip())})
+
+    @api.route("/skills/inspect", methods=["POST"])
+    def api_inspect_skill():
+        try:
+            data = request.get_json(silent=True) or {}
+            return success({"inspection": inspect_skill(str(data.get("source") or ""))})
+        except SkillError as exc:
+            return failure(exc.code, str(exc), 400, exc.details)
+
+    @api.route("/skills/import", methods=["POST"])
+    def api_import_skill():
+        data = request.get_json(silent=True) or {}
+        try:
+            with get_db() as conn:
+                result = import_skill(conn, str(data.get("source") or ""), base_dir=skill_base_dir or ".", source_type=str(data.get("source_type") or "portable"), source_platform=str(data.get("source_platform") or "unknown"), tags=data.get("tags") or [])
+            return success(result, status=409 if result.get("operation") == "conflict" else 200)
+        except SkillError as exc:
+            return failure(exc.code, str(exc), 400, exc.details)
+
+    @api.route("/skills/<skill_id>", methods=["GET"])
+    def api_get_skill(skill_id: str):
+        with get_db() as conn:
+            items = [item for item in list_skills(conn) if item["id"] == skill_id or item["name"].lower() == skill_id.lower()]
+        if not items:
+            return failure("SKILL_NOT_FOUND", "Skill was not found.", 404)
+        return success(items[0])
+
+    @api.route("/skills/<skill_id>/run", methods=["POST"])
+    def api_run_skill(skill_id: str):
+        if skill_generate is None:
+            return failure("SKILL_RUNTIME_UNAVAILABLE", "Skill runtime is not configured.", 503)
+        data = request.get_json(silent=True) or {}
+        request_text, model = str(data.get("request") or "").strip(), str(data.get("model") or "").strip()
+        if not model:
+            return failure("INVALID_REQUEST", "execution model is required.", 400)
+        if list_models is not None and model not in list_models():
+            return failure("MODEL_NOT_INSTALLED", f"The selected Ollama model is not installed: {model}", 400)
+        try:
+            with get_db() as conn:
+                inputs = list(data.get("inputs") or [])
+                source_prompt_id = data.get("source_prompt_id")
+                operation = str(data.get("operation") or "create").lower()
+                if source_prompt_id and operation != "create" and not any(isinstance(item, dict) and item.get("role") in {"source", "draft"} for item in inputs):
+                    inputs.insert(0, source_prompt_input(conn, source_prompt_id))
+                source_row = conn.execute("SELECT id FROM prompts WHERE id=? OR sync_id=?", (int(source_prompt_id) if str(source_prompt_id or "").isdigit() else -1, str(source_prompt_id or ""))).fetchone() if source_prompt_id else None
+                if data.get("freeform_instruction") and not any(isinstance(item, dict) and item.get("role") == "instruction" for item in inputs):
+                    inputs.append({"type": "text", "role": "instruction", "content": str(data["freeform_instruction"]).strip()})
+                result = run_skill(conn, skill_id, request_text, model, data.get("parameters") or {}, skill_generate, operation=operation, inputs=inputs or None, target=data.get("target"), source_prompt_id=int(source_row["id"]) if source_row else None, capability_registry={"structured_output": {"status": "PRESERVED", "provider": "Ollama"}, "image_generation": {"status": "SUBSTITUTED", "provider": "ComfyUI"}})
+            return success(result)
+        except SkillError as exc:
+            return failure(exc.code, str(exc), 400, exc.details)
+
+    @api.route("/prompts/<identifier>/skill-derivations", methods=["GET", "POST"])
+    def api_prompt_skill_derivations(identifier: str):
+        try:
+            with get_db() as conn:
+                if request.method == "GET":
+                    return success({"derivations": list_prompt_derivations(conn, identifier)})
+                data = request.get_json(silent=True) or {}
+                result = save_skill_derivative(conn, identifier, str(data.get("execution_id") or ""), title=data.get("title"), replace_original=bool(data.get("replace_original", False)))
+            return success(result)
+        except SkillError as exc:
+            return failure(exc.code, str(exc), 400, exc.details)
+
+    @api.route("/skills/<skill_id>/compare", methods=["POST"])
+    def api_compare_skill(skill_id: str):
+        data = request.get_json(silent=True) or {}
+        try:
+            with get_db() as conn:
+                return success({"comparison": compare_skill(conn, skill_id, str(data.get("source") or ""))})
+        except SkillError as exc:
+            return failure(exc.code, str(exc), 409 if exc.code == "SKILL_UPDATE_CONFLICT" else 400, exc.details)
+
+    @api.route("/skills/<skill_id>/update", methods=["POST"])
+    def api_update_skill(skill_id: str):
+        data = request.get_json(silent=True) or {}
+        try:
+            with get_db() as conn:
+                return success(update_skill(conn, skill_id, str(data.get("source") or ""), base_dir=skill_base_dir or "."))
+        except SkillError as exc:
+            return failure(exc.code, str(exc), 409 if exc.code == "SKILL_UPDATE_CONFLICT" else 400, exc.details)
+
+    @api.route("/skills/providers", methods=["POST"])
+    def api_configure_skill_provider():
+        data = request.get_json(silent=True) or {}
+        try:
+            with get_db() as conn:
+                return success(configure_provider(conn, str(data.get("provider_id") or ""), str(data.get("capability") or ""), data.get("config") or {}, enabled=bool(data.get("enabled")), trust_requirement=str(data.get("trust_requirement") or "trusted")))
+        except Exception as exc:
+            return failure("PROVIDER_CONFIGURATION_ERROR", str(exc), 400)
+
+    @api.route("/skills/<skill_id>/export", methods=["POST"])
+    def api_export_skill(skill_id: str):
+        data = request.get_json(silent=True) or {}
+        destination = str(data.get("destination") or "").strip()
+        if not destination:
+            return failure("INVALID_REQUEST", "destination is required.", 400)
+        try:
+            with get_db() as conn:
+                path = export_skill(conn, skill_id, destination, include_local_metadata=bool(data.get("include_local_metadata")))
+            return success({"path": path})
+        except SkillError as exc:
+            return failure(exc.code, str(exc), 400, exc.details)
 
     @api.route("/prompts", methods=["GET"])
     def list_prompts():

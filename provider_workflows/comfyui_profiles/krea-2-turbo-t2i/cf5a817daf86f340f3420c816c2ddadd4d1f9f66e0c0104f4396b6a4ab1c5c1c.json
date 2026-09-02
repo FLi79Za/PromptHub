@@ -1,0 +1,1129 @@
+{
+  "29": {
+    "inputs": {
+      "filename_prefix": "Krea2_turbo",
+      "images": [
+        "73",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "52": {
+    "inputs": {
+      "seed": 220643997703942
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "53": {
+    "inputs": {
+      "text": [
+        "71",
+        0
+      ],
+      "clip": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "54": {
+    "inputs": {
+      "width": [
+        "106",
+        0
+      ],
+      "height": [
+        "107",
+        0
+      ],
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "55": {
+    "inputs": {
+      "seed": [
+        "52",
+        0
+      ],
+      "steps": 15,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "67",
+        0
+      ],
+      "positive": [
+        "53",
+        0
+      ],
+      "negative": [
+        "59",
+        0
+      ],
+      "latent_image": [
+        "54",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "56": {
+    "inputs": {
+      "samples": [
+        "55",
+        0
+      ],
+      "vae": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "57": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "type": "krea2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "58": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "59": {
+    "inputs": {
+      "conditioning": [
+        "53",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Conditioning Zero Out"
+    }
+  },
+  "60": {
+    "inputs": {
+      "lora_name": "Krea2\\FLPeople\\JennyR_Krea2.safetensors",
+      "strength_model": 1.1,
+      "model": [
+        "72",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "61": {
+    "inputs": {
+      "prompt": [
+        "62",
+        0
+      ],
+      "max_length": 512,
+      "sampling_mode": "on",
+      "sampling_mode.temperature": 0.7,
+      "sampling_mode.top_k": 64,
+      "sampling_mode.top_p": 0.95,
+      "sampling_mode.min_p": 0.05,
+      "sampling_mode.repetition_penalty": 1.05,
+      "sampling_mode.seed": 0,
+      "sampling_mode.presence_penalty": 0,
+      "thinking": false,
+      "use_default_template": true,
+      "clip": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "TextGenerate",
+    "_meta": {
+      "title": "Generate Text"
+    }
+  },
+  "62": {
+    "inputs": {
+      "string_a": [
+        "63",
+        0
+      ],
+      "string_b": [
+        "75",
+        0
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
+    }
+  },
+  "63": {
+    "inputs": {
+      "value": "You are an expert prompt engineer for text-to-image models. Your task is to expand the user's prompt into a highly effective image-generation prompt.\n\nThink step by step about the request before writing the answer:\n- What is the subject and mood?\n- What visual styles, mediums, and lighting options would fit? Consider two or three alternatives and pick the one that best serves the caption.\n- What composition, framing, and grounded details will help the text-to-image model?\n\nThen output a single expanded prompt paragraph.\n\nFollow these rules strictly:\n1. **Faithfulness First:** Preserve all original subjects, actions, colors, and spatial relationships. Do not add new objects, props, characters, or animals unless the user clearly implies them.\n2. **Practical T2I Structure:** Write a prompt that a text-to-image model can parse cleanly. Group subjects with their own attributes and actions. Use grounded phrasing for poses, interactions, and spatial layout.\n3. **Style Planning Stays Internal:** Use your internal reasoning to choose style, medium, framing, and lighting. Do not emit planning tags or wrappers in the visible answer body.\n4. **Text Rendering:** If the user requests visible text, quotes, labels, or typography, specify the exact text clearly and wrap requested words in quotes.\n5. **Avoid Over-Specification:** Do not invent highly specific clothing, colors, materials, or scene details unless the input supports them.\n6. **Structure:** Write one cohesive paragraph after the thinking block. No bullets, JSON, or markdown.\n7. **Respect Existing Detail:** If the user's prompt is already detailed, lightly polish and finalize rather than heavily expanding — preserve their phrasing and direction.\n8. **Respect the Human Form:** Treat depictions of people with dignity. Assume clothing covers genitals and intimate anatomy.\n9. **Preserve User Medium:** When the user explicitly requests a medium (e.g. \"photo of\", \"photograph of\", \"illustration of\", \"painting of\", \"sketch of\", \"3D render of\"), honor it. Do not pivot to a different medium to avoid difficulty — match the user's stated intent.\n\nUser's Input:\n\n"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Text String (System Prompt)"
+    }
+  },
+  "65": {
+    "inputs": {
+      "source": [
+        "66",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Preview as Text"
+    }
+  },
+  "66": {
+    "inputs": {
+      "switch": [
+        "69",
+        0
+      ],
+      "on_false": [
+        "75",
+        0
+      ],
+      "on_true": [
+        "61",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "67": {
+    "inputs": {
+      "switch": [
+        "68",
+        0
+      ],
+      "on_false": [
+        "72",
+        0
+      ],
+      "on_true": [
+        "60",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (Model)"
+    }
+  },
+  "68": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Boolean (Enable LoRA?)"
+    }
+  },
+  "69": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Boolean (Refine Prompt?)"
+    }
+  },
+  "70": {
+    "inputs": {
+      "string_a": [
+        "65",
+        0
+      ],
+      "string_b": "",
+      "delimiter": ", "
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text (LoRA Trigger Word)"
+    }
+  },
+  "71": {
+    "inputs": {
+      "switch": [
+        "68",
+        0
+      ],
+      "on_false": [
+        "65",
+        0
+      ],
+      "on_true": [
+        "70",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "72": {
+    "inputs": {
+      "unet_name": "Krea2\\krea2_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "73": {
+    "inputs": {
+      "resize_type": "scale by multiplier",
+      "resize_type.scale": 2,
+      "quality": "ULTRA",
+      "images": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "RTXVideoSuperResolution",
+    "_meta": {
+      "title": "RTX Video Super Resolution"
+    }
+  },
+  "75": {
+    "inputs": {
+      "source_mode": "textbox",
+      "textbox_prompts": "A cinematic medium close-up over-the-shoulder shot of a young woman with jet-black hair and dramatic, elegant makeup, wearing an eggshell-white evening dress in a quiet indoor setting during late afternoon dusk. She stands intimately before a full-length mirror, her expression pensive, alluring, and deeply melancholic as she slowly raises a mascara wand to apply it to her lower eyelid with precise wrist movements. Her reflection is perfectly synchronized, capturing subtle breathing and slight head tilts within a frame of soft shadows and fading ambient light. The atmosphere is sombre yet enticing, illuminated by soft artificial side lighting that casts deep, velvety contrasts against warm but muted low-contrast tones, enhancing a sense of quiet isolation. A gentle lens push-in adds intimacy to the scene, utilizing shallow depth of field and cinematic realism with lifestyle-film aesthetics, capturing the drama of a solitary moment suspended in time like a moody memory.",
+      "text_file_path": "",
+      "folder_path": "",
+      "folder_glob": "*.txt",
+      "split_mode": "numbered_prompts",
+      "folder_split_inside_files": false,
+      "selection_mode": "random",
+      "seed": 298866103,
+      "dedupe": true,
+      "reset_counter": false
+    },
+    "class_type": "ScorpioPromptBatch",
+    "_meta": {
+      "title": "Scorpio Prompt Batch (Numbered / Textbox / File / Folder)"
+    }
+  },
+  "76": {
+    "inputs": {
+      "mode": "raw value",
+      "input": [
+        "75",
+        1
+      ]
+    },
+    "class_type": "DisplayAny",
+    "_meta": {
+      "title": "🔧 Display Any"
+    }
+  },
+  "77": {
+    "inputs": {
+      "mode": "raw value",
+      "input": [
+        "75",
+        2
+      ]
+    },
+    "class_type": "DisplayAny",
+    "_meta": {
+      "title": "🔧 Display Any"
+    }
+  },
+  "78": {
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider"
+    }
+  },
+  "79": {
+    "inputs": {
+      "model_name": "sam_vit_b_01ec64.pth",
+      "device_mode": "AUTO"
+    },
+    "class_type": "SAMLoader",
+    "_meta": {
+      "title": "SAMLoader (Impact)"
+    }
+  },
+  "80": {
+    "inputs": {
+      "model_name": "segm/person_yolov8m-seg.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider"
+    }
+  },
+  "82": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "67",
+        0
+      ]
+    },
+    "class_type": "DifferentialDiffusion",
+    "_meta": {
+      "title": "Differential Diffusion"
+    }
+  },
+  "84": {
+    "inputs": {
+      "guide_size": 768,
+      "guide_size_for": true,
+      "max_size": 1024,
+      "seed": 408188946128669,
+      "steps": 10,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.19,
+      "feather": 5,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.5,
+      "bbox_dilation": 10,
+      "bbox_crop_factor": 1.5,
+      "sam_detection_hint": "center-1",
+      "sam_dilation": 0,
+      "sam_threshold": 0.93,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 40,
+      "wildcard": "",
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 20,
+      "tiled_encode": false,
+      "tiled_decode": false,
+      "image": [
+        "56",
+        0
+      ],
+      "model": [
+        "82",
+        0
+      ],
+      "clip": [
+        "57",
+        0
+      ],
+      "vae": [
+        "58",
+        0
+      ],
+      "positive": [
+        "92",
+        0
+      ],
+      "negative": [
+        "59",
+        0
+      ],
+      "bbox_detector": [
+        "78",
+        0
+      ],
+      "sam_model_opt": [
+        "79",
+        0
+      ],
+      "segm_detector_opt": [
+        "80",
+        1
+      ]
+    },
+    "class_type": "FaceDetailer",
+    "_meta": {
+      "title": "FaceDetailer"
+    }
+  },
+  "86": {
+    "inputs": {
+      "images": [
+        "84",
+        1
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "87": {
+    "inputs": {
+      "rgthree_comparer": {
+        "images": [
+          {
+            "name": "A",
+            "selected": true,
+            "url": "/api/view?filename=rgthree.compare._temp_rahcb_00009_.png&type=temp&subfolder=&rand=0.3643765430974405"
+          },
+          {
+            "name": "B",
+            "selected": true,
+            "url": "/api/view?filename=rgthree.compare._temp_rahcb_00010_.png&type=temp&subfolder=&rand=0.0937203654000911"
+          }
+        ]
+      },
+      "image_a": [
+        "56",
+        0
+      ],
+      "image_b": [
+        "84",
+        0
+      ]
+    },
+    "class_type": "Image Comparer (rgthree)",
+    "_meta": {
+      "title": "Image Comparer (rgthree)"
+    }
+  },
+  "92": {
+    "inputs": {
+      "text": [
+        "100",
+        0
+      ],
+      "clip": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "100": {
+    "inputs": {
+      "main_prompt": [
+        "75",
+        0
+      ],
+      "subject_mode": "woman",
+      "detail_preset": "beauty",
+      "strictness": "balanced",
+      "dedupe_mode": "smart",
+      "max_terms": 24,
+      "keep_hair_terms": true,
+      "keep_expression_terms": true,
+      "keep_age_terms": true,
+      "keep_damage_terms": true,
+      "append_custom_face_terms": "",
+      "whitelist_terms": "",
+      "blacklist_terms": ""
+    },
+    "class_type": "FaceDetailPromptComposer",
+    "_meta": {
+      "title": "Face Detail Prompt Composer"
+    }
+  },
+  "101": {
+    "inputs": {
+      "output": "",
+      "source": [
+        "100",
+        0
+      ]
+    },
+    "class_type": "Display Any (rgthree)",
+    "_meta": {
+      "title": "Display Any (rgthree)"
+    }
+  },
+  "103": {
+    "inputs": {
+      "model_family": "Flux",
+      "ratio_set": "photo_classic",
+      "seed": 1445348644,
+      "step_index": 0,
+      "orientation_mode": "auto",
+      "allow_square": true,
+      "base_short_side": 1024,
+      "multiple": 64,
+      "max_side": 1280,
+      "use_wideness_limiter": true,
+      "wideness_limit": 0.5,
+      "tries": 24,
+      "prev_width": 0,
+      "prev_height": 0
+    },
+    "class_type": "ScorpioRandomAspectRatio",
+    "_meta": {
+      "title": "Scorpio Random Aspect Ratio (Buckets)"
+    }
+  },
+  "104": {
+    "inputs": {
+      "output": "",
+      "source": [
+        "75",
+        0
+      ]
+    },
+    "class_type": "Display Any (rgthree)",
+    "_meta": {
+      "title": "Display Any (rgthree)"
+    }
+  },
+  "105": {
+    "inputs": {
+      "aspect_ratio": "3:4"
+    },
+    "class_type": "AspectRatioSelector",
+    "_meta": {
+      "title": "Aspect Ratio"
+    }
+  },
+  "106": {
+    "inputs": {
+      "select": 2,
+      "sel_mode": false,
+      "input1": [
+        "105",
+        1
+      ],
+      "input2": [
+        "103",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "107": {
+    "inputs": {
+      "select": 2,
+      "sel_mode": false,
+      "input1": [
+        "105",
+        2
+      ],
+      "input2": [
+        "103",
+        1
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "108": {
+    "inputs": {
+      "rgthree_comparer": {
+        "images": [
+          {
+            "name": "A",
+            "selected": true,
+            "url": "/api/view?filename=rgthree.compare._temp_ljokg_00009_.png&type=temp&subfolder=&rand=0.635030438601585"
+          },
+          {
+            "name": "B",
+            "selected": true,
+            "url": "/api/view?filename=rgthree.compare._temp_ljokg_00010_.png&type=temp&subfolder=&rand=0.25283938829029307"
+          }
+        ]
+      },
+      "image_a": [
+        "29",
+        0
+      ],
+      "image_b": [
+        "126",
+        0
+      ]
+    },
+    "class_type": "Image Comparer (rgthree)",
+    "_meta": {
+      "title": "Image Comparer (rgthree)"
+    }
+  },
+  "109": {
+    "inputs": {
+      "value": 0.25,
+      "min_value": 0.2,
+      "max_value": 0.3,
+      "intensity": 1,
+      "mode": "Generic",
+      "distribution": "Uniform",
+      "lock_to_range": false,
+      "variation_seed": [
+        "138",
+        0
+      ],
+      "precision_mode": "On",
+      "decimal_places": 3
+    },
+    "class_type": "CreativeNumericRange",
+    "_meta": {
+      "title": "Creative Numeric Range"
+    }
+  },
+  "110": {
+    "inputs": {
+      "value": 0.06,
+      "min_value": 0.04,
+      "max_value": 0.09,
+      "intensity": 1,
+      "mode": "Generic",
+      "distribution": "Uniform",
+      "lock_to_range": false,
+      "variation_seed": [
+        "138",
+        0
+      ],
+      "precision_mode": "On",
+      "decimal_places": 3
+    },
+    "class_type": "CreativeNumericRange",
+    "_meta": {
+      "title": "Creative Numeric Range"
+    }
+  },
+  "111": {
+    "inputs": {
+      "value": 0.18,
+      "min_value": 0.11,
+      "max_value": 0.24,
+      "intensity": 1,
+      "mode": "Generic",
+      "distribution": "Uniform",
+      "lock_to_range": false,
+      "variation_seed": [
+        "138",
+        0
+      ],
+      "precision_mode": "On",
+      "decimal_places": 3
+    },
+    "class_type": "CreativeNumericRange",
+    "_meta": {
+      "title": "Creative Numeric Range"
+    }
+  },
+  "112": {
+    "inputs": {
+      "value": 0.8,
+      "min_value": 0.4,
+      "max_value": 0.9,
+      "intensity": 0.77,
+      "mode": "Unit (0-1 Safe)",
+      "distribution": "Uniform",
+      "lock_to_range": false,
+      "variation_seed": [
+        "138",
+        0
+      ],
+      "precision_mode": "Off",
+      "decimal_places": 6
+    },
+    "class_type": "CreativeNumericRange",
+    "_meta": {
+      "title": "Creative Numeric Range"
+    }
+  },
+  "113": {
+    "inputs": {
+      "value": 25,
+      "min_value": 20,
+      "max_value": 30,
+      "intensity": 1,
+      "mode": "Generic",
+      "distribution": "Uniform",
+      "lock_to_range": true,
+      "variation_seed": [
+        "138",
+        0
+      ],
+      "precision_mode": "Off",
+      "decimal_places": 6
+    },
+    "class_type": "CreativeNumericRange",
+    "_meta": {
+      "title": "Creative Numeric Range"
+    }
+  },
+  "118": {
+    "inputs": {
+      "value": 0.33,
+      "min_value": 0.32,
+      "max_value": 0.5,
+      "intensity": 1,
+      "mode": "Unit (0-1 Safe)",
+      "distribution": "Uniform",
+      "lock_to_range": true,
+      "variation_seed": [
+        "138",
+        0
+      ],
+      "precision_mode": "Off",
+      "decimal_places": 2
+    },
+    "class_type": "CreativeNumericRange",
+    "_meta": {
+      "title": "Creative Numeric Range"
+    }
+  },
+  "120": {
+    "inputs": {
+      "value": 0.25,
+      "min_value": 0.18,
+      "max_value": 0.38,
+      "intensity": 1,
+      "mode": "Generic",
+      "distribution": "Uniform",
+      "lock_to_range": false,
+      "variation_seed": [
+        "138",
+        0
+      ],
+      "precision_mode": "On",
+      "decimal_places": 3
+    },
+    "class_type": "CreativeNumericRange",
+    "_meta": {
+      "title": "Creative Numeric Range"
+    }
+  },
+  "121": {
+    "inputs": {
+      "mode": "raw value",
+      "input": [
+        "125",
+        2
+      ]
+    },
+    "class_type": "DisplayAny",
+    "_meta": {
+      "title": "🔧 Display Any"
+    }
+  },
+  "122": {
+    "inputs": {
+      "mode": "raw value",
+      "input": [
+        "124",
+        2
+      ]
+    },
+    "class_type": "DisplayAny",
+    "_meta": {
+      "title": "🔧 Display Any"
+    }
+  },
+  "123": {
+    "inputs": {
+      "mode": "raw value",
+      "input": [
+        "118",
+        2
+      ]
+    },
+    "class_type": "DisplayAny",
+    "_meta": {
+      "title": "🔧 Display Any"
+    }
+  },
+  "124": {
+    "inputs": {
+      "value": 0.61,
+      "min_value": 0.42,
+      "max_value": 0.8,
+      "intensity": 0.8,
+      "mode": "Generic",
+      "distribution": "Uniform",
+      "lock_to_range": true,
+      "variation_seed": [
+        "138",
+        0
+      ],
+      "precision_mode": "Off",
+      "decimal_places": 2
+    },
+    "class_type": "CreativeNumericRange",
+    "_meta": {
+      "title": "Creative Numeric Range"
+    }
+  },
+  "125": {
+    "inputs": {
+      "value": 0.019,
+      "min_value": 0.017,
+      "max_value": 0.035,
+      "intensity": 0.8,
+      "mode": "Unit (0-1 Safe)",
+      "distribution": "Uniform",
+      "lock_to_range": false,
+      "variation_seed": [
+        "138",
+        0
+      ],
+      "precision_mode": "On",
+      "decimal_places": 3
+    },
+    "class_type": "CreativeNumericRange",
+    "_meta": {
+      "title": "Creative Numeric Range"
+    }
+  },
+  "126": {
+    "inputs": {
+      "preset": "Magic Wand (Balanced)",
+      "wand_blend": 0.65,
+      "strength_curve": 2,
+      "strength": 0.4,
+      "exposure_auto": true,
+      "brilliance": [
+        "120",
+        0
+      ],
+      "brilliance_radius": 2.2,
+      "vibrance": [
+        "109",
+        0
+      ],
+      "saturation": [
+        "110",
+        0
+      ],
+      "sharpen": [
+        "111",
+        0
+      ],
+      "sharpen_sigma": 1.2,
+      "image": [
+        "132",
+        0
+      ]
+    },
+    "class_type": "Auto Photo Enhance (Magic Wand)",
+    "_meta": {
+      "title": "Auto Photo Enhance (Magic Wand)"
+    }
+  },
+  "131": {
+    "inputs": {
+      "library_id": "LUTS",
+      "selected_relpath": "1000-cinematic-color-presets-lut-pack-for-premiere-M9WLUQG/1000 LUT's/10 Instagram/I17.cube",
+      "Open Media Picker": "open",
+      "Edit Media Libraries": "libs"
+    },
+    "class_type": "MediaPickerRelay",
+    "_meta": {
+      "title": "Media Picker (Relay)"
+    }
+  },
+  "132": {
+    "inputs": {
+      "camera_body_id": "apple_iphone_16_pro_max",
+      "lens_id": "iphone_16pm_main_24mm_f1_78",
+      "mode": "AV",
+      "aperture_f": 2.8,
+      "shutter_display": "1/125",
+      "iso": 100,
+      "ev_comp": 0,
+      "auto_min_shutter_s": [
+        "125",
+        0
+      ],
+      "simulate_exposure_pixels": "subtle",
+      "realism_strength": [
+        "124",
+        0
+      ],
+      "enable_wb_drift": true,
+      "enable_ca": true,
+      "enable_noise": true,
+      "enable_motion_blur": true,
+      "enable_vignette": true,
+      "enable_dof": false,
+      "enable_lut": false,
+      "motion_angle_deg": 0,
+      "dof_mode": "depthmap",
+      "dof_blur_px": 6,
+      "dof_focus": 0.5,
+      "dof_max_blur_px": 18,
+      "dof_depthmap_invert": false,
+      "lut_path": [
+        "131",
+        0
+      ],
+      "lut_strength": [
+        "118",
+        0
+      ],
+      "profiles_root": "",
+      "camera_body_id_override": "",
+      "lens_id_override": "",
+      "image": [
+        "143",
+        0
+      ],
+      "depth_map": [
+        "73",
+        0
+      ]
+    },
+    "class_type": "CamSim v2 Apply",
+    "_meta": {
+      "title": "CamSim v2 Apply"
+    }
+  },
+  "133": {
+    "inputs": {
+      "mode": "raw value",
+      "input": [
+        "112",
+        2
+      ]
+    },
+    "class_type": "DisplayAny",
+    "_meta": {
+      "title": "🔧 Display Any"
+    }
+  },
+  "134": {
+    "inputs": {
+      "mode": "raw value",
+      "input": [
+        "113",
+        2
+      ]
+    },
+    "class_type": "DisplayAny",
+    "_meta": {
+      "title": "🔧 Display Any"
+    }
+  },
+  "136": {
+    "inputs": {
+      "model_name": "x1_ITF_SkinDiffDetail_Lite_v1.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model"
+    }
+  },
+  "137": {
+    "inputs": {
+      "upscale_model": [
+        "136",
+        0
+      ],
+      "image": [
+        "73",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "Upscale Image (using Model)"
+    }
+  },
+  "138": {
+    "inputs": {
+      "seed": -1
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "143": {
+    "inputs": {
+      "preset": "Modern Phone (Clean Soft)",
+      "bloom_style": "Photoreal Bloom",
+      "strength": 1.2,
+      "blend_mode_photoreal": "Screen",
+      "blend_mode_game": "Add (Linear Dodge)",
+      "highlight_threshold": 0.78,
+      "highlight_knee": 0.15,
+      "diffusion_amount": 0.12,
+      "diffusion_sigma": 1.5,
+      "bloom_strength": 0.25,
+      "bloom_sigma": 3.5,
+      "halation_strength": 0.08,
+      "halation_sigma": 3,
+      "veiling_glare_strength": 0.04,
+      "veiling_glare_sigma": 10,
+      "preserve_blacks": 0,
+      "image": [
+        "137",
+        0
+      ]
+    },
+    "class_type": "CAMSIM Soft Lens",
+    "_meta": {
+      "title": "CAMSIM Soft Lens (Diffusion/Bloom/Halation)"
+    }
+  },
+  "144": {
+    "inputs": {
+      "filename_prefix": "Krea2Camsim",
+      "images": [
+        "126",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}

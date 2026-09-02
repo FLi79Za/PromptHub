@@ -2,6 +2,8 @@
 
 Prompt Hub includes reusable AI Actions and a local Knowledge Manager. See [AI Actions and Knowledge](docs/AI_ACTIONS_KNOWLEDGE.md) for collection building, RAW/OPTIMISED/MERGE ingestion, provenance, retrieval testing, audits, rebuilds, and Codex integration.
 
+See [ComfyUI workflow dispatch](docs/COMFYUI_GENERATION.md) for multi-server configuration, reusable semantic Workflow Profiles, media uploads, generation history, API operations, and worked Flux 2 Klein/H3 I2V examples.
+
 A local, self-hosted web application for storing, organising, refining, and reusing AI prompts.
 
 Prompt Hub is built for real-world AI workflows, not toy examples. It supports full-length prompts, instruction-based editing, iterative refinement, visual context, browser capture, local AI integration, and structured organisation.

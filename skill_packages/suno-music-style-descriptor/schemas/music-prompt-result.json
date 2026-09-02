@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "prompt": {"type": "string"},
+    "mode": {"type": "string"},
+    "style_description": {"type": "string"},
+    "lyrics": {"type": "string"},
+    "exclude": {"type": "string"},
+    "notes": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["prompt", "mode", "notes"]
+}

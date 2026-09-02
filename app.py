@@ -50,6 +50,16 @@ from integration_config import (
     get_or_create_secret_key,
     load_config as load_integration_config,
 )
+from skill_runtime import (
+    SkillError, apply_skill_migrations, compare_skill, configure_provider, export_skill, import_skill, inspect_skill,
+    list_prompt_derivations, list_skills, run_skill, save_skill_derivative, source_prompt_input, update_skill,
+)
+from generation_runtime import (
+    GenerationError, apply_generation_migrations, check_server, compatible_profiles,
+    duplicate_profile, get_generation, inspect_workflow, list_profiles, list_prompt_generations,
+    list_servers, refresh_generation, regenerate, save_profile, submit_generation, upsert_server,
+    validate_saved_profile,
+)
 
 
 # -------------------------
@@ -119,6 +129,11 @@ TEMP_DIR.mkdir(exist_ok=True)
 PROMPT_TYPES = ["Generation", "Edit", "Instruction"]
 UPLOAD_DIR = BASE_DIR / "static" / "uploads" / "thumbs"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+GENERATION_INPUT_DIR = BASE_DIR / "static" / "uploads" / "generation_inputs"
+GENERATION_MEDIA_DIR = BASE_DIR / "static" / "uploads" / "generations"
+WORKFLOW_PROFILE_DIR = BASE_DIR / "provider_workflows" / "comfyui_profiles"
+for managed_dir in (GENERATION_INPUT_DIR, GENERATION_MEDIA_DIR, WORKFLOW_PROFILE_DIR):
+    managed_dir.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_THUMB_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB
@@ -230,6 +245,10 @@ app.register_blueprint(create_integration_blueprint(
     get_db,
     embedder=lambda text, model: ollama_embed(text, model),
     list_models=lambda: ollama_list_models(),
+    skill_generate=lambda **kwargs: ollama_generate(**kwargs),
+    skill_base_dir=str(BASE_DIR),
+    workflow_root=str(BASE_DIR / "provider_workflows" / "comfyui_profiles"),
+    generation_media_root=str(BASE_DIR / "static" / "uploads" / "generations"),
 ))
 
 @app.teardown_appcontext
@@ -413,6 +432,8 @@ def init_db() -> None:
     apply_integration_migrations(conn)
     # AI tables do not rewrite existing prompt rows.
     apply_ai_migrations(conn)
+    apply_skill_migrations(conn)
+    apply_generation_migrations(conn)
 
     conn.commit()
     conn.close()
@@ -2042,6 +2063,8 @@ def new_prompt():
         conn.close()
         return redirect(url_for("index"))
 
+    with get_db() as conn:
+        installed_skills = list_skills(conn)
     return render_template(
         "edit_prompt.html",
         prompt=None,
@@ -2050,7 +2073,10 @@ def new_prompt():
         groups=get_groups(),
         prompt_types=PROMPT_TYPES,
         tags_str="",
-        ollama_models=ollama_models
+        ollama_models=ollama_models,
+        installed_skills=installed_skills,
+        derivations=[],
+        workflow_profiles=[]
     )
 
 
@@ -2120,6 +2146,11 @@ def edit_prompt(prompt_id: int):
 
     conn = get_db()
     current_tags = get_tags_for_prompt(conn, prompt_id)
+    installed_skills = list_skills(conn)
+    derivations = list_prompt_derivations(conn, prompt_id)
+    workflow_profiles = compatible_profiles(conn, prompt_id, show_all=True)
+    generations = list_prompt_generations(conn, prompt_id)
+    parent = conn.execute("SELECT id,title FROM prompts WHERE id=?", (prompt["parent_id"],)).fetchone() if prompt["parent_id"] else None
     conn.close()
 
     return render_template(
@@ -2130,7 +2161,12 @@ def edit_prompt(prompt_id: int):
         groups=get_groups(),
         prompt_types=PROMPT_TYPES,
         tags_str=", ".join(current_tags),
-        ollama_models=ollama_models
+        ollama_models=ollama_models,
+        installed_skills=installed_skills,
+        derivations=derivations,
+        parent=parent,
+        workflow_profiles=workflow_profiles,
+        generations=generations,
     )
 
 
@@ -2530,6 +2566,277 @@ def ai_manage():
         ollama_models=ollama_models,
         default_embedding_model=DEFAULT_EMBEDDING_MODEL,
     )
+
+
+def _generation_error_response(exc: GenerationError):
+    status = 404 if exc.code.endswith("NOT_FOUND") else 409 if exc.code in {"DUPLICATE_PROFILE", "PROFILE_INVALIDATED"} else 400
+    return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), status
+
+
+@app.route("/comfyui", methods=["GET"])
+def comfyui_manage():
+    with get_db() as conn:
+        return render_template("comfyui.html", servers=list_servers(conn), profiles=list_profiles(conn))
+
+
+@app.route("/api/comfyui/servers", methods=["GET", "POST"])
+def api_comfyui_servers():
+    try:
+        with get_db() as conn:
+            if request.method == "GET":
+                return jsonify({"ok": True, "servers": list_servers(conn)})
+            return jsonify({"ok": True, **upsert_server(conn, request.get_json(silent=True) or {})})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/servers/<server_id>/health", methods=["POST"])
+def api_comfyui_server_health(server_id: str):
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, **check_server(conn, server_id)})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/workflows/inspect", methods=["POST"])
+def api_comfyui_workflow_inspect():
+    upload = request.files.get("workflow")
+    try:
+        if upload is not None:
+            graph = json.loads(upload.read().decode("utf-8-sig"))
+        else:
+            graph = (request.get_json(silent=True) or {}).get("workflow")
+        return jsonify({"ok": True, "workflow": graph, "inspection": inspect_workflow(graph)})
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return jsonify({"ok": False, "error": "Workflow file is not valid JSON.", "code": "INVALID_WORKFLOW"}), 400
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/profiles", methods=["GET", "POST"])
+def api_comfyui_profiles():
+    try:
+        with get_db() as conn:
+            if request.method == "GET":
+                return jsonify({"ok": True, "profiles": list_profiles(conn)})
+            data = request.get_json(silent=True) or {}
+            return jsonify({"ok": True, **save_profile(conn, data, data.get("workflow"), WORKFLOW_PROFILE_DIR, allow_update=bool(data.get("allow_update")))})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/profiles/<profile_id>/duplicate", methods=["POST"])
+def api_comfyui_profile_duplicate(profile_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, **duplicate_profile(conn, profile_id, str(data.get("id") or ""), str(data.get("display_name") or ""), WORKFLOW_PROFILE_DIR)})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/comfyui/profiles/<profile_id>/validate", methods=["POST"])
+def api_comfyui_profile_validate(profile_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, "validation": validate_saved_profile(conn, profile_id, live=bool(data.get("live")))})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/prompts/<prompt_id>/workflow-profiles", methods=["GET"])
+def api_prompt_workflow_profiles(prompt_id: str):
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, "profiles": compatible_profiles(conn, prompt_id, show_all=request.args.get("show_all") == "1")})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/prompts/<prompt_id>/generations", methods=["GET", "POST"])
+def api_prompt_generations(prompt_id: str):
+    try:
+        with get_db() as conn:
+            if request.method == "GET":
+                return jsonify({"ok": True, "generations": list_prompt_generations(conn, prompt_id)})
+            profile_id = str(request.form.get("profile_id") or "")
+            values = {key: value for key, value in request.form.items() if key not in {"profile_id", "prompt"}}
+            prompt_override = request.form.get("prompt")
+            for role in request.files:
+                managed_uploads = []
+                for upload in request.files.getlist(role):
+                    if not upload or not upload.filename:
+                        continue
+                    safe_name = secure_filename(upload.filename) or f"{role}.bin"
+                    destination = GENERATION_INPUT_DIR / f"{uuid.uuid4().hex}_{safe_name}"
+                    upload.save(destination)
+                    managed_uploads.append({"source_path": str(destination), "filename": safe_name, "managed_upload": True})
+                if managed_uploads:
+                    values[role] = managed_uploads if len(managed_uploads) > 1 else managed_uploads[0]
+            generation = submit_generation(conn, prompt_id, profile_id, values, prompt_override=prompt_override)
+            return jsonify({"ok": True, "generation": generation}), 202
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/generations/<generation_id>", methods=["GET"])
+def api_generation_status(generation_id: str):
+    try:
+        with get_db() as conn:
+            generation = refresh_generation(conn, generation_id, GENERATION_MEDIA_DIR)
+            return jsonify({"ok": True, "generation": generation})
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/api/generations/<generation_id>/regenerate", methods=["POST"])
+def api_generation_regenerate(generation_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            generation = regenerate(conn, generation_id, new_seed=bool(data.get("new_seed")), current_prompt=bool(data.get("current_prompt")))
+            return jsonify({"ok": True, "generation": generation}), 202
+    except GenerationError as exc:
+        return _generation_error_response(exc)
+
+
+@app.route("/generations/<generation_id>/media/<int:index>", methods=["GET"])
+def generation_media(generation_id: str, index: int):
+    try:
+        with get_db() as conn:
+            generation = get_generation(conn, generation_id)
+        media = generation["result_media"]
+        if index < 0 or index >= len(media):
+            return "Not found", 404
+        path = Path(media[index]["stored_path"]).resolve()
+        if GENERATION_MEDIA_DIR.resolve() not in path.parents or not path.is_file():
+            return "Not found", 404
+        return send_file(path, mimetype=media[index].get("content_type"))
+    except GenerationError:
+        return "Not found", 404
+
+
+@app.route("/skills", methods=["GET"])
+def skills_manage():
+    init_db()
+    with get_db() as conn:
+        skills = list_skills(conn, request.args.get("q", "").strip())
+    return render_template("skills.html", skills=skills, ollama_models=ollama_list_models())
+
+
+@app.route("/skills/import", methods=["POST"])
+def skills_import():
+    source = (request.form.get("source") or "").strip()
+    try:
+        with get_db() as conn:
+            result = import_skill(conn, source, base_dir=BASE_DIR, source_type="portable", source_platform="user")
+        if result["operation"] == "conflict":
+            flash("Skill import stopped: the existing PromptHub copy has local modifications.", "danger")
+        else:
+            flash(f"Skill {result['operation']}: {result['inspection']['display_name']}.")
+    except SkillError as exc:
+        flash(str(exc), "danger")
+    return redirect(url_for("skills_manage"))
+
+
+@app.route("/api/skills", methods=["GET"])
+def api_skills():
+    init_db()
+    with get_db() as conn:
+        return jsonify({"ok": True, "skills": list_skills(conn, request.args.get("q", "").strip())})
+
+
+@app.route("/api/skills/inspect", methods=["POST"])
+def api_skill_inspect():
+    data = request.get_json(silent=True) or {}
+    try:
+        return jsonify({"ok": True, "inspection": inspect_skill(str(data.get("source") or ""))})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
+
+
+@app.route("/api/skills/import", methods=["POST"])
+def api_skill_import():
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            result = import_skill(conn, str(data.get("source") or ""), base_dir=BASE_DIR, source_type=str(data.get("source_type") or "portable"), source_platform=str(data.get("source_platform") or "unknown"), tags=data.get("tags") or [])
+        return jsonify({"ok": True, **result}), (409 if result.get("operation") == "conflict" else 200)
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
+
+
+@app.route("/api/skills/<skill_id>/compare", methods=["POST"])
+def api_skill_compare(skill_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, "comparison": compare_skill(conn, skill_id, str(data.get("source") or ""))})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
+
+
+@app.route("/api/skills/<skill_id>/update", methods=["POST"])
+def api_skill_update(skill_id: str):
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            return jsonify({"ok": True, **update_skill(conn, skill_id, str(data.get("source") or ""), base_dir=BASE_DIR)})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 409 if exc.code == "SKILL_UPDATE_CONFLICT" else 400
+
+
+@app.route("/api/skills/providers", methods=["POST"])
+def api_skill_provider_configure():
+    data = request.get_json(silent=True) or {}
+    try:
+        with get_db() as conn:
+            result = configure_provider(conn, str(data.get("provider_id") or ""), str(data.get("capability") or ""), data.get("config") or {}, enabled=bool(data.get("enabled")), trust_requirement=str(data.get("trust_requirement") or "trusted"))
+        return jsonify({"ok": True, **result})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+
+@app.route("/api/skills/<skill_id>/run", methods=["POST"])
+def api_skill_run(skill_id: str):
+    data = request.get_json(silent=True) or {}
+    request_text = str(data.get("request") or "").strip()
+    model = str(data.get("model") or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL).strip()
+    if not model:
+        return jsonify({"ok": False, "error": "execution model is required."}), 400
+    if model not in ollama_list_models():
+        return jsonify({"ok": False, "error": f"The selected Ollama model is not installed: {model}"}), 400
+    try:
+        with get_db() as conn:
+            inputs = list(data.get("inputs") or [])
+            source_prompt_id = data.get("source_prompt_id")
+            operation = str(data.get("operation") or "create").lower()
+            if source_prompt_id and operation != "create" and not any(isinstance(item, dict) and item.get("role") in {"source", "draft"} for item in inputs):
+                inputs.insert(0, source_prompt_input(conn, source_prompt_id))
+            parameters = dict(data.get("parameters") or {})
+            freeform_instruction = str(data.get("freeform_instruction") or "").strip()
+            if freeform_instruction and not any(isinstance(item, dict) and item.get("role") == "instruction" for item in inputs):
+                inputs.append({"type": "text", "role": "instruction", "content": freeform_instruction})
+            result = run_skill(conn, skill_id, request_text, model, parameters, ollama_generate, operation=operation, inputs=inputs or None, target=data.get("target"), source_prompt_id=int(source_prompt_id) if str(source_prompt_id or "").isdigit() else None, capability_registry={"structured_output": {"status": "PRESERVED", "provider": "Ollama"}, "image_generation": {"status": "SUBSTITUTED", "provider": "ComfyUI"}})
+        session["ollama_model"] = model
+        return jsonify({"ok": True, **result})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
+
+
+@app.route("/api/prompts/<prompt_id>/skill-derivatives", methods=["GET", "POST"])
+def api_prompt_skill_derivatives(prompt_id: str):
+    try:
+        with get_db() as conn:
+            if request.method == "GET":
+                return jsonify({"ok": True, "derivations": list_prompt_derivations(conn, prompt_id)})
+            data = request.get_json(silent=True) or {}
+            result = save_skill_derivative(conn, prompt_id, str(data.get("execution_id") or ""), title=data.get("title"), replace_original=bool(data.get("replace_original", False)))
+        return jsonify({"ok": True, **result})
+    except SkillError as exc:
+        return jsonify({"ok": False, "error": str(exc), "code": exc.code, "details": exc.details}), 400
 
 
 @app.route("/ai/resources", methods=["POST"])
@@ -3522,7 +3829,7 @@ def ollama_list_models():
     except Exception:
         return []
 
-def ollama_generate(prompt: str, model: str | None = None, system: str | None = None, images: list[str] | None = None) -> str:
+def ollama_generate(prompt: str, model: str | None = None, system: str | None = None, images: list[str] | None = None, format: dict | str | None = None, think: bool | None = None) -> str:
     payload = {
         "model": model or session.get("ollama_model") or OLLAMA_DEFAULT_MODEL,
         "prompt": prompt,
@@ -3532,6 +3839,10 @@ def ollama_generate(prompt: str, model: str | None = None, system: str | None = 
         payload["system"] = system
     if images:
         payload["images"] = images
+    if format:
+        payload["format"] = format
+    if think is not None:
+        payload["think"] = think
 
     try:
         r = requests.post(OLLAMA_URL, json=payload, timeout=120)

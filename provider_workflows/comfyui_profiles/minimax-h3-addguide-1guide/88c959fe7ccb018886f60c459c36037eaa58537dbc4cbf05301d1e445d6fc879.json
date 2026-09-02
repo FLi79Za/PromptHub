@@ -1,0 +1,324 @@
+{
+  "6": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "Minimax\\minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "9": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "model": [
+        "130",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 20,
+      "denoise": 1.0
+    }
+  },
+  "10": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "14",
+        0
+      ],
+      "vae": [
+        "11",
+        0
+      ]
+    }
+  },
+  "11": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    }
+  },
+  "13": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    }
+  },
+  "14": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "noise": [
+        "15",
+        0
+      ],
+      "guider": [
+        "16",
+        0
+      ],
+      "sampler": [
+        "17",
+        0
+      ],
+      "sigmas": [
+        "9",
+        0
+      ],
+      "latent_image": [
+        "104",
+        1
+      ]
+    }
+  },
+  "15": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": [
+        "132",
+        6
+      ]
+    }
+  },
+  "16": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "model": [
+        "130",
+        0
+      ],
+      "conditioning": [
+        "159",
+        0
+      ]
+    }
+  },
+  "17": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "res_multistep"
+    }
+  },
+  "23": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": [
+        "14",
+        0
+      ],
+      "vae": [
+        "24",
+        0
+      ]
+    }
+  },
+  "24": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    }
+  },
+  "91": {
+    "class_type": "CreateVideo",
+    "inputs": {
+      "images": [
+        "10",
+        0
+      ],
+      "audio": [
+        "23",
+        0
+      ],
+      "fps": 24.0,
+      "bit_depth": 8
+    }
+  },
+  "92": {
+    "class_type": "SaveVideo",
+    "inputs": {
+      "video": [
+        "91",
+        0
+      ],
+      "filename_prefix": "video/MiniMax_H3_AddGuide_Robot/robot_1guide",
+      "format": "auto",
+      "codec": "auto"
+    }
+  },
+  "104": {
+    "class_type": "MiniMaxH3ImageToVideo",
+    "inputs": {
+      "clip": [
+        "13",
+        0
+      ],
+      "vae": [
+        "11",
+        0
+      ],
+      "first_frame": [
+        "132",
+        0
+      ],
+      "prompt": "A single continuous locked-off shot in the same rust-red wasteland at sunset. The same small weathered box-headed robot notices the horned skeletal remains, lowers into a crouch and carefully investigates the skull. It grips the horned skull, lifts it, rises and studies it while preserving its visor, antenna, chest panel, proportions and rust patterns. Still holding the skull, it notices a threat toward the distant ruined city, turns toward the skyline, releases the skull naturally back to the ground and settles into the supplied defensive fighting stance. Keep the camera completely locked, and keep the robot, skeleton, skull, terrain, skyline, sun, clouds, lighting and colour stable. Continuous plausible body mechanics and object handling, no cuts, no new characters or creatures, no explosions, no camera movement, no environmental transformation. Native stereo audio: quiet hot wind, faint metal servo movement, dry bone scrape and distant ruined-city ambience; no dialogue or music.",
+      "width": [
+        "132",
+        2
+      ],
+      "height": [
+        "132",
+        3
+      ],
+      "length": [
+        "132",
+        5
+      ],
+      "last_frame": [
+        "132",
+        1
+      ]
+    }
+  },
+  "114": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "h3_robot_timeline\\Start.png"
+    }
+  },
+  "123": {
+    "class_type": "ScorpioFrameBoundaryExtractor",
+    "inputs": {
+      "images": [
+        "10",
+        0
+      ],
+      "selection": "first_and_last"
+    }
+  },
+  "124": {
+    "class_type": "SaveImageAdvanced",
+    "inputs": {
+      "images": [
+        "123",
+        0
+      ],
+      "filename_prefix": "MiniMax_H3_AddGuide_Robot/robot_1guide_boundaries",
+      "format": "png",
+      "format.bit_depth": "8-bit",
+      "format.input_color_space": "sRGB"
+    }
+  },
+  "129": {
+    "class_type": "SpectrumApplyMiniMaxH3",
+    "inputs": {
+      "model": [
+        "6",
+        0
+      ],
+      "enabled": true,
+      "blend_weight": 0.5,
+      "degree": 4,
+      "ridge_lambda": 0.1,
+      "window_size": 2.0,
+      "flex_window": 0.75,
+      "warmup_steps": 5,
+      "tail_actual_steps": 1,
+      "max_history": 8,
+      "debug": false,
+      "history_storage": "system_ram",
+      "bootstrap_first_forecast": true,
+      "anchor_residual_feedback": false,
+      "selective_rollback_correction": false,
+      "offline_smoothing_replay": true,
+      "audio_blend_weight": 0.0,
+      "offline_archive_storage": "system_ram",
+      "model_aware_mode": "off",
+      "model_aware_risk_threshold": 0.65,
+      "model_aware_trust_shrinkage": false,
+      "model_aware_replay_generic_correction": false,
+      "generic_correction_mode": "coordinate_rls",
+      "generic_correction_limiter": "hard_clip",
+      "generic_correction_limit": 0.4,
+      "generic_correction_attenuation": "no_attenuation"
+    }
+  },
+  "130": {
+    "class_type": "PathchSageAttentionKJ",
+    "inputs": {
+      "model": [
+        "129",
+        0
+      ],
+      "sage_attention": "auto",
+      "allow_compile": false
+    }
+  },
+  "131": {
+    "class_type": "SaveAudioAdvanced",
+    "inputs": {
+      "audio": [
+        "23",
+        0
+      ],
+      "filename_prefix": "audio/MiniMax_H3_AddGuide_Robot/robot_1guide",
+      "format": "mp3",
+      "format.quality": "128k"
+    }
+  },
+  "132": {
+    "class_type": "MiniMaxH3CanvasUtility",
+    "inputs": {
+      "aspect_ratio": "9:16 (Portrait Widescreen)",
+      "use_first_frame": true,
+      "use_last_frame": true,
+      "megapixels": "0.20 MP (Fast draft)",
+      "first_crop_position": "centre",
+      "last_crop_position": "centre",
+      "interpolation": "bicubic",
+      "multiple": 32,
+      "duration_seconds": 8.0,
+      "seed": 8282026,
+      "first_frame": [
+        "114",
+        0
+      ],
+      "last_frame": [
+        "127",
+        0
+      ]
+    }
+  },
+  "127": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "h3_robot_timeline\\End.png"
+    }
+  },
+  "159": {
+    "class_type": "MiniMaxH3AddGuide",
+    "inputs": {
+      "positive": [
+        "104",
+        0
+      ],
+      "latent": [
+        "104",
+        1
+      ],
+      "frame_idx": 96,
+      "vae": [
+        "11",
+        0
+      ],
+      "image": [
+        "162",
+        0
+      ]
+    }
+  },
+  "162": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "h3_robot_timeline\\guide2.png"
+    }
+  }
+}

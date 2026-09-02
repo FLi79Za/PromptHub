@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Skills · PromptHub{% endblock %}
+{% block content %}
+<section class="page-header skills-hero">
+  <div><p class="eyebrow">Creative capabilities</p><h1>Skills</h1><p class="notes">Use portable specialist guidance with your local Ollama models. The execution model does the thinking; the target is the format you want.</p></div>
+  <details class="import-skill"><summary class="btn-secondary">Import Skill</summary><form method="post" action="{{ url_for('skills_import') }}"><label>Skill folder or ZIP path<input name="source" required placeholder="A:\Skills\image-prompt-craft"></label><button type="submit">Inspect &amp; Import</button><p class="notes">Import is inspection-only: package scripts are never run.</p></form></details>
+</section>
+<section class="skill-grid">
+{% for skill in skills %}
+<article class="skill-card" data-skill-id="{{ skill.id }}">
+  <div class="skill-card-main">
+    <div class="skill-heading"><div><p class="eyebrow">Installed Skill</p><h2>{{ skill.display_name|replace('-', ' ')|title }}</h2></div><span class="skill-status status-{{ skill.runtime.status|lower }}">{{ skill.runtime.status|replace('_', ' ')|title }}</span></div>
+    <p class="skill-summary">{{ skill.description }}</p>
+    <div class="skill-actions"><button type="button" class="btn-primary open-skill" data-operation="create">Use Skill</button>{% if 'transform' in skill.operations or 'convert' in skill.operations %}<button type="button" class="btn-secondary open-skill" data-operation="{{ 'convert' if 'convert' in skill.operations else 'transform' }}">Transform Prompt</button>{% endif %}</div>
+  </div>
+  <section class="skill-workbench" hidden>
+    <form class="skill-run-form" data-skill-id="{{ skill.id }}">
+      <div class="skill-form-grid">
+        <label>Operation<select name="operation">{% for operation in skill.operations %}<option value="{{ operation }}">{{ operation|title }}</option>{% endfor %}</select></label>
+        <label>Target<select name="target"><option value="">No specific target</option>{% for target in skill.targets %}<option value="{{ target.id }}">{{ target.label }}</option>{% endfor %}</select></label>
+        <label>Execution Model<select name="model" required>{% for model in ollama_models %}<option value="{{ model }}" {% if session.get('ollama_model') == model %}selected{% endif %}>{{ model }}</option>{% endfor %}</select></label>
+      </div>
+      <label class="skill-request-label"><span class="request-label">Creative brief</span><textarea name="request" required placeholder="Describe the result you need"></textarea></label>
+      <div class="skill-run-actions"><button type="submit">Run Skill</button><button type="button" class="btn-secondary close-skill">Close</button><span class="notes status" aria-live="polite"></span></div>
+    </form>
+    <div class="skill-output" hidden><div class="skill-output-heading"><h3>Result</h3><button type="button" class="btn-secondary copy-result">Copy</button></div><pre class="skill-result"></pre><p class="notes skill-provenance"></p></div>
+  </section>
+  <details class="skill-details"><summary>Details</summary>
+    <dl class="skill-detail-grid"><div><dt>Skill ID</dt><dd>{{ skill.name }}</dd></div><div><dt>Version</dt><dd>{{ skill.version or 'Not declared' }}</dd></div><div><dt>Source</dt><dd>{{ skill.source_platform }} / {{ skill.source_type }}</dd></div><div><dt>Trust</dt><dd>{{ skill.trust_state|title }}</dd></div><div><dt>Content hash</dt><dd><code>{{ skill.content_hash }}</code></dd></div><div><dt>Imported</dt><dd>{{ skill.provenance.imported_at }}</dd></div><div><dt>Operations</dt><dd>{{ skill.operations|join(', ')|title }}</dd></div><div><dt>Targets</dt><dd>{% for target in skill.targets %}{{ target.label }}{% if not loop.last %}, {% endif %}{% else %}Skill-defined / free target{% endfor %}</dd></div><div><dt>Dependencies</dt><dd>{% for dep in skill.dependencies %}{{ dep.skill or dep }}{% if not loop.last %}, {% endif %}{% else %}None{% endfor %}</dd></div><div><dt>Capabilities</dt><dd>{{ skill.capabilities|join(', ') or 'None detected' }}</dd></div></dl>
+    <p class="notes">Resources remain progressively loaded. {% if skill.recent_execution %}Last run {{ skill.recent_execution.created_at }} with {{ skill.recent_execution.model }}.{% endif %}</p>
+  </details>
+</article>
+{% else %}<div class="panel empty-state">No Skills installed yet. Import a portable Skill folder or ZIP to begin.</div>{% endfor %}
+</section>
+<script>
+function updateOperation(form) { const operation=form.elements.operation.value, label=form.querySelector('.request-label'); label.textContent=operation==='create'?'Creative brief':operation==='diagnose'?'Prompt to diagnose':'Source prompt'; }
+document.querySelectorAll('.skill-card').forEach(card => {
+  const workbench=card.querySelector('.skill-workbench'), form=card.querySelector('.skill-run-form');
+  card.querySelectorAll('.open-skill').forEach(button => button.addEventListener('click', () => { workbench.hidden=false; form.elements.operation.value=button.dataset.operation; updateOperation(form); form.elements.request.focus(); }));
+  card.querySelector('.close-skill').addEventListener('click', () => workbench.hidden=true);
+  form.elements.operation.addEventListener('change', () => updateOperation(form));
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); const status=form.querySelector('.status'), output=card.querySelector('.skill-output'), result=card.querySelector('.skill-result'), provenance=card.querySelector('.skill-provenance'), button=form.querySelector('button[type="submit"]'); button.disabled=true; status.textContent='Running locally…';
+    const data=new FormData(form), operation=data.get('operation'), role=operation==='create'?'brief':'source';
+    try { const response=await fetch('/api/skills/'+encodeURIComponent(form.dataset.skillId)+'/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation,inputs:[{type:'text',role,content:data.get('request')}],target:data.get('target')||null,model:data.get('model'),parameters:{}})}); const payload=await response.json(); if(!response.ok||!payload.ok) throw new Error(payload.error||'Skill execution failed'); output.hidden=false; result.textContent=payload.result_text||payload.content||JSON.stringify(payload.structured,null,2); provenance.textContent='Used '+payload.skill+' · '+payload.model+' · '+(payload.target?'target '+payload.target+' · ':'')+'resources: '+(payload.resources.join(', ')||'SKILL.md only'); status.textContent='Complete'; } catch(error) { status.textContent=error.message; } finally { button.disabled=false; }
+  });
+  card.querySelector('.copy-result').addEventListener('click', async () => { await navigator.clipboard.writeText(card.querySelector('.skill-result').textContent); window.showToast('Skill result copied'); });
+});
+</script>
+{% endblock %}
