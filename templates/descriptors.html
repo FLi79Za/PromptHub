@@ -1,30 +1,11 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Descriptors</title>
-  <style>
-    body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:20px;}
-    table{border-collapse:collapse;width:100%;}
-    th,td{border-bottom:1px solid #ddd;padding:8px;vertical-align:top;}
-    input,select,button{padding:8px;}
-    .row{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;}
-    pre{white-space:pre-wrap;margin:0;font-family:ui-monospace,Consolas,monospace;}
-  </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}Descriptors · PromptHub{% endblock %}
+{% block content %}
+<section class="builder-page descriptors">
   <h1>Descriptors</h1>
   <p><a href="{{ url_for('index') }}">Home</a> | <a href="{{ url_for('descriptor_packs') }}">Descriptor Packs</a> | <a href="{{ url_for('manage') }}">Manage</a></p>
 
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      <ul>
-        {% for cat,msg in messages %}
-          <li><strong>{{ cat }}</strong>: {{ msg }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-  {% endwith %}
+
 
   <form method="get" class="row">
     <label>Type<br>
@@ -52,7 +33,7 @@
   </ul>
 
   <h2>Saved ({{ descriptors|length }})</h2>
-  <table>
+  <div class="table-scroll" role="region" aria-label="Descriptors table" tabindex="0"><table>
     <thead>
       <tr>
         <th>Title</th>
@@ -76,11 +57,12 @@
               <button type="submit">Delete</button>
             </form>
             |
-            <button type="button" onclick="navigator.clipboard.writeText({{ d['rendered_text']|tojson }});">Copy</button>
+            <button type="button" onclick="navigator.clipboard.writeText({{ d['rendered_text']|tojson|forceescape }});">Copy</button>
           </td>
         </tr>
       {% endfor %}
     </tbody>
-  </table>
-</body>
-</html>
+  </table></div>
+
+</section>
+{% endblock %}

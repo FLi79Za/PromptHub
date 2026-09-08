@@ -3,12 +3,12 @@
   <div class="drop-overlay">Drop image to replace thumbnail</div>
 
   <div class="organise-checkbox" style="display:none; position:absolute; top:10px; left:10px; z-index:10;">
-    <input type="checkbox" class="bulkCheck" name="prompt_ids" value="{{ p.id }}" form="bulkForm" style="transform:scale(1.35);">
+    <input type="checkbox" class="bulkCheck" aria-label="Select {{ p.title }}" name="prompt_ids" value="{{ p.id }}" form="bulkForm" style="transform:scale(1.35);">
   </div>
 
   <div class="card-thumb-area">
     {% if p.thumbnail %}
-      <img class="thumb" src="{{ url_for('serve_thumbnail', prompt_id=p.id) }}" alt="Thumbnail for {{ p.title }}">
+      <img loading="lazy" decoding="async" class="thumb" src="{{ url_for('serve_thumbnail', prompt_id=p.id) }}" alt="Thumbnail for {{ p.title }}">
     {% else %}
       <div class="thumb-placeholder">{{ (p.category or '?')[:1] }}</div>
     {% endif %}
@@ -16,8 +16,8 @@
 
   <div class="prompt-meta">
     <div class="prompt-title-row">
-      <h3 style="margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ p.title }}">{{ p.title }}</h3>
-      <button type="button" class="pin-button {% if p.pinned_at %}pinned{% endif %}" onclick="togglePin(event, {{ p.id }})" aria-label="{% if p.pinned_at %}Unpin{% else %}Pin{% endif %} {{ p.title }}" title="{% if p.pinned_at %}Unpin prompt{% else %}Pin prompt{% endif %}">⌖</button>
+      <h3 style="margin:0; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ p.title }}"><a href="{{ url_for('render_prompt', prompt_id=p.id) }}">{{ p.title }}</a></h3>
+      <button type="button" aria-pressed="{{ 'true' if p.pinned_at else 'false' }}" class="pin-button {% if p.pinned_at %}pinned{% endif %}" onclick="togglePin(event, {{ p.id }})" aria-label="{% if p.pinned_at %}Unpin{% else %}Pin{% endif %} {{ p.title }}" title="{% if p.pinned_at %}Unpin prompt{% else %}Pin prompt{% endif %}">⌖</button>
     </div>
 
     <div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:7px;">
@@ -48,7 +48,7 @@
       <a class="btn-primary" href="{{ url_for('render_prompt', prompt_id=p.id) }}">Use</a>
       <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=p.id, generate=1) }}">Generate</a>
       <button type="button" class="btn-secondary" onclick="copyPrompt(event, {{ p.id }})">Copy</button>
-      <button type="button" class="btn-secondary" onclick="togglePreview({{ p.id }})">Preview</button>
+      <button type="button" class="btn-secondary" aria-expanded="false" aria-controls="preview-{{ p.id }}" onclick="togglePreview({{ p.id }})">Preview</button>
       <a class="btn-secondary" href="{{ url_for('edit_prompt', prompt_id=p.id) }}">Edit</a>
       <form method="post" action="{{ url_for('delete_prompt', prompt_id=p.id) }}" style="display:inline;margin-left:auto;" onsubmit="return confirm('Delete permanently?');">
         <button type="submit" class="btn-danger" aria-label="Delete {{ p.title }}">×</button>

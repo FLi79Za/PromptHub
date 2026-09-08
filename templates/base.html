@@ -6,8 +6,10 @@
   <title>{% block title %}PromptHub{% endblock %}</title>
   <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='prompthub-modern.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='prompthub-polish.css') }}">
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
   <div class="app-shell">
     <header class="topbar">
       <a class="brand" href="{{ url_for('index') }}">
@@ -16,9 +18,9 @@
       </a>
       <nav class="topnav" aria-label="Primary navigation">
         <a href="{{ url_for('index') }}" class="{% if request.endpoint == 'index' %}active{% endif %}">Library</a>
-        <a href="{{ url_for('new_prompt') }}">New</a>
+        <a href="{{ url_for('new_prompt') }}">New prompt</a>
         <a href="{{ url_for('descriptors') }}">Builders</a>
-        <a href="{{ url_for('ai_manage') }}" class="{% if request.endpoint and (request.endpoint == 'ai_manage' or request.endpoint.startswith('ai_')) %}active{% endif %}">AI</a>
+        <a href="{{ url_for('ai_manage') }}" class="{% if request.endpoint and (request.endpoint == 'ai_manage' or request.endpoint.startswith('ai_')) %}active{% endif %}">AI tools</a>
         <a href="{{ url_for('skills_manage') }}" class="{% if request.endpoint and request.endpoint.startswith('skills') %}active{% endif %}">Skills</a>
         <a href="{{ url_for('comfyui_manage') }}" class="{% if request.endpoint and ('comfyui' in request.endpoint or 'generation' in request.endpoint) %}active{% endif %}">Generate</a>
         <a href="{{ url_for('json_sync_page') }}">JSON Sync</a>
@@ -26,22 +28,22 @@
       </nav>
       <div class="top-actions">
         {% if nsfw_unlocked %}
-          <form method="post" action="{{ url_for('nsfw_lock') }}"><button class="icon-button" title="Lock NSFW prompts">◉</button></form>
+          <form method="post" action="{{ url_for('nsfw_lock') }}"><button class="btn-secondary content-lock" title="Hide NSFW prompts" aria-label="Hide NSFW prompts">NSFW: visible</button></form>
         {% else %}
-          <form method="post" action="{{ url_for('nsfw_unlock') }}"><button class="icon-button" title="Unlock NSFW prompts">○</button></form>
+          <form method="post" action="{{ url_for('nsfw_unlock') }}"><button class="btn-secondary content-lock" title="Show NSFW prompts" aria-label="Show NSFW prompts">NSFW: hidden</button></form>
         {% endif %}
       </div>
     </header>
 
     {% with messages = get_flashed_messages() %}
       {% if messages %}
-        <div class="flash-stack">
+        <div class="flash-stack" role="status" aria-live="polite">
           {% for message in messages %}<div class="flash-message">{{ message }}</div>{% endfor %}
         </div>
       {% endif %}
     {% endwith %}
 
-    <main class="page-container">
+    <main class="page-container" id="main-content" tabindex="-1">
       {% block content %}{% endblock %}
     </main>
   </div>
@@ -56,5 +58,6 @@
       window.__phToastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
     };
   </script>
+  <script src="{{ url_for('static', filename='prompthub-polish.js') }}"></script>
 </body>
 </html>
