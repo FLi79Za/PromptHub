@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "prompt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "clarifying_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rationale": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "prompt",
+    "clarifying_questions",
+    "rationale"
+  ],
+  "additionalProperties": false
+}

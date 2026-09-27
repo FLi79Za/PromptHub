@@ -164,7 +164,7 @@ class SkillRuntimeTests(unittest.TestCase):
         self.assertEqual("SKILL_TRUST_REQUIRED", error.exception.code)
 
     def test_safe_update_preserves_local_adapter_and_reports_changed_file(self):
-        imported = import_skill(self.conn, self.root, base_dir=self.temp.name)
+        imported = import_skill(self.conn, self.root, base_dir=self.temp.name, tags=["reviewed", "prompt-craft"])
         self.conn.execute("UPDATE skills SET runtime_config_json=? WHERE id=?", (json.dumps({"instruction_override":"local Qwen adapter"}), imported["skill_id"]))
         incoming = Path(self.temp.name) / "incoming-video"; shutil.copytree(self.root, incoming)
         (incoming / "references" / "minimax-h3.md").write_text("updated MiniMax guidance", encoding="utf-8")
@@ -174,6 +174,8 @@ class SkillRuntimeTests(unittest.TestCase):
         update_skill(self.conn, imported["skill_id"], incoming, base_dir=self.temp.name)
         adapter = json.loads(self.conn.execute("select runtime_config_json from skills where id=?", (imported["skill_id"],)).fetchone()[0])
         self.assertEqual("local Qwen adapter", adapter["instruction_override"])
+        tags = json.loads(self.conn.execute("select tags_json from skills where id=?", (imported["skill_id"],)).fetchone()[0])
+        self.assertEqual(["reviewed", "prompt-craft"], tags)
 
     def test_conflicting_local_portable_source_refuses_update(self):
         imported = import_skill(self.conn, self.root, base_dir=self.temp.name)

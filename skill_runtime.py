@@ -209,16 +209,25 @@ def import_skill(conn, source: str | Path, *, base_dir: str | Path, source_type:
     if existing and existing["locally_modified"]:
         return {"operation": "conflict", "skill": dict(existing), "inspection": info, "reason": "local_modifications"}
     root = _library_root(Path(base_dir)) / info["name"]
-    if root.exists():
-        shutil.rmtree(root)
-    root.mkdir(parents=True)
+    # Stage the inspected package before replacing its destination. Bundled
+    # packages may already live at root, and ZIPs may have a wrapper folder.
     temp: Path | None = None
-    copy_source = source_path
+    copy_source = Path(info["source_root"])
     if source_path.is_file():
         temp = _extract_zip(source_path)
-        copy_source = temp
+        copy_source = next(temp.rglob("SKILL.md")).parent
     try:
-        _copy_checked(copy_source, root)
+        with tempfile.TemporaryDirectory(prefix="prompthub-import-") as staging:
+            staged = Path(staging) / "package"
+            staged.mkdir()
+            _copy_checked(copy_source, staged)
+            library = _library_root(Path(base_dir)).resolve()
+            if root.resolve().parent != library:
+                raise SkillError("Skill destination escapes the library.", "UNSAFE_PATH")
+            if root.exists():
+                shutil.rmtree(root)
+            root.mkdir(parents=True)
+            _copy_checked(staged, root)
     finally:
         if temp is not None:
             shutil.rmtree(temp, ignore_errors=True)
@@ -324,6 +333,13 @@ def skill_supported_operations(skill: dict[str, Any]) -> list[str]:
     configured = adapter.get("supported_operations") or []
     if configured:
         return [str(value).lower() for value in configured if str(value).lower() in SKILL_OPERATIONS]
+    main = Path(str(skill.get("package_path") or "")) / "SKILL.md"
+    if main.is_file():
+        metadata, _ = _frontmatter(main.read_text(encoding="utf-8"))
+        declared = metadata.get("supported_operations")
+        if isinstance(declared, list):
+            return list(dict.fromkeys(str(value).lower() for value in declared
+                                      if str(value).lower() in SKILL_OPERATIONS))
     text = f"{skill.get('name', '')} {skill.get('description', '')}".lower()
     operations = ["create"]
     vocabulary = {
@@ -501,7 +517,7 @@ def update_skill(conn, skill_id: str, source: str | Path, *, base_dir: str | Pat
     if comparison["state"] == "CONFLICT": raise SkillError("Skill update conflicts with local portable-source modifications.", "SKILL_UPDATE_CONFLICT", comparison)
     row = comparison["installed"]
     # Preserve PromptHub-only runtime config/adapters and catalogue identity.
-    result = import_skill(conn, source, base_dir=base_dir, source_type=row["source_type"], source_platform=row["source_platform"])
+    result = import_skill(conn, source, base_dir=base_dir, source_type=row["source_type"], source_platform=row["source_platform"], tags=json.loads(row["tags_json"]))
     conn.execute("UPDATE skills SET runtime_config_json=?, capability_config_json=?, package_baseline_hash=content_hash WHERE id=?", (row["runtime_config_json"], row.get("capability_config_json") or "{}", row["id"]))
     return {"comparison": comparison, "result": result}
 
