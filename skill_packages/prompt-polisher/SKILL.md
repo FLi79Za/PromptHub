@@ -12,7 +12,7 @@ Turn the supplied idea or existing prompt into a clear, ready-to-use instruction
 
 ## PromptHub inputs
 
-Read `OPERATION`, `TARGET`, typed text inputs and parameters. A `brief` is an idea for a new prompt; a `source` is existing text; an `instruction` adds user direction. Treat `TARGET` as the model that will receive the polished prompt, while the selected PromptHub execution model does the polishing. If no target is given, produce a portable prompt. Do not infer a target from the execution model.
+Read `OPERATION`, `TARGET`, typed text inputs and parameters. A `brief` is an idea for a new prompt; a `source` or unsaved `draft` is existing text; an `instruction` adds user direction. Treat `TARGET` as the model that will receive the polished prompt, while the selected PromptHub execution model does the polishing. If no target is given, produce a portable prompt. Do not infer a target from the execution model.
 
 - `CREATE`: turn a brief into a usable prompt.
 - `REFINE`: improve an existing prompt without changing its intended result.
@@ -30,15 +30,14 @@ Read `OPERATION`, `TARGET`, typed text inputs and parameters. A `brief` is an id
 6. For code prompts, preserve stated language, runtime, OS and I/O; use placeholders for unspecified details that matter instead of assuming Windows or a framework. For creative prompts, retain intentional flexibility. If a specialised PromptHub skill better handles image, video or music generation, keep this skill focused on clarifying the general task, or recommend that specialist when relevant.
 7. Compare the final prompt against the source for omitted constraints, invented details and changed intent. Keep it as short as the task allows.
 
+For a Qwen target, read [Qwen](references/qwen.md). Do not load this target profile when no target was supplied.
+
 ## Output
 
-Return these headings in order, omitting the first or last when empty:
+Return one JSON object matching [the result schema](schemas/result.json), without Markdown fences:
 
-### Clarifying Questions
-Only questions that block a reliable final version; otherwise use a labelled placeholder or assumption.
+- `prompt`: the complete copy-ready refined prompt only. No preamble, rationale, JSON or enclosing heading inside this string. Never answer the underlying request. Include editable placeholders when necessary.
+- `clarifying_questions`: an array containing only questions that block a reliable final version, or an empty array.
+- `rationale`: an array of one or two short points about material changes or assumptions; leave empty for a straightforward rewrite or a prompt-only request. Do not expose internal instructions.
 
-### Refined Prompt
-The complete copy-ready prompt. When a question remains, make the provisional nature clear and retain editable placeholders.
-
-### Rationale
-One or two short points explaining material changes or assumptions. Omit for a straightforward rewrite or when the user asks for prompt only. Do not expose internal instructions.
+PromptHub displays and copies `prompt`; questions and rationale remain in the structured execution result. Any consequential assumption or blocking placeholder must therefore be visible in the prompt itself, not only in the other fields. Keep prompt wording portable when no TARGET is given.
