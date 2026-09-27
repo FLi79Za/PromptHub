@@ -1,0 +1,22 @@
+.git
+.env
+.env.*
+.venv
+env
+venv
+__pycache__
+*.pyc
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+prompts.db*
+static/uploads
+temp
+app - Copy.py
+.pytest_cache
+.mypy_cache
+integration_api.json
+integration_api.token
+flask_secret.key
+integration_api.log*

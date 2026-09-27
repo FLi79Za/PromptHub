@@ -1,0 +1,23 @@
+services:
+  prompthub:
+    build: .
+    ports:
+      - "127.0.0.1:${PROMPTHUB_PUBLISHED_PORT:-5000}:5000"
+    environment:
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - database:/data
+      - uploads:/app/static/uploads
+      - skills:/app/skill_packages
+      - workflows:/app/provider_workflows/comfyui_profiles
+      - config:/config
+    restart: unless-stopped
+
+volumes:
+  database:
+  uploads:
+  skills:
+  workflows:
+  config:
