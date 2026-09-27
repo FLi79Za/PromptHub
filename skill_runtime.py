@@ -501,7 +501,7 @@ def update_skill(conn, skill_id: str, source: str | Path, *, base_dir: str | Pat
     if comparison["state"] == "CONFLICT": raise SkillError("Skill update conflicts with local portable-source modifications.", "SKILL_UPDATE_CONFLICT", comparison)
     row = comparison["installed"]
     # Preserve PromptHub-only runtime config/adapters and catalogue identity.
-    result = import_skill(conn, source, base_dir=base_dir, source_type=row["source_type"], source_platform=row["source_platform"])
+    result = import_skill(conn, source, base_dir=base_dir, source_type=row["source_type"], source_platform=row["source_platform"], tags=json.loads(row["tags_json"]))
     conn.execute("UPDATE skills SET runtime_config_json=?, capability_config_json=?, package_baseline_hash=content_hash WHERE id=?", (row["runtime_config_json"], row.get("capability_config_json") or "{}", row["id"]))
     return {"comparison": comparison, "result": result}
 
