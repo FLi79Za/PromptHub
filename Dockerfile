@@ -5,8 +5,7 @@ WORKDIR /app
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py ai_library.py capability_providers.py generation_runtime.py \
-    integration_api.py integration_config.py prompt_service.py skill_runtime.py ./
+COPY *.py ./
 COPY static/ ./static/
 COPY templates/ ./templates/
 COPY skill_packages/ ./skill_packages/
