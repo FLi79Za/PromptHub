@@ -62,6 +62,74 @@ Open in your browser:
 http://127.0.0.1:5000
 ```
 
+## Docker Compose
+
+From the repository root, run `docker compose up --build -d`, then open
+<http://127.0.0.1:5000>. Check startup with `docker compose logs -f prompthub`.
+Stop with `docker compose down`. Avoid `docker compose down -v` unless you intend
+to delete the stored data. Docker Engine with the Compose v2 plugin (or Docker
+Desktop using Linux containers) is required. The image uses Python 3.12.
+
+If port 5000 is already in use, copy `.env.example` to `.env` and set
+`PROMPTHUB_PUBLISHED_PORT=5050`, then open <http://127.0.0.1:5050>.
+`OLLAMA_HOST` is the other optional setting. Neither variable is required;
+defaults are shown in `.env.example`. Local `.env` files are excluded from Git
+and the image build. Only application files are copied into the image.
+
+Compose publishes only to the host loopback address. The application listens on
+`0.0.0.0` **inside** the container so Docker can forward that loopback port.
+The normal `python app.py` launch still binds to loopback. The Integration API
+token, Flask session secret, and settings are generated in the persistent
+`config` volume; keep that volume private. The five named volumes store:
+
+| Volume | Container path | Contents |
+| --- | --- | --- |
+| `database` | `/data` | SQLite `prompts.db` and journal files |
+| `uploads` | `/app/static/uploads` | Thumbnails and generation media |
+| `skills` | `/app/skill_packages` | Imported skill packages |
+| `workflows` | `/app/provider_workflows/comfyui_profiles` | Saved workflow profiles |
+| `config` | `/config` | Integration API secrets, settings, logs |
+
+On first creation, Docker initialises the skills and workflows volumes from the
+files bundled in the image. Existing installations are **not** migrated
+automatically. Back up your local database, uploads, skills, workflow profiles
+and `%LOCALAPPDATA%\PromptHub` configuration before copying them into the
+corresponding volumes. Stop both the source application and the container before
+copying SQLite data, or use SQLite's backup API for a consistent source snapshot;
+do not copy just a live database while WAL writes are in progress. Imported
+skills in an existing database may contain absolute package paths; inspect and
+update those records for `/app/skill_packages` when migrating from another host.
+Existing named volumes are reused across rebuilds, so updated bundled skills
+and profiles are not automatically copied over an existing volume. Review those
+updates separately. Keep using the same Compose project name and directory to
+reuse the same named volumes.
+
+Ollama and ComfyUI run separately. On Docker Desktop, the default Ollama URL
+points to `http://host.docker.internal:11434`. Set `OLLAMA_HOST` in your shell
+or a local `.env` file to an address reachable **from the container** if needed.
+On Linux, Compose maps `host.docker.internal` to the host gateway, but a service
+bound only to host loopback may require its own safe networking configuration.
+Configure ComfyUI server URLs in PromptHub to addresses reachable from the
+container as well; for a host service on Docker Desktop, for example, use
+`http://host.docker.internal:8188`. `localhost` there means the PromptHub container. Neither
+external service is installed or published by this Compose file.
+
+Smoke check (adjust the URL if you changed the published port):
+
+```sh
+docker compose config
+docker compose up --build -d
+curl --fail http://127.0.0.1:5000/
+docker compose exec prompthub python -c "from app import DB_PATH; print(DB_PATH, DB_PATH.exists())"
+docker compose restart prompthub
+```
+
+Create a disposable prompt with a thumbnail before restarting and verify both
+afterward. To test separately from an existing deployment, use a distinct project
+name (`docker compose -p prompthub-smoke ...`) on every command and an unused
+`PROMPTHUB_PUBLISHED_PORT`. This gives the smoke deployment separate named volumes.
+Stop it with `docker compose -p prompthub-smoke down`; retain the volumes.
+
 ## Local Integration API v1
 
 PromptHub includes a local-only, versioned JSON API at `/api/integration/v1` for future ChatGPT app/plugin integration. It supports authenticated prompt search, retrieval, creation, optimistic-concurrency updates, related versions, organisation, dry runs, metadata, and integration change history. Existing UI and browser-extension routes remain unchanged.
@@ -79,7 +147,7 @@ View non-secret status or explicitly retrieve the local bearer token:
 .\env\Scripts\python.exe .\tools\manage_integration_api.py show-token
 ```
 
-The token, Flask session secret, API settings, and integration logs are stored outside the repository in `%LOCALAPPDATA%\PromptHub` by default. The server remains bound to `127.0.0.1` unless an allowed local-loopback value is configured.
+The token, Flask session secret, API settings, and integration logs are stored outside the repository in `%LOCALAPPDATA%\PromptHub` by default. Native launches remain loopback-only. The container explicitly opts into `0.0.0.0` internally, with Compose publishing only on host loopback as described above.
 
 See [Integration API v1 documentation](docs/INTEGRATION_API_V1.md) for configuration, security assumptions, endpoint examples, errors, rollback, and future ChatGPT integration guidance.
 

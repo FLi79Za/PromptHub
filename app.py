@@ -122,7 +122,7 @@ def inject_global_flags():
         "ollama_models": ollama_models_cached(),
     }
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "prompts.db"
+DB_PATH = Path(os.environ.get("PROMPTHUB_DB_PATH", str(BASE_DIR / "prompts.db"))).expanduser()
 TEMP_DIR = BASE_DIR / "temp"
 TEMP_DIR.mkdir(exist_ok=True)
 
@@ -268,6 +268,7 @@ def column_exists(conn: sqlite3.Connection, table: str, column: str) -> bool:
 
 
 def init_db() -> None:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
     try:
@@ -4562,7 +4563,10 @@ if __name__ == "__main__":
     configured_port = INTEGRATION_RUNTIME_CONFIG.get("port")
     port = int(os.environ.get("PROMPTHUB_PORT", configured_port or find_free_port()))
     host = os.environ.get("PROMPTHUB_HOST", INTEGRATION_RUNTIME_CONFIG.get("host") or "127.0.0.1")
-    if host not in {"127.0.0.1", "localhost", "::1"}:
+    allowed_hosts = {"127.0.0.1", "localhost", "::1"}
+    if os.environ.get("PROMPTHUB_CONTAINER") == "1":
+        allowed_hosts.add("0.0.0.0")
+    if host not in allowed_hosts:
         host = "127.0.0.1"
 
     print(f"Starting PromptHub on http://{host}:{port}")

@@ -5,6 +5,12 @@ __pycache__/
 # Virtual environment
 env/
 venv/
+.venv/
+
+# Local Compose settings may contain credentials.
+.env
+.env.*
+!.env.example
 
 # Local database
 prompts.db
