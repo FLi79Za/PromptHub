@@ -23,6 +23,8 @@ python tools/prompt_craft_promotion.py stage image-prompt-craft finding.json .\s
 
 Read the staged reference, the `.promotion.json` manifest, and the PromptHub comparison. The command copies the whole installed package, adds one new reference, and refuses removals, modifications, local conflicts or an existing target filename. The copy preserves all installed content. If an existing reference needs editing, handle its merge separately by hand. Do not treat a `NEWER` label alone as approval.
 
+Choose a new staging directory outside the installed skill package. Staging refuses a destination inside that package or an existing sibling `.promotion.json` manifest, preserving installed files and earlier reviews.
+
 After review, run a **separate** command with the SHA-256 printed by `stage`:
 
 ```powershell

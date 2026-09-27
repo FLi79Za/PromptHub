@@ -49,6 +49,11 @@ def stage(base, token, skill, finding, directory):
     if not (source / "SKILL.md").is_file():
         raise RuntimeError("Installed skill package is unavailable on this computer")
     directory = Path(directory).resolve()
+    if directory == source or source in directory.parents:
+        raise ValueError("Staging directory must be outside the installed skill package")
+    manifest_path = directory.parent / (directory.name + ".promotion.json")
+    if manifest_path.exists():
+        raise FileExistsError(manifest_path)
     if directory.exists():
         raise FileExistsError(directory)
     shutil.copytree(source, directory, symlinks=False)
@@ -66,7 +71,8 @@ def stage(base, token, skill, finding, directory):
     manifest = {"skill": skill, "source": str(directory), "reference": target.as_posix(), "sha256": digest,
                 "discovery_id": record["discovery_id"], "revision": record["revision"],
                 "installed_hash": installed["content_hash"]}
-    (directory.parent / (directory.name + ".promotion.json")).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    with manifest_path.open("x", encoding="utf-8") as output:
+        output.write(json.dumps(manifest, indent=2))
     return manifest
 
 

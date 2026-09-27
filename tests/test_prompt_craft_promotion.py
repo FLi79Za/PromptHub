@@ -1,5 +1,4 @@
 """Smoke test for the manual promotion boundary; no live PromptHub needed."""
-import hashlib
 import json
 import tempfile
 import unittest
@@ -10,6 +9,37 @@ from tools.prompt_craft_promotion import promote, stage
 
 
 class PromotionSmokeTest(unittest.TestCase):
+    def test_unsafe_staging_destinations_leave_installed_package_untouched(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            installed = root / "installed"
+            installed.mkdir()
+            original = installed / "SKILL.md"
+            original.write_text("Original guidance", encoding="utf-8")
+            finding = root / "finding.json"
+            finding.write_text(json.dumps({"discovery_id": "real-123", "revision": 2,
+                "release": "v2", "primary_source": "https://example.org/release",
+                "target_reference": "references/example-v2.md", "approved_text": "Reviewed guidance."}), encoding="utf-8")
+            manifest = root / "stage.promotion.json"
+            manifest.write_text("Existing reviewed manifest", encoding="utf-8")
+
+            def fake_request(base, token, method, path, payload=None):
+                if path == "/health":
+                    return {"availability": {"write": True}}
+                self.assertEqual((method, path), ("GET", "/skills/skill"))
+                return {"package_path": str(installed), "content_hash": "old-hash"}
+
+            with patch("tools.prompt_craft_promotion.request", side_effect=fake_request), \
+                    patch("tools.prompt_craft_promotion.shutil.copytree") as copy:
+                for destination, error in ((installed, ValueError),
+                        (installed / "stage", ValueError), (root / "stage", FileExistsError)):
+                    with self.subTest(destination=destination), self.assertRaises(error):
+                        stage("local", "token", "skill", finding, destination)
+                copy.assert_not_called()
+            self.assertEqual(list(installed.iterdir()), [original])
+            self.assertEqual(original.read_text(encoding="utf-8"), "Original guidance")
+            self.assertEqual(manifest.read_text(encoding="utf-8"), "Existing reviewed manifest")
+
     def test_stage_then_explicit_promotion(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
