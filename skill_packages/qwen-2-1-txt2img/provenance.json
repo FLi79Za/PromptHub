@@ -1,0 +1,12 @@
+{
+  "version": "1.0.0",
+  "derived_from": "Codex image-prompt-craft",
+  "source_reference_sha256": "957e43ba154cfb2618d842e0aec09933eba34d4b29f0eacac7e3c790edce755a",
+  "knowledge_record_ids": [
+    "6254f190e814614988f0cbe6e6c2bccc4c8553d4f6d2ea6adab3d57cb9ae2d70",
+    "b931fee683dca4f661edccd54906366d121d18a19e9ed16ada58f3c009deb854",
+    "371cac7a78ee3dc52418cd9ec049b97fd7c02ac6a78e9d9a6f19321654ede5f9"
+  ],
+  "scope": "text-to-image",
+  "note": "The linked model reference is bundled unchanged. Runtime does not need the original skill."
+}

@@ -461,6 +461,40 @@ class IntegrationApiV1Tests(unittest.TestCase):
         for text in (b"Apply Skill", b"Inline draft assistance", b"Replace Draft", b"Insert Below", b"role:'draft'"):
             self.assertIn(text, page.data)
 
+    def test_obscure_style_compiler_runs_for_unsaved_and_current_saved_drafts(self):
+        skill_root = Path(self.temp_dir.name) / "image-prompt-craft"
+        (skill_root / "references").mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text("---\nname: image-prompt-craft\ndescription: Create, convert, refine and diagnose image prompts.\n---\nCompile styles and use model guidance.", encoding="utf-8")
+        (skill_root / "references" / "core-patterns.md").write_text("CORE", encoding="utf-8")
+        (skill_root / "references" / "ideogram-4.md").write_text("IDEOGRAM", encoding="utf-8")
+        (skill_root / "references" / "obscure-style-compiler.md").write_text("# Compiler\n\n## Curated signature library\n\n### Alternative photographic processes\n- **Cyanotype**: contact-print logic, Prussian blue field, pale silhouettes, matte paper and crisp exposure boundaries.\n", encoding="utf-8")
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            imported = import_skill(conn, skill_root, base_dir=self.temp_dir.name)
+            conn.execute("UPDATE skills SET runtime_config_json=? WHERE id=?", ('{"supported_operations":["convert","refine"]}', imported["skill_id"]))
+            conn.commit()
+        seen = []
+        prompthub.ollama_list_models = lambda: ["qwen-test"]
+        prompthub.ollama_generate = lambda **kwargs: seen.append(kwargs["prompt"]) or "compiled result"
+        transient = self.client.post("/api/skills/image-prompt-craft/run", json={
+            "operation": "convert", "target": "ideogram_4", "model": "qwen-test",
+            "inputs": [{"type": "text", "role": "draft", "content": "unsaved botanical poster"}],
+            "parameters": {"style": "cyanotype"},
+        })
+        self.assertEqual(200, transient.status_code, transient.get_json())
+        data = transient.get_json()
+        self.assertIsNone(data["source_prompt_id"])
+        self.assertIn("references/obscure-style-compiler.md", data["resources"])
+        self.assertEqual("Cyanotype", data["parameters"]["style_compilation"]["canonical_name"])
+        saved_draft = self.client.post("/api/skills/image-prompt-craft/run", json={
+            "operation": "refine", "source_prompt_id": self.fixture_id, "model": "qwen-test",
+            "inputs": [{"type": "text", "role": "draft", "content": "CURRENT UNSAVED EDIT"}],
+            "parameters": {"style": "cyanotype"},
+        })
+        self.assertEqual(200, saved_draft.status_code, saved_draft.get_json())
+        self.assertIn("CURRENT UNSAVED EDIT", seen[-1])
+        self.assertNotIn("Fixture content searchable needle", seen[-1])
+
 
 if __name__ == "__main__":
     unittest.main()

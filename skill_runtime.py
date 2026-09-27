@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from capability_providers import CapabilityRegistry, ProviderError
+from style_compiler import RESOURCE_PATH as STYLE_COMPILER_RESOURCE, StyleCompilerError, compile_style_request
 
 SKILL_SCHEMA_VERSION = 1
 MAX_FILES = 2000
@@ -127,19 +128,21 @@ def inspect_skill(source: str | Path) -> dict[str, Any]:
         if len(skill_files) != 1:
             raise SkillError("Skill package must contain exactly one SKILL.md.", "INVALID_SKILL")
         main = skill_files[0]
+        package_root = main.parent
         metadata, body = _frontmatter(main.read_text(encoding="utf-8"))
-        name = str(metadata.get("name") or root.name).strip()
+        name = str(metadata.get("name") or package_root.name).strip()
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,99}", name):
             raise SkillError("Skill name is missing or invalid.", "INVALID_SKILL")
-        files = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+        files = sorted(p.relative_to(package_root).as_posix() for p in package_root.rglob("*") if p.is_file())
+        file_hashes = {p.relative_to(package_root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in package_root.rglob("*") if p.is_file()}
         resources = [f for f in files if f != "SKILL.md" and not f.startswith(".prompthub/")]
         capabilities = sorted({cap for cap in CAPABILITIES if re.search(rf"\b{re.escape(cap.replace('_', ' '))}\b|{re.escape(cap)}", body, re.I)})
         return {"name": name, "display_name": str(metadata.get("display_name") or name),
                 "description": str(metadata.get("description") or "").strip(),
                 "version": str(metadata.get("version") or "").strip() or None,
                 "metadata": metadata, "files": files, "resources": resources,
-                "capabilities": capabilities, "content_hash": _hash_tree(root),
-                "skill_markdown": body, "source_root": str(root)}
+                "capabilities": capabilities, "content_hash": _hash_tree(package_root),
+                "file_hashes": file_hashes, "skill_markdown": body, "source_root": str(package_root)}
     finally:
         if temp is not None:
             shutil.rmtree(temp, ignore_errors=True)
@@ -215,7 +218,10 @@ def import_skill(conn, source: str | Path, *, base_dir: str | Path, source_type:
     copy_source = Path(info["source_root"])
     if source_path.is_file():
         temp = _extract_zip(source_path)
-        copy_source = next(temp.rglob("SKILL.md")).parent
+        skill_files = list(temp.rglob("SKILL.md"))
+        if len(skill_files) != 1:
+            raise SkillError("Skill package must contain exactly one SKILL.md.", "INVALID_SKILL")
+        copy_source = skill_files[0].parent
     try:
         with tempfile.TemporaryDirectory(prefix="prompthub-import-") as staging:
             staged = Path(staging) / "package"
@@ -260,6 +266,7 @@ def list_skills(conn, query: str = "") -> list[dict[str, Any]]:
             item["runtime"] = {"status": "BLOCKED", "reason": exc.code}
         item["operations"] = skill_supported_operations(item)
         item["targets"] = discover_skill_targets(item)
+        item["features"] = (["style_compiler"] if (Path(item["package_path"]) / STYLE_COMPILER_RESOURCE).is_file() else [])
         latest = conn.execute("SELECT id,model,resources_json,status,created_at FROM skill_execution_traces WHERE skill_id=? ORDER BY created_at DESC LIMIT 1", (item["id"],)).fetchone()
         item["recent_execution"] = ({**dict(latest), "resources": json.loads(latest["resources_json"] or "[]")} if latest else None)
         result.append(item)
@@ -295,14 +302,21 @@ def _route_resources(root: Path, body: str, request: str, parameters: dict[str, 
     query = f"{target} {request}".lower()
     files = [p for p in root.joinpath("references").rglob("*") if p.is_file()] if root.joinpath("references").exists() else []
     selected: list[str] = []
+    generic_tokens = {"image", "images", "model", "models", "prompt", "prompts", "reference", "references", "style", "styles", "guide", "guidance"}
+    if parameters.get("style_compilation"):
+        for supporting in ("references/core-patterns.md", STYLE_COMPILER_RESOURCE):
+            if (root / supporting).is_file():
+                selected.append(supporting)
     for path in sorted(files):
         stem = path.stem.lower().replace("_", "-")
-        tokens = set(re.findall(r"[a-z0-9]+", stem))
-        query_tokens = {token for token in re.findall(r"[a-z0-9]+", query) if not token.isdigit()}
+        tokens = set(re.findall(r"[a-z0-9]+", stem)) - generic_tokens
+        query_tokens = {token for token in re.findall(r"[a-z0-9]+", query) if not token.isdigit()} - generic_tokens
         semantic = (("action", "choreography") if "fight" in query_tokens or "action" in query_tokens else ())
         lyric_context = bool(tokens & {"lyrics", "lyric", "structuring"} and query_tokens & {"lyrics", "lyric", "verse", "chorus", "bridge", "hook", "cadence", "singable", "song"})
         if tokens & query_tokens or set(semantic) & tokens or lyric_context:
-            selected.append(path.relative_to(root).as_posix())
+            relative = path.relative_to(root).as_posix()
+            if relative not in selected:
+                selected.append(relative)
     # The main skill can declare an explicit model/resource mapping in headings.
     for match in re.finditer(r"(?:resource|reference)\s*[:=]\s*([^\s]+)", body, re.I):
         candidate = match.group(1).strip("`[]()")
@@ -371,7 +385,7 @@ def discover_skill_targets(skill: dict[str, Any]) -> list[dict[str, str]]:
     references = root / "references"
     if not references.is_dir():
         return []
-    generic = {"core", "common", "source", "sources", "local", "model-profile-template", "portable-llm-prompts", "import-policy", "knowledge-updates", "update-schema"}
+    generic = {"core", "common", "source", "sources", "local", "model-profile-template", "portable-llm-prompts", "import-policy", "knowledge-updates", "update-schema", "obscure-style-compiler"}
     targets: list[dict[str, str]] = []
     for path in sorted(references.glob("*.md")):
         stem = path.stem.lower()
@@ -500,8 +514,7 @@ def compare_skill(conn, skill_id: str, source: str | Path) -> dict[str, Any]:
     if not row: raise SkillError("Skill was not found.", "SKILL_NOT_FOUND")
     incoming = inspect_skill(source); root = Path(row["package_path"])
     local_files = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in root.rglob("*") if p.is_file() and ".prompthub" not in p.parts}
-    source_root = Path(incoming["source_root"])
-    incoming_files = {p.relative_to(source_root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in source_root.rglob("*") if p.is_file()}
+    incoming_files = dict(incoming.get("file_hashes") or {})
     added, removed = sorted(set(incoming_files)-set(local_files)), sorted(set(local_files)-set(incoming_files))
     modified = sorted(k for k in set(local_files)&set(incoming_files) if local_files[k] != incoming_files[k])
     baseline = row["package_baseline_hash"] or row["content_hash"]
@@ -540,6 +553,12 @@ def run_skill(conn, skill_id: str, request: str, model: str, parameters: dict[st
     if skill["id"] in _stack: raise SkillError("Circular Skill dependency detected.", "CIRCULAR_DEPENDENCY")
     execution = normalise_skill_execution(operation=operation, inputs=inputs, request=request, target=target, parameters=parameters)
     operation, inputs, target, parameters = execution["operation"], execution["inputs"], execution["target"], execution["parameters"]
+    try:
+        style_profile = compile_style_request(root, _execution_request_text(operation, inputs, target), parameters)
+    except StyleCompilerError as exc:
+        raise SkillError(str(exc), "INVALID_STYLE_REQUEST") from exc
+    if style_profile:
+        parameters["style_compilation"] = style_profile
     if operation not in skill_supported_operations(skill):
         raise SkillError("This Skill does not support the requested operation.", "UNSUPPORTED_SKILL_OPERATION", {"operation": operation, "supported": skill_supported_operations(skill)})
     request = _execution_request_text(operation, inputs, target)
@@ -565,6 +584,8 @@ def run_skill(conn, skill_id: str, request: str, model: str, parameters: dict[st
         context = [f"USER REQUEST:\n{request}", f"PARAMETERS:\n{json.dumps(parameters, sort_keys=True)}"]
         if dependent_results: context.append("DEPENDENT SKILL RESULTS (validated operational records):\n" + json.dumps([{k: v for k, v in item.items() if k in {"skill", "structured", "content", "resources", "execution_id"}} for item in dependent_results], ensure_ascii=False))
         if resources: context.append("RELEVANT SKILL RESOURCES:\n" + "\n\n".join(f"[{r['path']}]\n{r['content']}" for r in resources))
+        if parameters.get("style_compilation"):
+            context.append("EXECUTION DIRECTIVE — TASK TO COMPLETE NOW:\n" + request + "\n\nThe task above is complete enough to execute. Use the canonical style profile and selected target-model guidance. Do not acknowledge the references, describe readiness, ask for information already present, or return a tutorial. Return the finished Skill result in the portable Skill's existing output format.")
         budget = int(adapter.get("context_budget_chars") or parameters.get("context_budget_chars") or 30000)
         prompt = "\n\n---\n\n".join(context)
         if len(system) + len(prompt) > budget: raise SkillError("Skill execution exceeds the configured local-model context budget.", "CONTEXT_BUDGET_EXCEEDED", {"budget": budget, "required": len(system)+len(prompt)})

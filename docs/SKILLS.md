@@ -44,7 +44,7 @@ Safe maintenance is provided by `compare_skill` and `update_skill`: package hash
 
 ## Skill operations and prompt derivations
 
-The shared execution contract now accepts `operation`, typed `inputs[]`, `target`, the local Ollama `model`, `parameters`, and an optional `source_prompt_id`. `CREATE` requires a text input with role `brief`; `TRANSFORM`, `CONVERT`, `REFINE`, and `DIAGNOSE` require role `source`. The legacy `request` field remains compatible and maps to a `CREATE` brief. Text is the only enabled input type in this phase; image, file, audio, and video inputs return `UNSUPPORTED_SKILL_INPUT_TYPE` instead of being ignored.
+The shared execution contract now accepts `operation`, typed `inputs[]`, `target`, the local Ollama `model`, `parameters`, and an optional `source_prompt_id`. `CREATE` requires a text input with role `brief`; `TRANSFORM`, `CONVERT`, `REFINE`, and `DIAGNOSE` accept role `source` or transient role `draft`. A draft is always authoritative over the last saved database text. The legacy `request` field remains compatible and maps to a `CREATE` brief. Text is the only enabled input type in this phase; image, file, audio, and video inputs return `UNSUPPORTED_SKILL_INPUT_TYPE` instead of being ignored.
 
 Operations communicate task semantics to the selected portable Skill; PromptHub does not contain model-specific prompt-writing rules. Targets are read from PromptHub-local target/adapter metadata when available and otherwise discovered from model-profile resources. Choosing `ideogram_4`, `flux_2`, or `minimax_h3` continues to drive deterministic progressive resource selection, so unrelated profiles remain outside the Ollama context.
 
@@ -64,3 +64,25 @@ Example conversion request:
 ```
 
 After reviewing the returned `result_text`, save it non-destructively with the returned `execution_id`. The source prompt and any Flux/Ideogram derivatives remain independently editable while retaining the same direct lineage.
+
+## Obscure-style compiler
+
+Portable Skills can expose the `style_compiler` feature by including `references/obscure-style-compiler.md`. PromptHub parses only the curated signature library in that resource; the application does not own or duplicate the style catalogue. When a request names a curated style, or supplies `parameters.style`, the runtime builds a canonical profile containing classification, confidence, observable signature, seven visual/material attribute groups, invariants, and source provenance. That profile is added to the normal execution parameters before the selected model adapter runs.
+
+Progressive loading adds `core-patterns.md`, `obscure-style-compiler.md`, and only the selected model reference. The compiler reference is supporting knowledge and is excluded from target discovery. Requests without a recognised style or explicit style parameter follow the existing execution path unchanged.
+
+Unknown and invented styles are not assigned invented historical facts. PromptHub retains supplied medium, process, era, region, references, and visible traits as decomposition context, marks unsupported interpretations uncertain, and asks the Skill/model to express observable behaviour. Edit executions carry explicit invariants such as identity, anatomy, pose, composition, framing, required text, object geometry, and reference roles. Generic negative prompts and quality-token lists remain prohibited by the compiler contract.
+
+Example transient conversion:
+
+```json
+{
+  "operation": "convert",
+  "inputs": [{"type": "text", "role": "draft", "content": "A botanical field guide poster"}],
+  "target": "ideogram_4",
+  "model": "qwen3.5:9b",
+  "parameters": {"style": "cyanotype"}
+}
+```
+
+The resulting trace records the canonical style profile and the exact Skill resources used. Saving remains optional and rendering is a separate explicit action.

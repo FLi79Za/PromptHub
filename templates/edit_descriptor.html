@@ -1,31 +1,11 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>{% if mode=='new' %}New{% else %}Edit{% endif %} Descriptor</title>
-  <style>
-    body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:20px;}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;}
-    label{display:block;}
-    select,input,textarea,button{padding:8px;width:100%;}
-    textarea{min-height:160px;font-family:ui-monospace,Consolas,monospace;}
-    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;}
-    .card{border:1px solid #ddd;border-radius:8px;padding:12px;}
-  </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block title %}{% if mode=='new' %}New{% else %}Edit{% endif %} Descriptor · PromptHub{% endblock %}
+{% block content %}
+<section class="builder-page edit_descriptor">
   <h1>{% if mode=='new' %}New{% else %}Edit{% endif %} Descriptor</h1>
   <p><a href="{{ url_for('descriptors', type=pack['pack_type']) }}">Back to descriptors</a></p>
 
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-      <ul>
-        {% for cat,msg in messages %}
-          <li><strong>{{ cat }}</strong>: {{ msg }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
-  {% endwith %}
+
 
   <form method="post" id="descForm">
     <input type="hidden" name="pack_id" value="{{ pack['id'] }}">
@@ -114,5 +94,6 @@ function randomiseAll(){
 document.getElementById('template_key').addEventListener('change', updatePreview);
 updatePreview();
 </script>
-</body>
-</html>
+
+</section>
+{% endblock %}

@@ -3,7 +3,9 @@
 {% block content %}
 <div class="layout-wrapper" style="display: grid; grid-template-columns: 240px 1fr; gap: 2rem; align-items: start;">
 
-  <aside class="sidebar">
+  <aside class="sidebar" aria-label="Saved views and builders">
+    <details class="sidebar-sections" open>
+    <summary>Saved views &amp; builders</summary>
     <div style="display:flex; justify-content:space-between; align-items:center;">
       <h3 style="margin:0;">Views</h3>
     </div>
@@ -17,7 +19,7 @@
         <li style="margin-bottom:0.5rem; display:flex; gap:0.25rem;">
           <a href="/?{{ view.query_params }}" class="btn-secondary" style="display:block; flex:1; text-align:left; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ view.name }}</a>
           <form method="post" action="{{ url_for('delete_view', view_id=view.id) }}" onsubmit="return confirm('Delete view?');">
-            <button type="submit" style="padding: 0.5rem; font-size: 0.8em;">&times;</button>
+            <button type="submit" class="view-delete" aria-label="Delete saved view {{ view.name }}" style="padding: 0.5rem; font-size: 0.8em;">&times;</button>
           </form>
         </li>
       {% endfor %}
@@ -46,12 +48,13 @@
 
     <form method="post" action="{{ url_for('save_view') }}" style="margin-top:1rem;">
       <input type="hidden" name="query_string" value="{{ request.query_string.decode() }}">
-      <label style="font-size:0.85em;">Save current filters as:</label>
+      <label for="viewName" style="font-size:0.85em;">Save current filters as:</label>
       <div style="display:flex; gap:0.25rem; margin-top:0.25rem;">
-        <input type="text" name="view_name" placeholder="e.g. Portrait Flux" required style="width:100%; font-size:0.9em;">
-        <button type="submit" style="padding:0 0.5rem;">+</button>
+        <input type="text" id="viewName" name="view_name" placeholder="e.g. Portrait Flux" required style="width:100%; font-size:0.9em;">
+        <button type="submit" style="padding:0 0.5rem;" aria-label="Save current view">+</button>
       </div>
     </form>
+    </details>
   </aside>
 
   <section style="min-width:0;">
@@ -66,16 +69,16 @@
     <div class="library-hero">
       <div>
         <h1>Prompt Library</h1>
-        <p>{{ total_items }} matching prompts. Pins stay at the top across every sort mode.</p>
+        <p>Find, organise and reuse your best prompts.</p>
       </div>
       <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;">
         <div class="view-switcher" aria-label="Library view">
-          <button type="button" id="gridViewButton" title="Grid view">▦</button>
-          <button type="button" id="compactViewButton" title="Compact view">☰</button>
+          <button type="button" id="gridViewButton" title="Grid view" aria-pressed="true">Grid</button>
+          <button type="button" id="compactViewButton" title="Compact view" aria-pressed="false">List</button>
         </div>
         <a class="btn-primary" href="{{ url_for('new_prompt') }}">+ New Prompt</a>
         <a class="btn-secondary" href="{{ url_for('import_prompt') }}">Import</a>
-        <button type="button" class="btn-secondary" id="toggleOrganise">Organise</button>
+        <button type="button" class="btn-secondary" id="toggleOrganise" aria-controls="organisePanel" aria-expanded="false">Organise</button>
       </div>
     </div>
 
@@ -86,9 +89,36 @@
       <div class="stat-card"><strong>{{ library_stats.categories }}</strong><span>Categories</span></div>
     </div>
 
-    <div class="random-category-panel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1rem; border:1px solid #2b2b2b; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+    <form method="get" class="filters" id="filterForm" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1.5rem;">
+      <div class="search-row">
+        <label class="search-field" for="librarySearch">Search library
+          <input id="librarySearch" type="search" name="q" value="{{ q|default('') }}" placeholder="Search prompts…" aria-keyshortcuts="/">
+        </label>
+        <button type="submit" class="btn-primary">Search</button>
+        <a class="btn-secondary" href="{{ url_for('index') }}">Reset</a>
+      </div>
+      {% if view_family %}<input type="hidden" name="view_family" value="{{ view_family }}">{% endif %}
+      <div class="filter-primary">
+        <label>Category<select name="category"><option value="all">All categories</option>{% for c in categories %}<option value="{{ c }}" {% if active_category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select></label>
+        <label>Tool<select name="tool"><option value="all">All tools</option>{% for t in tools %}<option value="{{ t }}" {% if active_tool == t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></label>
+        <label>Sort by<select name="sort_by"><option value="updated_at" {% if sort_by == 'updated_at' %}selected{% endif %}>Recently updated</option><option value="recently_used" {% if sort_by == 'recently_used' %}selected{% endif %}>Recently used</option><option value="frequently_used" {% if sort_by == 'frequently_used' %}selected{% endif %}>Most used</option></select></label>
+        <input type="hidden" name="sort_dir" value="desc">
+        <label class="pin-filter"><input type="checkbox" name="pinned" value="1" {% if pinned_only %}checked{% endif %}> Pinned only</label>
+      </div>
+      <details class="advanced-filters" {% if q_not or active_group != 'all' or active_tag != 'all' %}open{% endif %}>
+        <summary>More filters{% if q_not or active_group != 'all' or active_tag != 'all' %} · active{% endif %}</summary>
+        <div class="filter-secondary">
+          <label>Exclude words<input type="text" name="q_not" value="{{ q_not|default('') }}" placeholder="Words to leave out"></label>
+          <label>Group<select name="group"><option value="all">All groups</option>{% for g in groups %}<option value="{{ g.id }}" {% if active_group|string == g.id|string %}selected{% endif %}>{{ g.name }}</option>{% endfor %}</select></label>
+          <label>Tag<select name="tag"><option value="all">All tags</option>{% for t in all_tags %}<option value="{{ t }}" {% if active_tag == t %}selected{% endif %}>{{ t }}</option>{% endfor %}</select></label>
+        </div>
+      </details>
+      <p class="search-help">Press <kbd>/</kbd> to search. Choose filters, then press Search to apply.</p>
+    </form>
+
+    <details class="random-category-panel" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1rem; border:1px solid #2b2b2b; ">
+      <summary>Explore a random prompt</summary>
       <div>
-        <strong>Random prompt by category</strong>
         <div style="opacity:0.68; font-size:0.88em; margin-top:0.15rem;">This ignores the current search/filter view and picks from the selected category only.</div>
       </div>
 
@@ -106,62 +136,10 @@
           <a class="btn-secondary" href="{{ url_for('random_prompt_redirect', category=c) }}" style="font-size:0.9em; text-decoration:none;">Random {{ c }}</a>
         {% endfor %}
       </div>
-    </div>
-
-    <form method="get" class="filters" id="filterForm" style="background:#1a1a1a; padding:1rem; border-radius:8px; margin-bottom:1.5rem;">
-      <div style="display:flex; gap:0.75rem; flex-wrap:wrap;">
-        <div style="flex:1; min-width:180px;">
-          <input type="text" name="q" value="{{ q|default('') }}" placeholder="Search..." style="width:100%;">
-        </div>
-        <div style="flex:1; min-width:180px;">
-          <input type="text" name="q_not" value="{{ q_not|default('') }}" placeholder="Exclude..." style="width:100%; border-color:#d32f2f;">
-        </div>
-
-        <select name="category">
-          <option value="all">All Categories</option>
-          {% for c in categories %}
-            <option value="{{ c }}" {% if active_category == c %}selected{% endif %}>{{ c }}</option>
-          {% endfor %}
-        </select>
-
-        <select name="tool">
-          <option value="all">All Tools</option>
-          {% for t in tools %}
-            <option value="{{ t }}" {% if active_tool == t %}selected{% endif %}>{{ t }}</option>
-          {% endfor %}
-        </select>
-
-        <select name="group">
-          <option value="all">All Groups</option>
-          {% for g in groups %}
-            <option value="{{ g.id }}" {% if active_group|string == g.id|string %}selected{% endif %}>{{ g.name }}</option>
-          {% endfor %}
-        </select>
-
-        <select name="tag">
-          <option value="all">All Tags</option>
-          {% for t in all_tags %}
-            <option value="{{ t }}" {% if active_tag == t %}selected{% endif %}>{{ t }}</option>
-          {% endfor %}
-        </select>
-
-        <select name="sort_by" title="Library order" onchange="this.form.submit();">
-          <option value="updated_at" {% if sort_by == "updated_at" %}selected{% endif %}>Original order: latest capture / edit / thumbnail update</option>
-          <option value="recently_used" {% if sort_by == "recently_used" %}selected{% endif %}>Most recently used</option>
-          <option value="frequently_used" {% if sort_by == "frequently_used" %}selected{% endif %}>Most frequently used</option>
-        </select>
-        <input type="hidden" name="sort_dir" value="desc">
-
-        <label class="pin-filter"><input type="checkbox" name="pinned" value="1" {% if pinned_only %}checked{% endif %}> Pinned only</label>
-        <button type="submit">Filter</button>
-        {% if q or q_not or active_category!='all' or active_tool!='all' or active_group!='all' or active_tag!='all' or pinned_only or sort_by != 'updated_at' or sort_dir != 'desc' %}
-          <a href="{{ url_for('index') }}" style="align-self:center; font-size:0.9em; margin-left:0.5rem;">Clear</a>
-        {% endif %}
-      </div>
-    </form>
+    </details>
 
     <div id="organisePanel" style="display:none; margin-bottom:1.5rem; padding:1rem; border:1px solid #333; border-radius:10px;">
-        <h3 style="margin-top:0;">Organise & Export</h3>
+        <h3 style="margin-top:0;">Organise & Export</h3><p class="selection-status" role="status">Select prompts using the checkboxes on their cards. <strong id="selectionCount">0 selected</strong></p>
         <form method="post" action="{{ url_for('bulk_update') }}" id="bulkForm">
             <div class="grid" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:0.75rem;">
                <div>
@@ -202,6 +180,10 @@
         </form>
     </div>
 
+    <div class="results-heading"><p><strong>{{ total_items }}</strong> matching {{ 'prompt' if total_items == 1 else 'prompts' }}</p><span>Pinned prompts appear first</span></div>
+    {% if not prompts %}
+    <div class="library-empty"><h2>No prompts found</h2><p>Try a broader search or reset your filters to see more prompts.</p><a class="btn-secondary" href="{{ url_for('index') }}">Reset filters</a> <a class="btn-primary" href="{{ url_for('new_prompt') }}">Create a prompt</a></div>
+    {% endif %}
     <ul class="prompt-list" id="promptList">
       {% include "_prompt_cards.html" %}
     </ul>
@@ -216,7 +198,7 @@
     <div id="paginationControls">
       <div style="margin-top:2rem; display:flex; justify-content:center; gap:0.5rem;">
         {% if page > 1 %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, group=active_group, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir) }}">&laquo; Prev</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page-1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, group=active_group, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir, pinned='1' if pinned_only else None) }}">&laquo; Prev</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">&laquo; Prev</span>
         {% endif %}
@@ -224,7 +206,7 @@
         <span style="padding:0.5rem;">Page {{ page }} of {{ total_pages }}</span>
 
         {% if page < total_pages %}
-          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, group=active_group, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir) }}">Next &raquo;</a>
+          <a class="btn-secondary" href="{{ url_for('index', page=page+1, q=q, q_not=q_not, view_family=view_family, category=active_category, tool=active_tool, group=active_group, tag=active_tag, sort_by=sort_by, sort_dir=sort_dir, pinned='1' if pinned_only else None) }}">Next &raquo;</a>
         {% else %}
           <span class="btn-secondary" style="opacity:0.5; cursor:default;">Next &raquo;</span>
         {% endif %}
@@ -250,7 +232,13 @@
 <script>
 function togglePreview(id){
   const el = document.getElementById(`preview-${id}`);
-  if(el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  if(el) {
+    const expanded = el.style.display === 'none';
+    el.style.display = expanded ? 'block' : 'none';
+    const button = document.querySelector(`[aria-controls="preview-${id}"]`);
+    button?.setAttribute('aria-expanded', String(expanded));
+    if(button) button.textContent = expanded ? 'Hide preview' : 'Preview';
+  }
 }
 
 function formatUsageTimestamps(root=document) {
@@ -280,11 +268,12 @@ function formatUsageTimestamps(root=document) {
   });
 }
 
-function copyPrompt(event, id){
+async function copyPrompt(event, id){
   const el = document.querySelector(`#preview-${id} pre`);
   if(el) {
-      const text = el.innerText;
-      navigator.clipboard.writeText(text);
+      const text = el.textContent;
+      try { await navigator.clipboard.writeText(text); }
+      catch { showToast("Copy failed. Open Preview and select the text to copy."); return; }
       showToast("Prompt copied");
       
       // Fixed: explicitly use the event target for UI feedback
@@ -316,6 +305,8 @@ async function togglePin(event, id) {
     button.classList.toggle('pinned', data.pinned);
     card.classList.toggle('is-pinned', data.pinned);
     button.title = data.pinned ? 'Unpin prompt' : 'Pin prompt';
+    button.setAttribute('aria-label', button.title + ' ' + card.querySelector('h3').textContent.trim());
+    button.setAttribute('aria-pressed', String(data.pinned));
     showToast(data.pinned ? 'Prompt pinned' : 'Prompt unpinned');
     if (data.pinned) {
       const list = document.getElementById('promptList');
@@ -330,13 +321,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const promptListView = document.getElementById('promptList');
     const gridButton = document.getElementById('gridViewButton');
     const compactButton = document.getElementById('compactViewButton');
-    const savedView = localStorage.getItem('prompthub-library-view') || 'grid';
+    let savedView = 'grid';
+    try { savedView = localStorage.getItem('prompthub-library-view') || 'grid'; } catch {}
     function applyLibraryView(mode) {
       if (!promptListView) return;
       promptListView.classList.toggle('compact', mode === 'compact');
       gridButton?.classList.toggle('active', mode === 'grid');
       compactButton?.classList.toggle('active', mode === 'compact');
-      localStorage.setItem('prompthub-library-view', mode);
+      gridButton?.setAttribute('aria-pressed', String(mode === 'grid'));
+      compactButton?.setAttribute('aria-pressed', String(mode === 'compact'));
+      try { localStorage.setItem('prompthub-library-view', mode); } catch {}
     }
     gridButton?.addEventListener('click', () => applyLibraryView('grid'));
     compactButton?.addEventListener('click', () => applyLibraryView('compact'));
@@ -363,7 +357,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyOrganiseMode() {
       if (panel) panel.style.display = orgMode ? 'block' : 'none';
       getCheckWrappers().forEach(c => c.style.display = orgMode ? 'block' : 'none');
-      if (toggle) toggle.textContent = orgMode ? 'Close Organise' : 'Organise';
+      if (toggle) { toggle.textContent = orgMode ? 'Done organising' : 'Organise'; toggle.setAttribute('aria-expanded', String(orgMode)); }
     }
 
     if (toggle) {
@@ -390,6 +384,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ---- Drag & Drop Thumb Upload ----
     const zones = document.querySelectorAll('.drop-zone');
     zones.forEach(zone => {
+        zone.dataset.dndBound = '1';
         zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.classList.add('drag-over'); });
         zone.addEventListener('dragleave', () => { zone.classList.remove('drag-over'); });
         zone.addEventListener('drop', (e) => {
@@ -442,7 +437,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       let nextPage = Number({{ page|int }}) + 1;
       let isLoading = false;
-      let hasMore = true;
+      let hasMore = {{ 'true' if page < total_pages else 'false' }};
 
       function setLoading(on) {
         if (!loadingEl) return;
@@ -507,6 +502,8 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (err) {
           console.error(err);
           hasMore = false;
+          if (endEl) { endEl.textContent = 'Could not load more prompts. Use the page links below to continue.'; endEl.style.display = 'block'; }
+          if (paginationControls) paginationControls.style.display = 'block';
         } finally {
           isLoading = false;
           setLoading(false);

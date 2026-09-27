@@ -137,6 +137,18 @@ class SkillRuntimeTests(unittest.TestCase):
             inspect_skill(archive)
         self.assertEqual("UNSAFE_PATH", error.exception.code)
 
+    def test_nested_zip_import_preserves_package_root_and_can_be_compared(self):
+        archive = Path(self.temp.name) / "image-skill.zip"
+        with zipfile.ZipFile(archive, "w") as z:
+            z.write(self.root / "SKILL.md", "video-prompt-craft/SKILL.md")
+            z.write(self.root / "references" / "minimax-h3.md", "video-prompt-craft/references/minimax-h3.md")
+        imported = import_skill(self.conn, archive, base_dir=self.temp.name)
+        package = Path(imported["package_path"])
+        self.assertTrue((package / "SKILL.md").is_file())
+        self.assertFalse((package / "video-prompt-craft" / "SKILL.md").exists())
+        comparison = compare_skill(self.conn, imported["skill_id"], archive)
+        self.assertEqual("IDENTICAL", comparison["state"])
+
     def test_nested_dependency_execution_has_hierarchical_result(self):
         child = import_skill(self.conn, self.root, base_dir=self.temp.name)
         parent_root = Path(self.temp.name) / "director"
