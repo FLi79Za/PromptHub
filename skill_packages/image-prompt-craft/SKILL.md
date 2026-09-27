@@ -1,6 +1,6 @@
 ---
 name: image-prompt-craft
-description: Create, convert, refine and diagnose model-native prompts for text-to-image, reference-guided image generation, image-to-image transformation, inpainting, compositing and natural-language image editing. Use for Krea 2, Ideogram 4, FLUX.2 and FLUX.2 Klein, Z-Image, ChatGPT Images and GPT Image, Google Nano Banana and Imagen, Qwen-Image/Edit, or an unspecified image model. Also use to ingest official-source research digests or scout updates into this skill's specialised image-prompt knowledge base.
+description: Create, convert, refine and diagnose model-native prompts for text-to-image, reference-guided image generation, image-to-image transformation, inpainting, compositing and natural-language image editing. Use for Krea 2, Ideogram 4, FLUX.2 and FLUX.2 Klein, Z-Image, ChatGPT Images and GPT Image, Google Nano Banana and Imagen, Grok Imagine, Qwen-Image/Edit, or an unspecified image model. Also use to ingest official-source research digests or scout updates into this skill's specialised image-prompt knowledge base.
 ---
 
 # Image Prompt Craft
@@ -19,8 +19,11 @@ Translate creative intent into the control language of the selected image model.
    - Z-Image: [z-image.md](references/z-image.md)
    - ChatGPT Images/GPT Image: [gpt-image.md](references/gpt-image.md)
    - Nano Banana/Imagen: [google-images.md](references/google-images.md)
+   - Grok Imagine: [xai-imagine.md](references/xai-imagine.md)
    - Qwen or local-model selection: [local-models.md](references/local-models.md)
 5. Search [knowledge-updates.jsonl](references/knowledge-updates.jsonl) for the canonical model name and read relevant newer entries. Let a newer high-confidence official entry override an older reference rule. Flag unresolved contradictions.
+
+6. When the request names an obscure, historical, technical, regional, photographic, scientific, printmaking, vernacular or experimental style, or asks for a named aesthetic to be made reproducible, read [obscure-style-compiler.md](references/obscure-style-compiler.md). Treat it as a style compiler: resolve the name into an observable visual profile, then translate that profile into the selected model's native prompt language. Do not rely on a name-only style label.
 
 ## Produce the prompt
 
@@ -57,6 +60,10 @@ Use this workflow when the user supplies a scout result, research digest, offici
 8. Validate and save the updated personal skill through the skill-creation workflow.
 
 Do not import marketing-only announcements, duplicated advice, unattributed folklore, benchmark claims without prompting impact, or generic prompt recipes presented as model-specific facts.
+
+## Obscure-style interpretation
+
+For obscure or ambiguous style terms, preserve the ordinary routing and output formats above, but compile the style before writing the final prompt. Distinguish common, partially understood, obscure/technical and hybrid or invented styles. If the term is absent from the supporting reference, decompose it from its stated medium, process, era, region, references and visible traits, and mark any material uncertainty. Keep the final prompt model-native and describe observable results rather than assuming the image model understands the style name.
 
 ## Output formats
 
